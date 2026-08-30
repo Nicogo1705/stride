@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, float axisCountT, float mipHeightT> : VoxelStorageTextureShader, Texturing
 {
@@ -41,7 +41,19 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
         {
             return mipMaps.SampleLevel(Sampler, pos, mipmap);
         }
-        return float4(0,0,0,0);
+    }
+
+    // The mipmaps are downsampled from the largest clipmap, so that clipmap's extent bounds the
+    // whole structure. X and Z address in Border mode, so past them every fetch returns zero - and
+    // a straight ray never re-enters. Y is deliberately left out: it is clamped rather than
+    // bordered (to keep a sample from bleeding into the neighbouring axis slice of the atlas), so
+    // a position above or below the volume still reads the boundary plane.
+    override bool OutsideVolume(float3 pos)
+    {
+        float4 offsetScale = perMapOffsetScale[(int)clipCountT - 1];
+        float3 volumePos = pos * offsetScale.w + offsetScale.xyz;
+        return volumePos.x < 0.0 || volumePos.x > 1.0
+            || volumePos.z < 0.0 || volumePos.z > 1.0;
     }
 
     override float4 SampleNearestMip(float3 pos, float diameter, int axis)
@@ -52,10 +64,11 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
     }
     override float4 SampleByMipNearestMip(float3 pos, float mipmap, int axis)
     {
-        //Clipmaps
-        float3 clipMapSizeClip = float3(1, 1.0 / (clipCountT * axisCountT), 1);
-        float3 axisStrideClip = float3(0, 1.0 / (clipCountT * axisCountT), 0);
-        float3 clipSetStrideClip = float3(0, 1.0 / clipCountT, 0);
+        //Clipmaps: the atlas holds one ring per column along X and one direction per row along Y,
+        //so neither axis has to make room for the other and a ring costs 1/clipCount of the width.
+        float3 clipMapSizeClip = float3(1.0 / clipCountT, 1.0 / axisCountT, 1);
+        float3 axisStrideClip = float3(0, 1.0 / axisCountT, 0);
+        float3 clipSetStrideClip = float3(1.0 / clipCountT, 0, 0);
 
         //Mipmaps
         float3 axisSizeMip = float3(1, 1.0 / (axisCountT), 1);
@@ -74,11 +87,11 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
             float boundaryFade = 1.0;
             if (axisCountT > 1)
             {
-                float height = mipHeightT / (pow(2, mipBase - clipCountT));
+                float height = mipHeightT / exp2(mipBase - clipCountT);
 
                 float texelY = pos.y * height;
                 float texelYClamped = clamp(texelY, 1, height - 1);
-                float boundaryFade = saturate(1.0 - abs(texelYClamped - texelY));
+                boundaryFade = saturate(1.0 - abs(texelYClamped - texelY));
 
                 pos.y = texelYClamped / height;
 
@@ -89,19 +102,30 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
         }
         else
         {
+            // Outside this ring the answer is nothing, as it always was - but X now neighbours the
+            // next ring instead of the border, so the zero has to be spelled out rather than left
+            // to the sampler's addressing mode.
+            float inside = (pos.x >= 0.0 && pos.x <= 1.0) ? 1.0 : 0.0;
+
+            // Bilinear filtering reaches half a texel past the sample point, and past a ring's last
+            // texel now sits the next ring's first. Hold the position that half texel inside its
+            // own column so the filter cannot cross the seam.
+            float halfTexelX = 0.25 / mipHeightT;
+            pos.x = clamp(pos.x, halfTexelX, 1.0 - halfTexelX);
             pos.y = saturate(pos.y);
 
             pos *= clipMapSizeClip;
             pos += axisStrideClip * axis + clipSetStrideClip * mipBase;
-            return clipMaps.SampleLevel(LinearBorderSampler3D_NearestMip, pos, 0);
+            return clipMaps.SampleLevel(LinearBorderSampler3D_NearestMip, pos, 0) * inside;
         }
     }
     override float4 Sample(float3 pos, float diameter, int axis)
     {
-        //Clipmaps
-        float3 clipMapSizeClip = float3(1, 1.0 / (clipCountT * axisCountT), 1);
-        float3 axisStrideClip = float3(0, 1.0 / (clipCountT * axisCountT), 0);
-        float3 clipSetStrideClip = float3(0, 1.0 / clipCountT, 0);
+        //Clipmaps: the atlas holds one ring per column along X and one direction per row along Y,
+        //so neither axis has to make room for the other and a ring costs 1/clipCount of the width.
+        float3 clipMapSizeClip = float3(1.0 / clipCountT, 1.0 / axisCountT, 1);
+        float3 axisStrideClip = float3(0, 1.0 / axisCountT, 0);
+        float3 clipSetStrideClip = float3(1.0 / clipCountT, 0, 0);
 
         //Mipmaps
         float3 axisSizeMip = float3(1, 1.0 / (axisCountT), 1);
@@ -127,11 +151,11 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
             float boundaryFade = 1.0;
             if (axisCountT > 1)
             {
-                float height = mipHeightT / (pow(2, mipBase - clipCountT));
+                float height = mipHeightT / exp2(mipBase - clipCountT);
 
                 float texelY = posFine.y * height;
                 float texelYClamped = clamp(texelY, 1, height - 1);
-                float boundaryFade = saturate(1.0 - abs(texelYClamped - texelY));
+                boundaryFade = saturate(1.0 - abs(texelYClamped - texelY));
 
                 posFine.y = texelYClamped / height;
 
@@ -148,6 +172,13 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
         }
         else
         {
+            float insideFine = (posFine.x >= 0.0 && posFine.x <= 1.0) ? 1.0 : 0.0;
+            float insideCoarse = (posCoarse.x >= 0.0 && posCoarse.x <= 1.0) ? 1.0 : 0.0;
+
+            // Half a texel of clearance, so the filter never reaches into the neighbouring ring.
+            float halfTexelX = 0.25 / mipHeightT;
+            posFine.x = clamp(posFine.x, halfTexelX, 1.0 - halfTexelX);
+            posCoarse.x = clamp(posCoarse.x, halfTexelX, 1.0 - halfTexelX);
             posFine.y = saturate(posFine.y);
             posCoarse.y = saturate(posCoarse.y);
             if (mipBase == clipCountT-1)
@@ -158,7 +189,7 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
                 posCoarse *= axisSizeMip;
                 posCoarse += axisStrideMip * axis;
                 return lerp(
-                    clipMaps.SampleLevel(LinearBorderSampler3D, posFine, 0),
+                    clipMaps.SampleLevel(LinearBorderSampler3D, posFine, 0) * insideFine,
                     mipMaps.SampleLevel(LinearBorderSampler3D, posCoarse, 0),
                     mipmap-mipBase
                 );
@@ -171,8 +202,8 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
                 posCoarse *= clipMapSizeClip;
                 posCoarse += axisStrideClip * axis + clipSetStrideClip * (mipBase+1);
                 return lerp(
-                    clipMaps.SampleLevel(LinearBorderSampler3D, posFine, 0),
-                    clipMaps.SampleLevel(LinearBorderSampler3D, posCoarse, 0),
+                    clipMaps.SampleLevel(LinearBorderSampler3D, posFine, 0) * insideFine,
+                    clipMaps.SampleLevel(LinearBorderSampler3D, posCoarse, 0) * insideCoarse,
                     mipmap-mipBase
                 );
             }

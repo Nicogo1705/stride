@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelAttributeSolidityShader : VoxelAttribute, VoxelPositionStream, ShaderBaseStream, NormalStream, DataPacking
 {
@@ -35,9 +35,9 @@ shader VoxelAttributeSolidityShader : VoxelAttribute, VoxelPositionStream, Shade
         streams.sendTo = 0;
         streams.ignoreTil = 0;
     }
-    override void DirectWrite(uint3 address, uint strideIndex, uint stride)
+    override void DirectWrite(uint3 address, uint3 clipOffset, uint axisStride)
     {
-        address.y += strideIndex * stride;
+        address += clipOffset;
         DirectOutput[address] = streams.Voxel_Solidity;
     }
     override void IndirectWrite(RWBuffer<uint> buffer, uint address)
