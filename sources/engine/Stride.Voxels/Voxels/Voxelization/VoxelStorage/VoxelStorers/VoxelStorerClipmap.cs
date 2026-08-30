@@ -19,6 +19,9 @@ namespace Stride.Rendering.Voxels
 
         public int ClipMapCount;
         public int ClipMapCurrent = -1;
+
+        /// <summary>Slots the fragment buffer keeps; the ring being voxelized wraps into one of them.</summary>
+        public int FragmentSlots = 1;
         public Vector3 ClipMapResolution;
 
         public Vector4[] PerMapOffsetScale = new Vector4[20];
@@ -100,7 +103,9 @@ namespace Stride.Rendering.Voxels
             {
                 param.Set(clipScaleKey, new Vector3(PerMapOffsetScale[ClipMapCurrent].W));
                 param.Set(clipOffsetKey, PerMapOffsetScale[ClipMapCurrent].XYZ());
-                param.Set(clipPosKey, ClipMapCurrent * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z);
+                // The buffer is a staging area for the ring being voxelized, not a copy of every
+                // ring, so the write lands in this ring's slot rather than at its index.
+                param.Set(clipPosKey, (ClipMapCurrent % Math.Max(1, FragmentSlots)) * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z);
             }
             else
             {

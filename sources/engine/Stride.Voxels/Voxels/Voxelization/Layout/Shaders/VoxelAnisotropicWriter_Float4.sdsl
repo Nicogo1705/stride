@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelAnisotropicWriter_Float4 : VoxelLayout_Float4, NormalStream
 {
@@ -44,9 +44,9 @@ shader VoxelAnisotropicWriter_Float4 : VoxelLayout_Float4, NormalStream
     {
         return float4(col.rgb * maxBrightnessInv, col.a);
     }
-    override void DirectWrite(uint3 address, uint strideIndex, uint stride)
+    override void DirectWrite(uint3 address, uint3 clipOffset, uint axisStride)
     {
-        address.y += strideIndex * stride * 6;
+        address += clipOffset;
         float4 tempAxisXP = streams.axisXP;
         float4 tempAxisXN = streams.axisXN;
         float4 tempAxisYP = streams.axisYP;
@@ -64,15 +64,15 @@ shader VoxelAnisotropicWriter_Float4 : VoxelLayout_Float4, NormalStream
         streams.axisZP = tempAxisZP;
         streams.axisZN = tempAxisZN;
         DirectOutput[address] = applyMaxBrightness(streams.axisXP);
-        address.y += stride;
+        address.y += axisStride;
             DirectOutput[address] = applyMaxBrightness(streams.axisXN);
-        address.y += stride;
+        address.y += axisStride;
             DirectOutput[address] = applyMaxBrightness(streams.axisYP);
-        address.y += stride;
+        address.y += axisStride;
             DirectOutput[address] = applyMaxBrightness(streams.axisYN);
-        address.y += stride;
+        address.y += axisStride;
             DirectOutput[address] = applyMaxBrightness(streams.axisZP);
-        address.y += stride;
+        address.y += axisStride;
             DirectOutput[address] = applyMaxBrightness(streams.axisZN);
     }
     override void IndirectWrite(RWBuffer<uint> buffer, uint address)

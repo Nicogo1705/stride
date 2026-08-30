@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelAttributeEmissionOpacityShader : VoxelAttribute, ShaderBaseStream
 {
@@ -12,9 +12,9 @@ shader VoxelAttributeEmissionOpacityShader : VoxelAttribute, ShaderBaseStream
     {
         layout.InitializeFromStreams(streams.ColorTarget);
     }
-    override void DirectWrite(uint3 address, uint strideIndex, uint stride)
+    override void DirectWrite(uint3 address, uint3 clipOffset, uint axisStride)
     {
-        layout.DirectWrite(address, strideIndex, stride);
+        layout.DirectWrite(address, clipOffset, axisStride);
     }
     override void IndirectWrite(RWBuffer<uint> buffer, uint address)
     {
