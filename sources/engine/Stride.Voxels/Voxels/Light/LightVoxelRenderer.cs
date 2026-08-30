@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
@@ -84,6 +84,13 @@ namespace Stride.Rendering.Voxels.VoxelGI
             private ValueParameterKey<float> intensityKey;
             private ValueParameterKey<float> specularIntensityKey;
             private ValueParameterKey<float> specularRoughnessCutoffKey;
+            private ValueParameterKey<float> giResolveEnabledKey;
+            private ValueParameterKey<Vector4> giResolveSizesKey;
+            private ObjectParameterKey<Texture> giResolveTextureKey;
+
+            private string compositionName;
+            private ShaderSourceCollection resolveSamplers;
+            private ShaderSource resolveMarcher;
 
             private PermutationParameterKey<ShaderSource> diffuseMarcherKey;
             private PermutationParameterKey<ShaderSource> specularMarcherKey;
@@ -137,9 +144,14 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
                 traceAttribute = GetTraceAttr();
 
+                this.compositionName = compositionName;
+
                 intensityKey = LightVoxelShaderKeys.Intensity.ComposeWith(compositionName);
                 specularIntensityKey = LightVoxelShaderKeys.SpecularIntensity.ComposeWith(compositionName);
                 specularRoughnessCutoffKey = LightVoxelShaderKeys.SpecularRoughnessCutoff.ComposeWith(compositionName);
+                giResolveEnabledKey = LightVoxelShaderKeys.GIResolveEnabled.ComposeWith(compositionName);
+                giResolveSizesKey = LightVoxelShaderKeys.GIResolveSizes.ComposeWith(compositionName);
+                giResolveTextureKey = LightVoxelShaderKeys.GIResolveTexture.ComposeWith(compositionName);
 
                 diffuseMarcherKey = LightVoxelShaderKeys.diffuseMarcher.ComposeWith(compositionName);
                 specularMarcherKey = LightVoxelShaderKeys.specularMarcher.ComposeWith(compositionName);
@@ -199,12 +211,69 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 parameters.Set(specularIntensityKey, specularIntensity);
                 parameters.Set(specularRoughnessCutoffKey, lightVoxel.SpecularRoughnessCutoff);
 
+                var resolved = PrepareScreenSpaceResolve(context, lightVoxel, viewContext);
+
+                parameters.Set(giResolveEnabledKey, resolved != null ? 1.0f : 0.0f);
+                if (resolved != null)
+                {
+                    parameters.Set(giResolveTextureKey, resolved.Texture);
+                    parameters.Set(giResolveSizesKey, resolved.Sizes);
+                }
+
                 if (traceAttribute != null)
                 {
                     lightVoxel.DiffuseMarcher?.ApplyMarchingParameters(parameters);
                     lightVoxel.SpecularMarcher?.ApplyMarchingParameters(parameters);
                     traceAttribute.ApplySamplingParameters(viewContext, parameters);
                 }
+            }
+
+            /// <summary>
+            /// Asks <see cref="VoxelGIResolver"/> for a reduced-resolution trace this frame and
+            /// fills its parameters, returning the state to read from when one is ready.
+            /// </summary>
+            /// <remarks>
+            /// The marcher and the attribute each hold one set of composed parameter keys, and
+            /// whoever calls Update last owns them - so the pass cannot fill its own parameters
+            /// from its own Draw, a phase later. Both are done from here, in order, leaving the
+            /// light's own layout in place for the Apply that follows.
+            /// <para>
+            /// The texture handed back is the one the pass wrote last frame: Prepare runs before
+            /// Draw. It is the same instance every frame, so this only shows on the first frame
+            /// and after a resize, as one frame without indirect light.
+            /// </para>
+            /// </remarks>
+            private VoxelGIResolveState PrepareScreenSpaceResolve(RenderDrawContext context, LightVoxel lightVoxel, VoxelViewContext viewContext)
+            {
+                // A voxel view is voxelizing the scene into the clipmaps, not shading a screen:
+                // there is no depth buffer of it and nothing to reduce.
+                if (viewContext.IsVoxelView || lightVoxel.ScreenSpaceDivisor <= 1
+                    || traceAttribute == null || lightVoxel.DiffuseMarcher == null)
+                    return null;
+
+                var state = context.RenderContext.VisibilityGroup?.Tags.Get(VoxelGIResolver.Current);
+                if (state?.Parameters == null)
+                    return null;
+
+                state.Divisor = lightVoxel.ScreenSpaceDivisor;
+                state.Requested = true;
+
+                resolveSamplers ??= new ShaderSourceCollection { traceAttribute.GetSamplingShader() };
+                resolveMarcher ??= lightVoxel.DiffuseMarcher.GetMarchingShader(0);
+
+                lightVoxel.DiffuseMarcher.UpdateMarchingLayout("diffuseMarcher");
+                traceAttribute.UpdateSamplingLayout("AttributeSamplers[0]");
+
+                state.Parameters.Set(VoxelGIResolveShaderKeys.diffuseMarcher, resolveMarcher);
+                state.Parameters.Set(MarchAttributesKeys.AttributeSamplers, resolveSamplers);
+                lightVoxel.DiffuseMarcher.ApplyMarchingParameters(state.Parameters);
+                traceAttribute.ApplySamplingParameters(new VoxelViewContext(false), state.Parameters);
+
+                lightVoxel.DiffuseMarcher.UpdateMarchingLayout("diffuseMarcher." + compositionName);
+                lightVoxel.SpecularMarcher?.UpdateMarchingLayout("specularMarcher." + compositionName);
+                traceAttribute.UpdateSamplingLayout("AttributeSamplers[0]." + compositionName);
+
+                return state.Texture != null ? state : null;
             }
         }
     }
