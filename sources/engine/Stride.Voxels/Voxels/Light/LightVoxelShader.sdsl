@@ -12,6 +12,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
         {
             float Intensity;
             float SpecularIntensity;
+            float SpecularRoughnessCutoff;
         }
 
         compose VoxelMarchSet diffuseMarcher;
@@ -35,8 +36,15 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 reflLighting = diffuseMarcher.March(worldPos, streams.normalWS.xyz);
 
                 streams.envLightDiffuseColor = reflLighting.rgb * Intensity;
-                if (SpecularIntensity > 0.0)
-                    streams.envLightSpecularColor = specularMarcher.MarchRadius(startPos, reflect(-streams.viewWS, streams.normalWS), sqrt(streams.alphaRoughness)).rgb * SpecularIntensity;
+
+                // The specular cone costs up to 60 steps per pixel, and on a rough surface its
+                // result is a blur the diffuse cones already approximate. Fade it out as roughness
+                // approaches the cutoff and skip the march entirely past it. The window above the
+                // cutoff is 0.125 wide, so the default cutoff of 1 leaves every surface untouched.
+                float roughness = sqrt(streams.alphaRoughness);
+                float specularFade = SpecularIntensity * saturate((SpecularRoughnessCutoff - roughness) * 8.0 + 1.0);
+                if (specularFade > 0.0)
+                    streams.envLightSpecularColor = specularMarcher.MarchRadius(startPos, reflect(-streams.viewWS, streams.normalWS), roughness).rgb * specularFade;
                 else
                     streams.envLightSpecularColor = float4(0,0,0,0);
             }
