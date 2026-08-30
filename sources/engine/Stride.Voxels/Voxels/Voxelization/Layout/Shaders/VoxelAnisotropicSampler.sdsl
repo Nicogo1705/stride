@@ -10,43 +10,67 @@ namespace Stride.Rendering.Voxels
             float maxBrightness;
         }
         
+        // An axis whose weight is this small contributes under a percent of the sum, which never
+        // shows up in the image - and skipping it saves a whole set of Texture3D fetches, two of
+        // them per axis in the quadrilinear path. A cone running along a cardinal direction has two
+        // of its three weights at zero, so this is the common case rather than the exception.
+        // Directions come from the shaded surface's tangent frame, so neighbouring pixels take the
+        // same branch.
+        static const float AxisWeightCutoff = 0.01;
+
         float4 applyMaxBrightness(float4 col)
         {
             return float4(col.rgb * maxBrightness, col.a);
         }
         override float4 Sample(float3 position, float3 normal, float diameter)
         {
-            float4 sum = float4(0,0,0,0);
+            float3 weights = abs(normal);
+            float4 sum = float4(0, 0, 0, 0);
 
-            sum  = storage.Sample(position, diameter, normal.x > 0 ? 0 : 1) * abs(normal.x);
-            sum += storage.Sample(position, diameter, normal.y > 0 ? 2 : 3) * abs(normal.y);
-            sum += storage.Sample(position, diameter, normal.z > 0 ? 4 : 5) * abs(normal.z);
+            if (weights.x > AxisWeightCutoff)
+                sum += storage.Sample(position, diameter, normal.x > 0 ? 0 : 1) * weights.x;
+            if (weights.y > AxisWeightCutoff)
+                sum += storage.Sample(position, diameter, normal.y > 0 ? 2 : 3) * weights.y;
+            if (weights.z > AxisWeightCutoff)
+                sum += storage.Sample(position, diameter, normal.z > 0 ? 4 : 5) * weights.z;
 
             return applyMaxBrightness(sum);
         }
         override float4 SampleNearestMip(float3 position, float3 normal, float diameter)
         {
+            float3 weights = abs(normal);
             float4 sum = float4(0, 0, 0, 0);
 
-            sum  = storage.SampleNearestMip(position, diameter, normal.x > 0 ? 0 : 1) * abs(normal.x);
-            sum += storage.SampleNearestMip(position, diameter, normal.y > 0 ? 2 : 3) * abs(normal.y);
-            sum += storage.SampleNearestMip(position, diameter, normal.z > 0 ? 4 : 5) * abs(normal.z);
+            if (weights.x > AxisWeightCutoff)
+                sum += storage.SampleNearestMip(position, diameter, normal.x > 0 ? 0 : 1) * weights.x;
+            if (weights.y > AxisWeightCutoff)
+                sum += storage.SampleNearestMip(position, diameter, normal.y > 0 ? 2 : 3) * weights.y;
+            if (weights.z > AxisWeightCutoff)
+                sum += storage.SampleNearestMip(position, diameter, normal.z > 0 ? 4 : 5) * weights.z;
 
             return applyMaxBrightness(sum);
         }
         override float4 SampleByMipNearestMip(float3 position, float3 normal, float diameter)
         {
+            float3 weights = abs(normal);
             float4 sum = float4(0, 0, 0, 0);
 
-            sum  = storage.SampleByMipNearestMip(position, diameter, normal.x > 0 ? 0 : 1) * abs(normal.x);
-            sum += storage.SampleByMipNearestMip(position, diameter, normal.y > 0 ? 2 : 3) * abs(normal.y);
-            sum += storage.SampleByMipNearestMip(position, diameter, normal.z > 0 ? 4 : 5) * abs(normal.z);
+            if (weights.x > AxisWeightCutoff)
+                sum += storage.SampleByMipNearestMip(position, diameter, normal.x > 0 ? 0 : 1) * weights.x;
+            if (weights.y > AxisWeightCutoff)
+                sum += storage.SampleByMipNearestMip(position, diameter, normal.y > 0 ? 2 : 3) * weights.y;
+            if (weights.z > AxisWeightCutoff)
+                sum += storage.SampleByMipNearestMip(position, diameter, normal.z > 0 ? 4 : 5) * weights.z;
 
             return applyMaxBrightness(sum);
         }
         override float4 SampleRaw(float3 pos, float mipmap, int textureID, int axis)
         {
             return storage.SampleRaw(pos, mipmap, textureID, axis);
+        }
+        override bool OutsideVolume(float3 position)
+        {
+            return storage.OutsideVolume(position);
         }
         override float VoxelSize()
         {

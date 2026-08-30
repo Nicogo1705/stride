@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels
 {
@@ -19,6 +19,12 @@ namespace Stride.Rendering.Voxels
         float4 SampleRaw(float3 pos, float mipmap, int textureID, int axis)
         {
             return float4(1, 0, 0, 0);
+        }
+        // Whether the position has left the voxelized volume entirely. Marchers use it to stop:
+        // outside, sampling can only return nothing.
+        bool OutsideVolume(float3 position)
+        {
+            return false;
         }
         float VoxelSize()
         {
