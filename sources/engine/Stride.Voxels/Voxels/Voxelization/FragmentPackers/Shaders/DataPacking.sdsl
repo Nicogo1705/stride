@@ -22,7 +22,7 @@ shader DataPacking
         uint fltInt16 = num;
         int offset = (23-mantissa);
         int bitdepth = mantissa+5;
-        int bias = pow(2,5 - 1) - 1;
+        int bias = 15;//pow(2,5 - 1) - 1
         int biascounter = (127-bias)<<23;
 
         if (num==0)
