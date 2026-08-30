@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Rendering.Lights;
@@ -29,6 +30,16 @@ namespace Stride.Rendering.Voxels.VoxelGI
         public float BounceIntensityScale { get; set; }
         [DataMember(50)]
         public float SpecularIntensityScale { get; set; }
+
+        /// <summary>
+        /// Roughness above which the specular cone is not traced at all - the march is the most
+        /// expensive part of the voxel light, and on a rough surface its result is a blur the
+        /// diffuse cones already approximate. Faded out over a small window below the cutoff to
+        /// avoid a visible seam. 1 (the default) traces every surface, as before.
+        /// </summary>
+        [DataMember(55)]
+        [DataMemberRange(0.0, 1.0, 0.01, 0.1, 2)]
+        public float SpecularRoughnessCutoff { get; set; } = 1.0f;
 
         public bool Update(RenderLight light)
         {

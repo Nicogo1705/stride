@@ -83,6 +83,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
         {
             private ValueParameterKey<float> intensityKey;
             private ValueParameterKey<float> specularIntensityKey;
+            private ValueParameterKey<float> specularRoughnessCutoffKey;
 
             private PermutationParameterKey<ShaderSource> diffuseMarcherKey;
             private PermutationParameterKey<ShaderSource> specularMarcherKey;
@@ -138,6 +139,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
                 intensityKey = LightVoxelShaderKeys.Intensity.ComposeWith(compositionName);
                 specularIntensityKey = LightVoxelShaderKeys.SpecularIntensity.ComposeWith(compositionName);
+                specularRoughnessCutoffKey = LightVoxelShaderKeys.SpecularRoughnessCutoff.ComposeWith(compositionName);
 
                 diffuseMarcherKey = LightVoxelShaderKeys.diffuseMarcher.ComposeWith(compositionName);
                 specularMarcherKey = LightVoxelShaderKeys.specularMarcher.ComposeWith(compositionName);
@@ -195,6 +197,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
                 parameters.Set(intensityKey, intensity);
                 parameters.Set(specularIntensityKey, specularIntensity);
+                parameters.Set(specularRoughnessCutoffKey, lightVoxel.SpecularRoughnessCutoff);
 
                 if (traceAttribute != null)
                 {
