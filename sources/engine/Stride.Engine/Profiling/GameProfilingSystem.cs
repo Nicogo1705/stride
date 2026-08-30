@@ -149,7 +149,10 @@ namespace Stride.Profiling
             var availableDisplayHeight = viewportHeight - 2 * TextRowHeight - 3 * TopRowHeight;
             var elementsPerPage = (int)Math.Floor(availableDisplayHeight / TextRowHeight);
             numberOfPages = (uint)Math.Ceiling(profilingResults.Count / (float)elementsPerPage);
-            CurrentResultPage = Math.Min(CurrentResultPage, numberOfPages);
+            // Never clamp below page 1: on the first frames after profiling is enabled there are
+            // no results yet, so numberOfPages is 0 - and a page clamped to 0 stayed 0 forever,
+            // leaving the profiler showing "PAGE 0 OF N" and an empty list once results arrived.
+            CurrentResultPage = Math.Max(1, Math.Min(CurrentResultPage, numberOfPages));
 
             char sortByTimeIndicator = SortingMode == GameProfilingSorting.ByTime ? 'v' : ' ';
             char sortByAvgTimeIndicator = SortingMode == GameProfilingSorting.ByAverageTime ? 'v' : ' ';
