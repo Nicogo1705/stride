@@ -1,0 +1,52 @@
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.VoxelGI
+{
+    /// <summary>
+    /// Traces the diffuse cones once per pixel of a reduced-resolution target, off the depth buffer
+    /// a Z prepass has already filled. <see cref="LightVoxelShader"/> then reads the result instead
+    /// of marching, which is what takes the cost off the shaded pixel count.
+    /// </summary>
+    shader VoxelGIResolveShader : ImageEffectShader, DepthBase, Transformation, MarchAttributes
+    {
+        compose VoxelMarchSet diffuseMarcher;
+
+
+        float3 WorldPositionFromUV(float2 uv, float zProj)
+        {
+            float4 clipPosition = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, zProj, 1.0);
+            float4 viewPosition = mul(clipPosition, ProjectionInverse);
+            viewPosition /= viewPosition.w;
+            return mul(viewPosition, ViewInverse).xyz;
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float zProj = GetZProjDepthFromUV(uv);
+
+            // Nothing was drawn here. The sky bounces no light, and marching from the far plane
+            // would spend a full set of cones to accumulate zero.
+            if (zProj >= 1.0)
+                return float4(0, 0, 0, 0);
+
+            float3 worldPosition = WorldPositionFromUV(uv, zProj);
+
+            // The geometric normal, taken from how the reconstructed surface tilts across the
+            // pixel. A forward renderer has no normal buffer to read, and this pass runs at a
+            // fraction of the resolution, where per-pixel normal detail is gone either way. The
+            // sign of a cross product depends on winding, so face it back towards the camera.
+            float3 normal = normalize(cross(ddy(worldPosition), ddx(worldPosition)));
+            if (dot(normal, Eye.xyz - worldPosition) < 0.0)
+                normal = -normal;
+
+            float4 light = diffuseMarcher.March(worldPosition, normal);
+
+            // The raw projected depth rides in alpha, not a linearized one: linearizing needs the
+            // camera's ZProjection, and the shaded pixel that reads this back has its own copy of
+            // that constant. Passing the value through untouched leaves one source for it, the one
+            // the light shader is sure of.
+            return float4(light.rgb, zProj);
+        }
+    };
+}

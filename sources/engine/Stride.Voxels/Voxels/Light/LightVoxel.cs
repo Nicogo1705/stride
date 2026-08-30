@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using Stride.Core;
@@ -40,6 +40,22 @@ namespace Stride.Rendering.Voxels.VoxelGI
         [DataMember(55)]
         [DataMemberRange(0.0, 1.0, 0.01, 0.1, 2)]
         public float SpecularRoughnessCutoff { get; set; } = 1.0f;
+
+        /// <summary>
+        /// Trace the diffuse cones into a buffer this many times smaller than the screen along each
+        /// axis, instead of once per shaded pixel: 1 marches inline as before, 2 traces a quarter of
+        /// the cones, 4 a sixteenth. The shaded pixel then reads that buffer, weighting its taps by
+        /// depth so the reduction does not drag light across a silhouette.
+        /// <para>
+        /// Bounced light is low frequency, so the resolution it is traced at costs far less than
+        /// the resolution it is applied at. This is the knob for a machine that cannot afford the
+        /// cones at all: it needs a depth-only render stage on the compositor to prime the depth
+        /// buffer, and falls back to marching inline when there is none.
+        /// </para>
+        /// </summary>
+        [DataMember(57)]
+        [DataMemberRange(1, 4, 1, 1, 0)]
+        public int ScreenSpaceDivisor { get; set; } = 1;
 
         public bool Update(RenderLight light)
         {

@@ -6,17 +6,87 @@ namespace Stride.Rendering.Voxels.VoxelGI
     /// <summary>
     /// Defines a Voxel environment light
     /// </summary>
-    shader LightVoxelShader : MarchAttributes, Camera, Texturing, EnvironmentLight, MaterialPixelShadingStream, NormalStream, PositionStream4, Transformation
+    shader LightVoxelShader : MarchAttributes, Camera, Texturing, EnvironmentLight, MaterialPixelShadingStream, NormalStream, PositionStream4, Transformation, ShaderBaseStream
     {
         cbuffer PerView.Lighting
         {
             float Intensity;
             float SpecularIntensity;
             float SpecularRoughnessCutoff;
+
+            // Zero marches the diffuse cones here, per shaded pixel, as it always did. Otherwise
+            // VoxelGIResolveShader traced them into a smaller buffer and this reads that instead;
+            // the sizes are (1/screen width, 1/screen height, 1/buffer width, 1/buffer height).
+            float GIResolveEnabled;
+            float4 GIResolveSizes;
+        }
+
+        rgroup PerView.Lighting
+        {
+            Texture2D GIResolveTexture;
         }
 
         compose VoxelMarchSet diffuseMarcher;
         compose VoxelRadiusMarchMethod specularMarcher;
+
+        /// <summary>
+        /// Joint bilateral upsample of the reduced-resolution GI: the four texels around this
+        /// pixel, each weighted by how much of the pixel it covers and by how close its surface is
+        /// to this one.
+        /// </summary>
+        /// <remarks>
+        /// The texels are read point-sampled, not filtered. Alpha carries the depth the colour was
+        /// traced at, and a filtered fetch hands back a depth halfway between two surfaces -
+        /// belonging to neither - so every comparison against it is wrong by an amount that follows
+        /// the buffer's grid, which is exactly what a band across a wall is.
+        /// </remarks>
+        float3 SampleResolvedGI(float4 shadingPosition, out float valid)
+        {
+            float2 uv = shadingPosition.xy * GIResolveSizes.xy;
+            float2 bufferSize = 1.0 / GIResolveSizes.zw;
+
+            // Texel space, offset so the pixel's four neighbours are at (0,0)..(1,1).
+            float2 coordinate = uv * bufferSize - 0.5;
+            float2 origin = floor(coordinate);
+            float2 subTexel = coordinate - origin;
+
+            float depth = ZProjection.y / (shadingPosition.z - ZProjection.x);
+
+            // How far a tap's surface may sit from this pixel's before the buffer is held to have
+            // no answer here at all. The test exists for real breaks - a pane of glass shaded in
+            // front of a wall it never wrote into, a silhouette - and must not fire on a merely
+            // steep surface: a wall seen edge-on changes depth fast across the screen, the taps sit
+            // a whole divisor of pixels away, and rejecting those bands the wall. So take the
+            // surface's own slope over the distance travelled, and never less than a generous
+            // fraction of the depth.
+            float divisor = GIResolveSizes.z / GIResolveSizes.x;
+            float slope = (abs(ddx(depth)) + abs(ddy(depth))) * divisor * 4.0;
+            float tolerance = max(slope, depth * 0.15);
+
+            float3 sum = float3(0, 0, 0);
+            float total = 0;
+            float nearest = 1e30;
+
+            for (int i = 0; i < 4; i++)
+            {
+                float2 offset = float2(i & 1, (i >> 1) & 1);
+                float4 tap = GIResolveTexture.SampleLevel(PointSampler, (origin + offset + 0.5) * GIResolveSizes.zw, 0);
+
+                float tapDepth = ZProjection.y / (tap.a - ZProjection.x);
+                float difference = abs(tapDepth - depth);
+                nearest = min(nearest, difference);
+
+                // Bilinear coverage, then how much this tap looks like the same surface.
+                float2 coverage = lerp(1.0 - subTexel, subTexel, offset);
+                float weight = coverage.x * coverage.y / (0.001 + difference);
+
+                sum += tap.rgb * weight;
+                total += weight;
+            }
+
+            valid = nearest < tolerance ? 1.0 : 0.0;
+            return sum / max(total, 0.00001);
+        }
 
         override void PrepareEnvironmentLight()
         {
@@ -25,17 +95,24 @@ namespace Stride.Rendering.Voxels.VoxelGI
             {
                 float3 worldPos = streams.PositionWS;
 
-                float3 tan = normalize(cross(streams.normalWS.xyz, normalize(float3(1, 1, 1))));
-                float3 bitan = cross(tan, streams.normalWS.xyz);
-                float3x3 tangentMatrix = float3x3(tan, bitan, streams.normalWS.xyz);
+                // Uniform across the draw, so the branch costs nothing and the side not taken is
+                // never executed - which is the entire point when the other side is twelve cones.
+                float3 diffuse = float3(0, 0, 0);
+                float resolved = 0.0;
+                if (GIResolveEnabled > 0.0)
+                {
+                    float valid;
+                    diffuse = SampleResolvedGI(streams.ShadingPosition, valid);
+                    resolved = valid;
+                }
 
-                float4 reflLighting = float4(0, 0, 0, 0);
+                // Whatever the buffer could not answer for - silhouettes, and every transparent
+                // surface, which is shaded after the buffer was written and is not in it - falls
+                // back to marching here, as it always did.
+                if (resolved <= 0.0)
+                    diffuse = diffuseMarcher.March(worldPos, streams.normalWS.xyz).rgb;
 
-                float3 startPos = worldPos + streams.normalWS.xyz * specularMarcher.StepSizeRadius(1.0);
-
-                reflLighting = diffuseMarcher.March(worldPos, streams.normalWS.xyz);
-
-                streams.envLightDiffuseColor = reflLighting.rgb * Intensity;
+                streams.envLightDiffuseColor = diffuse * Intensity;
 
                 // The specular cone costs up to 60 steps per pixel, and on a rough surface its
                 // result is a blur the diffuse cones already approximate. Fade it out as roughness
@@ -44,9 +121,14 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 float roughness = sqrt(streams.alphaRoughness);
                 float specularFade = SpecularIntensity * saturate((SpecularRoughnessCutoff - roughness) * 8.0 + 1.0);
                 if (specularFade > 0.0)
+                {
+                    float3 startPos = worldPos + streams.normalWS.xyz * specularMarcher.StepSizeRadius(1.0);
                     streams.envLightSpecularColor = specularMarcher.MarchRadius(startPos, reflect(-streams.viewWS, streams.normalWS), roughness).rgb * specularFade;
+                }
                 else
+                {
                     streams.envLightSpecularColor = float4(0,0,0,0);
+                }
             }
         }
     };
