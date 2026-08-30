@@ -23,6 +23,13 @@ shader VoxelMarchConePerMipmap<int steps> : VoxelMarchMethod, MarchAttributes
 
             light += AttributeSamplers[AttributeID].SampleByMipNearestMip(pos, -rayDir, size) * saturate(1.0 - light.a);
 
+            // The cone is saturated: everything behind this point is occluded, and each further
+            // step would be scaled by (1 - light.a) ~ 0. In an interior most cones hit a wall
+            // within a few steps, so this drops the bulk of the marching cost exactly where
+            // cone tracing is at its most expensive.
+            if (light.a >= 0.99)
+                break;
+
             dist *= 2;
             size += 1;
         }

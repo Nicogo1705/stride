@@ -381,28 +381,26 @@ namespace Stride.Rendering.Voxels
 
 
 
-            ClearBuffer.Parameters.Set(ClearBufferKeys.buffer, FragmentsBuffer);
-
             if (UpdatesPerFrame != UpdateMethods.SingleClipmap)
             {
-                //Clear all
-                ClearBuffer.ThreadNumbers = new Int3(1024, 1, 1);
-                ClearBuffer.ThreadGroupCounts = ClearDispatch(FragmentsBuffer.ElementCount, out var fragmentsRowLength);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.offset, 0);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.rowLength, fragmentsRowLength);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.count, FragmentsBuffer.ElementCount);
+                // Clear all: the whole buffer is being zeroed, so hand it to the driver's native
+                // UAV clear instead of dispatching a compute shader that stores zero per element -
+                // at 256^3 anisotropic that shader was writing 800MB a frame.
+                drawContext.CommandList.ClearReadWrite(FragmentsBuffer, UInt4.Zero);
             }
             else
             {
-                //Clear next clipmap buffer
+                // Clear next clipmap buffer. Only a slice of the buffer is cleared, and a native
+                // UAV clear has no offset - so this one stays a compute dispatch.
                 var clipMapElements = (int)(ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints);
+                ClearBuffer.Parameters.Set(ClearBufferKeys.buffer, FragmentsBuffer);
                 ClearBuffer.ThreadNumbers = new Int3(1024, 1, 1);
                 ClearBuffer.ThreadGroupCounts = ClearDispatch(clipMapElements, out var clipMapRowLength);
                 ClearBuffer.Parameters.Set(ClearBufferKeys.offset, (int)(((ClipMapCurrent+1) % ClipMapCount) * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints));
                 ClearBuffer.Parameters.Set(ClearBufferKeys.rowLength, clipMapRowLength);
                 ClearBuffer.Parameters.Set(ClearBufferKeys.count, clipMapElements);
+                ((RendererBase)ClearBuffer).Draw(drawContext);
             }
-            ((RendererBase)ClearBuffer).Draw(drawContext);
         }
     }
 }
