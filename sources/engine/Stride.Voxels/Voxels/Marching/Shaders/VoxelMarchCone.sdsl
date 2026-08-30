@@ -27,6 +27,11 @@ shader VoxelMarchCone<int steps, float stepScale, float coneRatio, float offset>
 
             light += AttributeSamplers[AttributeID].sampleFunction(pos, -rayDir, diameter) * saturate(1.0 - light.a);
 
+            // Saturated: every further sample is scaled by (1 - light.a) ~ 0. Specular cones run
+            // up to 60 steps, and in an interior most of them hit a surface long before that.
+            if (light.a >= 0.99)
+                break;
+
             dist += diameter * stepScale;
         }
         return light;
