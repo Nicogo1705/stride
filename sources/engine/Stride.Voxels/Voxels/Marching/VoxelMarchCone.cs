@@ -25,15 +25,26 @@ namespace Stride.Rendering.Voxels
         [DataMember(50)]
         public float StartOffset = 1.0f;
 
+        /// <summary>
+        /// Furthest the cone may travel, in world units, or zero for no limit.
+        /// </summary>
+        /// <remarks>
+        /// A uniform rather than a template argument, so changing it does not compile a new
+        /// permutation of the shader.
+        /// </remarks>
+        [DataMember(60)]
+        public float MaxDistance = 0.0f;
+
         public VoxelMarchCone()
         {
 
         }
-        public VoxelMarchCone(int steps, float stepScale, float ratio)
+        public VoxelMarchCone(int steps, float stepScale, float ratio, float maxDistance = 0.0f)
         {
             Steps = steps;
             StepScale = stepScale;
             ConeRatio = ratio;
+            MaxDistance = maxDistance;
             EditMode = false;
         }
         public ShaderSource GetMarchingShader(int attrID)
@@ -58,8 +69,11 @@ namespace Stride.Rendering.Voxels
         ValueParameterKey<float> ConeRatioKey;
         ValueParameterKey<int> FastKey;
         ValueParameterKey<float> OffsetKey;
+        ValueParameterKey<float> MaxDistanceKey;
         public void UpdateMarchingLayout(string compositionName)
         {
+            if (!EditMode)
+                MaxDistanceKey = VoxelMarchConeKeys.maxTraceDistance.ComposeWith(compositionName);
             if (EditMode)
             {
                 StepsKey = VoxelMarchConeEditModeKeys.steps.ComposeWith(compositionName);
@@ -71,6 +85,8 @@ namespace Stride.Rendering.Voxels
         }
         public void ApplyMarchingParameters(ParameterCollection parameters)
         {
+            if (!EditMode)
+                parameters.Set(MaxDistanceKey, MaxDistance);
             if (EditMode)
             {
                 parameters.Set(StepsKey, Steps);
