@@ -378,10 +378,24 @@ namespace Stride.Rendering.Voxels
 
 
             int processYSize = VoxelsAreIndependent ? (int)ClipMapResolution.Y : 1;
-            processYSize *= (UpdatesPerFrame == UpdateMethods.SingleClipmap) ? 1 : ClipMapCount;
+            var everyClipMap = UpdatesPerFrame != UpdateMethods.SingleClipmap;
+            if (everyClipMap)
+                processYSize *= ClipMapCount;
 
-            BufferWriter.ThreadGroupCounts = VoxelsAreIndependent ? new Int3(32, 32, 32) : new Int3(32, 1, 32);
-            BufferWriter.ThreadNumbers = new Int3((int)ClipMapResolution.X / BufferWriter.ThreadGroupCounts.X, processYSize / BufferWriter.ThreadGroupCounts.Y, (int)ClipMapResolution.Z / BufferWriter.ThreadGroupCounts.Z);
+            // The ring count belongs in the number of groups dispatched, not in the size of one.
+            //
+            // ThreadNumbers is what numthreads() declares, and D3D caps its product at 1024. Y was
+            // carrying the extra rings, so a run over all of them asked for numthreads(8, 8 x rings,
+            // 8): fine at one ring, exactly 1024 at two, and a shader that refuses to compile at
+            // three or more. Nothing hit it because the single-ring path - the default - leaves the
+            // factor at one. Multiplying the group count instead dispatches the same total threads
+            // in more, smaller groups, which is the same work with a legal declaration.
+            var groups = VoxelsAreIndependent ? new Int3(32, 32, 32) : new Int3(32, 1, 32);
+            if (everyClipMap)
+                groups.Y *= ClipMapCount;
+
+            BufferWriter.ThreadGroupCounts = groups;
+            BufferWriter.ThreadNumbers = new Int3((int)ClipMapResolution.X / groups.X, processYSize / groups.Y, (int)ClipMapResolution.Z / groups.Z);
 
             BufferWriter.Parameters.Set(BufferToTextureKeys.VoxelFragments, FragmentsBuffer);
             BufferWriter.Parameters.Set(BufferToTextureKeys.clipMapResolution, ClipMapResolution);
@@ -436,11 +450,23 @@ namespace Stride.Rendering.Voxels
             {
                 // Clear next clipmap buffer. Only a slice of the buffer is cleared, and a native
                 // UAV clear has no offset - so this one stays a compute dispatch.
+                //
+                // Which slice: the one the ring voxelized *next* frame will write into. That ring is
+                // ClipMapCurrent + 1 wrapped by the ring count, and it is the wrap that matters -
+                // taking (ClipMapCurrent + 1) % FragmentSlots instead assumes the successor of the
+                // last ring is the last ring plus one, which is only the same slot when the ring
+                // count is even. With an odd count the cycle ends on slot 0, clears slot 1, and then
+                // fills slot 0 again over fragments the coarsest ring left there - so once per cycle
+                // the finest ring is voxelized on top of the largest one's leftovers and hands back
+                // the whole volume under the finest ring's addressing. In a reflection that reads as
+                // a small copy of the entire level, centred on the camera, and it appears at three
+                // and five rings while four and two are clean.
                 var clipMapElements = (int)(ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints);
+                var nextClipMap = (ClipMapCurrent + 1) % ClipMapCount;
                 ClearBuffer.Parameters.Set(ClearBufferKeys.buffer, FragmentsBuffer);
                 ClearBuffer.ThreadNumbers = new Int3(1024, 1, 1);
                 ClearBuffer.ThreadGroupCounts = ClearDispatch(clipMapElements, out var clipMapRowLength);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.offset, (int)(((ClipMapCurrent + 1) % FragmentSlots) * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints));
+                ClearBuffer.Parameters.Set(ClearBufferKeys.offset, (int)((nextClipMap % FragmentSlots) * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints));
                 ClearBuffer.Parameters.Set(ClearBufferKeys.rowLength, clipMapRowLength);
                 ClearBuffer.Parameters.Set(ClearBufferKeys.count, clipMapElements);
                 ((RendererBase)ClearBuffer).Draw(drawContext);
