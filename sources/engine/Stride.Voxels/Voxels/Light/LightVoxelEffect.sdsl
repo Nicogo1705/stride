@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using Stride.Rendering.Data;
 using Stride.Rendering.Lights;
@@ -22,6 +22,10 @@ namespace Stride.Rendering.Voxels.VoxelGI
         if (LightVoxelShaderKeys.specularMarcher != null)
         {
             mixin compose specularMarcher = LightVoxelShaderKeys.specularMarcher;
+        }
+        if (LightVoxelShaderKeys.bounceMarcher != null)
+        {
+            mixin compose bounceMarcher = LightVoxelShaderKeys.bounceMarcher;
         }
         if (MarchAttributesKeys.AttributeSamplers!=null)
         {

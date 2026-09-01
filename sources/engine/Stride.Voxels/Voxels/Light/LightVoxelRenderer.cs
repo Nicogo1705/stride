@@ -93,6 +93,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
             private ShaderSource resolveMarcher;
 
             private PermutationParameterKey<ShaderSource> diffuseMarcherKey;
+            private PermutationParameterKey<ShaderSource> bounceMarcherKey;
+            private ValueParameterKey<float> bounceMarchEnabledKey;
             private PermutationParameterKey<ShaderSource> specularMarcherKey;
             private PermutationParameterKey<ShaderSourceCollection> attributeSamplersKey;
 
@@ -154,6 +156,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 giResolveTextureKey = LightVoxelShaderKeys.GIResolveTexture.ComposeWith(compositionName);
 
                 diffuseMarcherKey = LightVoxelShaderKeys.diffuseMarcher.ComposeWith(compositionName);
+                bounceMarcherKey = LightVoxelShaderKeys.bounceMarcher.ComposeWith(compositionName);
+                bounceMarchEnabledKey = LightVoxelShaderKeys.BounceMarchEnabled.ComposeWith(compositionName);
                 specularMarcherKey = LightVoxelShaderKeys.specularMarcher.ComposeWith(compositionName);
                 attributeSamplersKey = MarchAttributesKeys.AttributeSamplers.ComposeWith(compositionName);
 
@@ -163,6 +167,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                         ((LightVoxel)Light.Type).DiffuseMarcher.UpdateMarchingLayout("diffuseMarcher." + compositionName);
                     if (((LightVoxel)Light.Type).SpecularMarcher != null)
                         ((LightVoxel)Light.Type).SpecularMarcher.UpdateMarchingLayout("specularMarcher." + compositionName);
+                    ((LightVoxel)Light.Type).BounceMarcher?.UpdateMarchingLayout("bounceMarcher." + compositionName);
                     traceAttribute.UpdateSamplingLayout("AttributeSamplers[0]." + compositionName);
                 }
             }
@@ -181,6 +186,15 @@ namespace Stride.Rendering.Voxels.VoxelGI
                         renderEffect.EffectValidator.ValidateParameter(diffuseMarcherKey, ((LightVoxel)Light.Type).DiffuseMarcher.GetMarchingShader(0));
                     if (((LightVoxel)Light.Type).SpecularMarcher != null)
                         renderEffect.EffectValidator.ValidateParameter(specularMarcherKey, ((LightVoxel)Light.Type).SpecularMarcher.GetMarchingShader(0));
+
+                    // The composition exists whether or not the light has a bounce marcher: a
+                    // compose with nothing in it does not compile. With none set, the diffuse
+                    // marcher's own shader fills the slot and BounceMarchEnabled stays at zero, so
+                    // the branch that would read it is never taken - and its parameters, which
+                    // nobody writes, are never read either.
+                    var bounce = ((LightVoxel)Light.Type).BounceMarcher ?? ((LightVoxel)Light.Type).DiffuseMarcher;
+                    if (bounce != null)
+                        renderEffect.EffectValidator.ValidateParameter(bounceMarcherKey, bounce.GetMarchingShader(0));
                 }
             }
 
@@ -207,6 +221,9 @@ namespace Stride.Rendering.Voxels.VoxelGI
                     specularIntensity = 0.0f;
                 }
 
+                // Only a voxel view marches the bounce set, and only when there is one to march.
+                parameters.Set(bounceMarchEnabledKey, viewContext.IsVoxelView && lightVoxel.BounceMarcher != null ? 1.0f : 0.0f);
+
                 parameters.Set(intensityKey, intensity);
                 parameters.Set(specularIntensityKey, specularIntensity);
                 parameters.Set(specularRoughnessCutoffKey, lightVoxel.SpecularRoughnessCutoff);
@@ -224,6 +241,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 {
                     lightVoxel.DiffuseMarcher?.ApplyMarchingParameters(parameters);
                     lightVoxel.SpecularMarcher?.ApplyMarchingParameters(parameters);
+                    lightVoxel.BounceMarcher?.ApplyMarchingParameters(parameters);
                     traceAttribute.ApplySamplingParameters(viewContext, parameters);
                 }
             }

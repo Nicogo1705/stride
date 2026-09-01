@@ -26,6 +26,27 @@ namespace Stride.Rendering.Voxels.VoxelGI
         [DataMember(30)]
         public IVoxelMarchMethod SpecularMarcher { get; set; } = new VoxelMarchCone(30, 0.5f, 1.0f);
 
+        /// <summary>
+        /// The cone set traced while voxelizing, when <see cref="BounceIntensityScale"/> feeds the
+        /// indirect light back into the voxels. Null marches <see cref="DiffuseMarcher"/> there too.
+        /// </summary>
+        /// <remarks>
+        /// The two views ask the same question and can afford very different answers. What a shaded
+        /// pixel receives is looked at directly, and is traced once per pixel - or once per pixel of
+        /// a reduced buffer, see <see cref="ScreenSpaceDivisor"/>. What a voxelized fragment
+        /// receives is written into a voxel, averaged with everything else in it, mipmapped, and
+        /// then read back through a cone that integrates a mip: it is blurred twice before anyone
+        /// sees it, and there is no screen-space reduction to spread its cost over. It is therefore
+        /// both the more expensive of the two and the one that can least tell the difference.
+        /// <para>
+        /// Give it a distinct instance, never the same object as <see cref="DiffuseMarcher"/>: a
+        /// marcher holds one set of composed parameter keys, and two compositions sharing an
+        /// instance leave one of them unwritten.
+        /// </para>
+        /// </remarks>
+        [DataMember(35)]
+        public IVoxelMarchSet BounceMarcher { get; set; }
+
         [DataMember(40)]
         public float BounceIntensityScale { get; set; }
         [DataMember(50)]
