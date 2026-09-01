@@ -1,67 +1,90 @@
 # Voxel physics — a Bepu collidable over the voxel grid
 
-Companion to ROADMAP.md step 4. Question answered here: can a Bepu collider take the same
-voxel data and generate contacts on the fly, instead of colliding against a generated mesh?
-
-**Yes.** Bepu v2 is built for it, and every extension point needed is public in the version
-Stride ships (BepuPhysics 2.5.0-beta.28). There are two real frictions, both on the Stride
-side rather than the Bepu side.
+Companion to ROADMAP.md step 4, and now a description of what was built rather than a proposal.
+The code lives in `Stride.BepuPhysics`, not here, because `ICollider` is partly internal — see
+*Where it had to live* below.
 
 ## What it replaces
 
-The current arrangement for a voxel game on Stride.BepuPhysics: the marching-cubes compute
-shader produces a mesh on the GPU, the vertex and index bytes are read back and kept on the
-CPU purely so `MeshCollider` can exist, and Bepu builds a per-chunk BVH over those triangles.
-Every terrain edit re-meshes, re-reads, and rebuilds that BVH.
+The arrangement a voxel game on `Stride.BepuPhysics` is forced into today: the marching-cubes
+compute shader produces a mesh on the GPU, the vertex and index bytes are read back and kept on the
+CPU purely so `MeshCollider` can exist, and Bepu builds a per-chunk bounding volume tree over those
+triangles. Every terrain edit re-meshes, re-reads and rebuilds that tree.
 
-A voxel collidable deletes all of it: no CPU-side mesh copy, no readback, no per-chunk tree
-build, and an edit costs one array write.
+`VoxelCollider` deletes all of it. It holds the density field and nothing else: no mesh, no
+readback, no per-chunk tree, no rebuild. Digging is `SetVoxel`, one store, and the collidable's
+bounds do not even change.
+
+## The pieces
+
+| File | Role |
+| --- | --- |
+| `Definitions/Colliders/VoxelCollider.cs` | The `ICollider` a `StaticComponent` or `BodyComponent` carries. Owns the sample buffer, exposes `SetData` / `SetVoxel` / `GetVoxel`. |
+| `Definitions/Colliders/Voxels/VoxelChildForm.cs` | `Box`, `Sphere`, `TriangleMarchingCubes`, `TriangleSurfaceNets`. |
+| `Definitions/Colliders/Voxels/VoxelGridData.cs` | The field, and every piece of geometry derived from it: cell solidity, the marching-cubes case table and edge interpolation, the surface-nets vertex and quads. |
+| `Definitions/Colliders/Voxels/VoxelShapes.cs` | Three Bepu shapes — box, sphere, triangle children — plus the grid walks they share. |
+| `Definitions/Colliders/Voxels/VoxelContinuations.cs` | What the collision batcher does with the resulting manifolds. |
+| `Definitions/Colliders/Voxels/VoxelCollisionTasks.cs` | Registration, called once from `BepuSimulation`. |
+
+## Data
+
+One `ushort` per sample, density in bits 0-7 and material in bits 8-15, x-major with z varying
+fastest — the layout a voxel game already uses to upload a chunk, so one array serves rendering and
+collision. A grid of n cells per axis takes n+1 samples per axis, because a cell reads the eight
+samples at its corners.
+
+`SetData` copies into native memory the collider owns, so it survives attach and detach cycles and
+is freed on `Dispose` or finalization. Writes through `SetVoxel` are visible to the simulation
+immediately — which is the point — so make them between steps, not during one.
 
 ## How it works in Bepu
 
-`BepuPhysics.Collidables.Mesh` is not special — it is a public interface implementation, and
-a voxel shape follows the same recipe:
+`BepuPhysics.Collidables.Mesh` is not special; it is a public interface implementation, and the
+voxel shapes follow the same recipe:
 
-- Implement `IHomogeneousCompoundShape<Box, BoxWide>` (public): `ChildCount`,
-  `GetLocalChild`, `GetPosedLocalChild`, `ComputeBounds`, `RayTest`. Each "child" is a voxel
-  as a box; nothing is stored, the child is *computed* from the packed voxel array on demand.
-- Implement `BepuPhysics.CollisionDetection.CollisionTasks.IBoundsQueryableCompound`
-  (public). This is the one that matters for contacts on the fly: Bepu hands it the bounding
-  box of the other collidable, and the shape enumerates only the voxels overlapping it —
-  a bounded triple loop over the grid, no acceleration structure needed, because a regular
-  grid *is* the acceleration structure.
-- Register the shape's collision tasks on `Simulation.NarrowPhase.CollisionTaskRegistry`
-  (`Register` is public) after `Simulation.Create`, and give the shape a `TypeId` past the
-  built-ins via `CreateShapeBatch` / `HomogeneousCompoundShapeBatch`.
+- `IHomogeneousCompoundShape<TChild, TChildWide>` — one child type for the whole shape. Each child
+  is *computed* from the field on demand; nothing is stored per child.
+- `IBoundsQueryableCompound` — Bepu hands over the other collidable's bounding box, and the shape
+  enumerates the children overlapping it. Where `Mesh` traverses a tree, this divides by the cell
+  size and walks a range of indices: **a regular grid already is the acceleration structure.** Ray
+  tests likewise walk the cells the ray crosses with a DDA, so a short probe touches a handful.
+- Collision and sweep tasks are registered on `Simulation.NarrowPhase` after `Simulation.Create`,
+  with type ids 12, 13 and 14 (Bepu's built-ins end at `Mesh` = 8).
 
-This is the same shape Bepu's own voxel demo uses; it is a supported pattern, not a hack.
+## The forms
 
-## The two frictions
+`Box` and `Sphere` give one child per solid cell — a cell counts as solid when the mean of its eight
+corners reaches the iso level, which stays within half a cell of the rendered surface either way.
+Sphere rounds off the lattice corners characters would otherwise catch on, at the cost of gaps along
+cell diagonals.
 
-**1. `ICollider` is partly internal.** `Stride.BepuPhysics.Definitions.Colliders.ICollider`
-declares `Component`, `TryAttach`, `Detach`, `AppendModel` and `RayTest` as `internal`, so a
-custom collider *cannot* be written from game code. It has to live inside
-`Stride.BepuPhysics`, or in an assembly listed in its `InternalsVisibleTo` — which is
-exactly how `Stride.BepuPhysics.Soft`, `._2D`, `.Navigation` and `.Debug` already extend it.
+`TriangleMarchingCubes` and `TriangleSurfaceNets` reproduce the rendered iso-surface exactly: same
+table, same corner ordering, same air-is-set case convention, same linear edge interpolation, same
+reversed emission order as the renderer's compute shader. Child indices are `cellIndex * 6 + slot`;
+marching cubes uses five of the six slots and leaves one empty, which costs nothing because slots
+are an indexing convention rather than storage.
 
-So the voxel collider is an engine-side change. Either add it to Stride.BepuPhysics, or
-create a sibling package and add it to the `InternalsVisibleTo` list.
+Bepu triangles collide on one side only, so if the surface pushes bodies *into* the ground rather
+than out of it, `InvertWinding` is the correction.
 
-**2. The data has to be reachable from the physics thread.** The collidable holds a
-reference to the game's voxel array, so writes from terrain edits and reads from the narrow
-phase have to be ordered — the same discipline the chunk workers already use for
-`HasDensity` / `LightDirty` release barriers.
+## Known limitations
 
-## Shape of the surface
+**No boundary smoothing on the triangle forms.** Bepu removes the bumps a character feels crossing
+internal edges with a `MeshReduction`, and in the version Stride ships (2.5.0-beta.28) that type is
+bound to the concrete `Mesh`: it keeps a raw pointer to the shape and casts it back to `Mesh*` at
+flush time, so aiming it at a voxel shape would read the wrong fields. Bepu's own voxel sample makes
+the same trade, and its author calls boundary smoothing for voxels "a not-easy exercise". Upstream
+`master` has since generalized `MeshReduction` over any homogeneous compound with triangle children
+via thunks; when Stride moves to a Bepu that has them, the triangle forms can switch to
+`ConvexMeshContinuations` and this limitation disappears. Until then `TriangleSurfaceNets` is the
+better triangle form, having far fewer and larger triangles than marching cubes.
 
-Voxels-as-boxes gives a blocky collision surface, which will not match a smooth
-marching-cubes visual. Three options, cheapest first:
+**Entity scale is ignored.** The grid's only scale is `CellSize`.
 
-- Accept it. For a mining game the mismatch is often under the character radius.
-- Emit the marching-cubes triangle for straddling cells as the child shape instead of a box
-  (`IHomogeneousCompoundShape<Triangle, TriangleWide>`) — computed from the same trilinear
-  field, so it matches the rendered surface exactly, still with nothing stored.
-- Keep meshes for the few chunks under the player and voxels everywhere else.
+**Nothing is drawn in the physics debug view.** There is no mesh to hand it, and building one would
+rebuild exactly what this collider exists to avoid.
 
-The second is the one that actually matches ROADMAP.md step 2: the same iso-surface
-solve, once for rendering and once for contacts, from one array.
+**Compiled, not yet run.** Everything above builds clean against beta.28, both through the dev
+package path and around it, but no scene has exercised it yet. The parts most likely to need a fix
+on first contact are the surface-nets quad winding and whether anything in Bepu's sweep path loops
+over `ChildCount`, which for the triangle forms is cells x 6 rather than a triangle count.

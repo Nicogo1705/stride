@@ -311,6 +311,10 @@ public sealed class BepuSimulation : IDisposable
 
         Simulation = Simulation.Create(BufferPool, strideNarrowPhaseCallbacks, stridePoseIntegratorCallbacks, solveDescription);
 
+        // Bepu finds shape types through registered collision tasks rather than reflection, so the
+        // voxel shapes have to be announced before anything can collide with a VoxelCollider.
+        Definitions.Colliders.Voxels.VoxelCollisionTasks.Register(Simulation);
+
         CollidableMaterials.Initialize(Simulation);
         ContactEvents.Initialize();
 
