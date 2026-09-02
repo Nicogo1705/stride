@@ -66,6 +66,17 @@ namespace Stride.Rendering.Voxels.Grid
         public float IsoLevel { get; set; } = 0.5f;
 
         /// <summary>
+        /// Whether the crossing is solved inside the cell that contains it.
+        /// </summary>
+        /// <remarks>
+        /// On, the surface matches the one a renderer or a collider meshes from the same samples,
+        /// because it is the same trilinear reconstruction. Off, the ray stops at the cell and the
+        /// world is made of cubes - not a lesser answer, a different one, and the right one for a
+        /// game that means its blocks. Both walk the same cells.
+        /// </remarks>
+        public bool Smooth { get; set; } = true;
+
+        /// <summary>
         /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
         /// touches on the order of 768, so this bounds the worst case rather than the common one.
         /// </summary>
@@ -73,6 +84,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         private ValueParameterKey<float> cellSizeKey;
         private ValueParameterKey<float> isoLevelKey;
+        private ValueParameterKey<float> smoothKey;
         private ValueParameterKey<int> maxStepsKey;
 
         public ShaderSource GetShaderSource()
@@ -87,6 +99,7 @@ namespace Stride.Rendering.Voxels.Grid
         {
             cellSizeKey = VoxelGridTraversalDDAKeys.VoxelGridCellSize.ComposeWith(compositionName);
             isoLevelKey = VoxelGridTraversalDDAKeys.VoxelGridIsoLevel.ComposeWith(compositionName);
+            smoothKey = VoxelGridTraversalDDAKeys.VoxelGridSmoothSurface.ComposeWith(compositionName);
             maxStepsKey = VoxelGridTraversalDDAKeys.VoxelGridMaxSteps.ComposeWith(compositionName);
             Source.UpdateLayout("Source." + compositionName);
         }
@@ -95,6 +108,7 @@ namespace Stride.Rendering.Voxels.Grid
         {
             parameters.Set(cellSizeKey, CellSize);
             parameters.Set(isoLevelKey, IsoLevel);
+            parameters.Set(smoothKey, Smooth ? 1f : 0f);
             parameters.Set(maxStepsKey, MaxSteps);
             Source.ApplyParameters(parameters);
         }

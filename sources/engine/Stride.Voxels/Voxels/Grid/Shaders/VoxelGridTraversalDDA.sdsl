@@ -2,17 +2,23 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// Walks the cells a ray crosses, in order, and stops at the first solid one.
+    /// Walks the cells a ray crosses, in order, and stops where the surface actually is.
     ///
-    /// A three dimensional DDA: clip the ray to the grid box, then step along whichever axis reaches
-    /// its next cell boundary first. It needs nothing but the occupancy - no acceleration structure
-    /// to build, no distance field to precompute, nothing to rebuild when a voxel changes - and it
-    /// is exact, because a regular grid already is the structure a ray wants.
+    /// Two steps, and the split is the whole design. A three dimensional DDA skips cells: clip the
+    /// ray to the grid box, then step along whichever axis reaches its next boundary first. That
+    /// needs nothing but the field - no acceleration structure to build, no distance field to
+    /// precompute, nothing to rebuild when a voxel changes - and it visits exactly the cells the ray
+    /// meets, because a regular grid already is the structure a ray wants.
+    ///
+    /// Then, inside the one cell that contains the surface, the crossing is solved on the trilinear
+    /// field. Stopping at the cell instead would draw the grid rather than the surface, which reads
+    /// as a staircase however fine the cells are - and it would disagree with the mesh a renderer or
+    /// a collider builds from the same samples, which interpolate exactly this way.
     ///
     /// A sphere tracer would take larger steps through empty space, but it needs a distance correct
-    /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing
-    /// across one walks through walls. When empty space becomes the cost, the answer is a coarse
-    /// occupancy pyramid to skip whole bricks, not a change of algorithm.
+    /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing across
+    /// one walks through walls. When empty space becomes the cost, the answer is a coarse occupancy
+    /// pyramid to skip whole bricks, not a change of algorithm.
     shader VoxelGridTraversalDDA : IVoxelGridTraversal
     {
         compose IVoxelGridSource Source;
@@ -23,12 +29,86 @@ namespace Stride.Rendering.Voxels.Grid
         /// Density at or above which a sample counts as solid.
         float VoxelGridIsoLevel;
 
+        /// 1 solves the crossing inside the cell, for a surface that matches a meshed one; 0 stops
+        /// at the cell itself, for a world that is meant to look like cubes. Both walk the same
+        /// cells - only what counts as a hit differs.
+        float VoxelGridSmoothSurface;
+
         /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
         /// touches on the order of 768, so this bounds the worst case rather than the common one.
         int VoxelGridMaxSteps;
 
-        /// A cell is solid when the mean of its eight corners reaches the iso level - the same rule
-        /// the voxel collider applies, so what is drawn and what is collided against agree.
+        /// Bisection steps that place the crossing once the interval holding it is known. Each
+        /// halves the error, so six put the surface within a sixty-fourth of a cell - well below
+        /// what a pixel resolves.
+        static const int RefineSteps = 6;
+
+        /// The field between samples, trilinear - the same reconstruction marching cubes and surface
+        /// nets interpolate along their edges, so the traced surface and a meshed one agree.
+        float SampleField(float3 localPosition)
+        {
+            float3 grid = localPosition / VoxelGridCellSize;
+            int3 cell = (int3)floor(grid);
+            float3 f = grid - (float3)cell;
+
+            float d000 = Source.Density(cell + int3(0, 0, 0));
+            float d100 = Source.Density(cell + int3(1, 0, 0));
+            float d010 = Source.Density(cell + int3(0, 1, 0));
+            float d110 = Source.Density(cell + int3(1, 1, 0));
+            float d001 = Source.Density(cell + int3(0, 0, 1));
+            float d101 = Source.Density(cell + int3(1, 0, 1));
+            float d011 = Source.Density(cell + int3(0, 1, 1));
+            float d111 = Source.Density(cell + int3(1, 1, 1));
+
+            float dx00 = lerp(d000, d100, f.x);
+            float dx10 = lerp(d010, d110, f.x);
+            float dx01 = lerp(d001, d101, f.x);
+            float dx11 = lerp(d011, d111, f.x);
+            return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
+        }
+
+        /// The albedo between samples, on the same trilinear weights as the field.
+        ///
+        /// Reading it from the cell the hit landed in instead makes the colour change on cell
+        /// boundaries, which draws a staircase along every material boundary - on a surface that is
+        /// otherwise perfectly smooth, so it reads as a geometry fault rather than what it is.
+        float3 SampleAlbedo(float3 localPosition)
+        {
+            float3 grid = localPosition / VoxelGridCellSize;
+            int3 cell = (int3)floor(grid);
+            float3 f = grid - (float3)cell;
+
+            float3 a000 = Source.Albedo(cell + int3(0, 0, 0));
+            float3 a100 = Source.Albedo(cell + int3(1, 0, 0));
+            float3 a010 = Source.Albedo(cell + int3(0, 1, 0));
+            float3 a110 = Source.Albedo(cell + int3(1, 1, 0));
+            float3 a001 = Source.Albedo(cell + int3(0, 0, 1));
+            float3 a101 = Source.Albedo(cell + int3(1, 0, 1));
+            float3 a011 = Source.Albedo(cell + int3(0, 1, 1));
+            float3 a111 = Source.Albedo(cell + int3(1, 1, 1));
+
+            float3 ax00 = lerp(a000, a100, f.x);
+            float3 ax10 = lerp(a010, a110, f.x);
+            float3 ax01 = lerp(a001, a101, f.x);
+            float3 ax11 = lerp(a011, a111, f.x);
+            return lerp(lerp(ax00, ax10, f.y), lerp(ax01, ax11, f.y), f.z);
+        }
+
+        /// Central differences on the reconstructed field, half a cell apart. Taken at the hit rather
+        /// than at cell corners, so the normal turns continuously across a face instead of snapping
+        /// to it.
+        float3 FieldGradient(float3 localPosition)
+        {
+            float h = VoxelGridCellSize * 0.5;
+            return float3(
+                SampleField(localPosition + float3(h, 0, 0)) - SampleField(localPosition - float3(h, 0, 0)),
+                SampleField(localPosition + float3(0, h, 0)) - SampleField(localPosition - float3(0, h, 0)),
+                SampleField(localPosition + float3(0, 0, h)) - SampleField(localPosition - float3(0, 0, h)));
+        }
+
+        /// Whether a cell counts as solid when the surface is not being interpolated: the mean of
+        /// its eight corners reaches the iso level. The same rule the voxel collider's box form
+        /// applies, so cubes drawn and cubes collided against are the same cubes.
         bool CellIsSolid(int3 cell)
         {
             float sum =
@@ -39,14 +119,27 @@ namespace Stride.Rendering.Voxels.Grid
             return sum * 0.125 >= VoxelGridIsoLevel;
         }
 
-        /// Central differences on the density field. Smooth, and free of the faceting a face normal
-        /// gives to a surface meant to look continuous.
-        float3 DensityGradient(int3 cell)
+        /// Whether the surface can pass through a cell: its eight corners are not all on the same
+        /// side of the iso level. Eight loads, and it rejects almost every cell a ray meets.
+        bool CellStraddles(int3 cell)
         {
-            return float3(
-                Source.Density(cell + int3(1, 0, 0)) - Source.Density(cell - int3(1, 0, 0)),
-                Source.Density(cell + int3(0, 1, 0)) - Source.Density(cell - int3(0, 1, 0)),
-                Source.Density(cell + int3(0, 0, 1)) - Source.Density(cell - int3(0, 0, 1)));
+            float iso = VoxelGridIsoLevel;
+            int inside = 0;
+            inside += Source.Density(cell + int3(0, 0, 0)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(1, 0, 0)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(0, 1, 0)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(1, 1, 0)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(0, 0, 1)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(1, 0, 1)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(0, 1, 1)) >= iso ? 1 : 0;
+            inside += Source.Density(cell + int3(1, 1, 1)) >= iso ? 1 : 0;
+            return inside > 0 && inside < 8;
+        }
+
+        override float3 Probe(float3 localPosition)
+        {
+            int3 cell = clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), Source.SampleCount() - int3(2, 2, 2));
+            return float3(Source.SampleCount().x / 128.0, Source.Density(cell), VoxelGridIsoLevel);
         }
 
         override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
@@ -72,8 +165,24 @@ namespace Stride.Rendering.Voxels.Grid
             float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
             float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
 
+            bool smooth = VoxelGridSmoothSurface > 0.5;
             bool running = tEnter <= tExit;
             bool hit = false;
+            float tHit = 0;
+
+            // Which face of the box the ray entered through. It is the normal to use when the first
+            // cell is already solid - without it that case falls back on a fixed axis, and the
+            // result is a wrongly lit band that slides about as the camera moves.
+            int axis = nearest.x >= nearest.y && nearest.x >= nearest.z ? 0 : (nearest.y >= nearest.z ? 1 : 2);
+
+            // Entering already inside matter - the volume cut by its own boundary - makes the box
+            // face the surface, and there is nothing to refine.
+            if (running && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
+            {
+                hit = true;
+                running = false;
+                tHit = tEnter;
+            }
 
             float3 entry = origin + safeDirection * tEnter;
             int3 cell = clamp((int3)floor(entry / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
@@ -84,27 +193,69 @@ namespace Stride.Rendering.Voxels.Grid
             float3 tMax = (boundary - origin) * inverseDirection;
 
             float t = tEnter;
-            int axis = 0;
 
             // Neither break nor return: an early return inside a loop miscompiles on some targets,
             // so the walk ends by clearing its condition instead.
             for (int i = 0; i < VoxelGridMaxSteps && running; i++)
             {
-                if (CellIsSolid(cell))
+                float tLeave = min(min(tMax.x, tMax.y), tMax.z);
+                float tSegmentEnd = min(tLeave, tExit);
+
+                // Flat rather than nested: an else attached to an if whose body is itself an if
+                // parses as belonging to the inner one, and the shader is then rejected.
+                bool solidCube = !smooth && CellIsSolid(cell);
+
+                // Four points across the segment this cell gives the ray. Testing only where it
+                // leaves misses a surface that enters and leaves within one cell, which is what
+                // happens wherever one surface passes in front of another at a shallow angle - the
+                // ray then carries on to a cell further back, one step lower, and that is the
+                // staircase along such an edge.
+                //
+                // Written flat rather than as a loop on purpose: the bisection below is already a
+                // loop, and three levels of nesting inside a shader method is more than the parser
+                // will take.
+                float t1 = lerp(t, tSegmentEnd, 0.25);
+                float t2 = lerp(t, tSegmentEnd, 0.50);
+                float t3 = lerp(t, tSegmentEnd, 0.75);
+
+                bool in1 = smooth && SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
+                bool in2 = smooth && SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
+                bool in3 = smooth && SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
+                bool in4 = smooth && SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
+
+                bool crosses = smooth && CellStraddles(cell) && (in1 || in2 || in3 || in4);
+
+                // The first point known to be inside, and the last one known to be outside: the
+                // crossing is between them.
+                float insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                float outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
+
+                if (solidCube)
                 {
+                    // Cubes: the hit is the face the ray crossed to get here, which is where it
+                    // already stands.
+                    tHit = t;
                     hit = true;
                     running = false;
-                    hitDistance = t;
-                    hitAlbedo = Source.Albedo(cell);
-
-                    float3 gradient = DensityGradient(cell);
-                    float3 faceNormal = float3(
-                        axis == 0 ? -stepDirection.x : 0,
-                        axis == 1 ? -stepDirection.y : 0,
-                        axis == 2 ? -stepDirection.z : 0);
-                    // A flat region has no gradient to normalize; the face just crossed is then the
-                    // only normal available.
-                    hitNormal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : faceNormal;
+                }
+                else if (crosses)
+                {
+                    // Bisect between where the ray was still outside and the first point known to be
+                    // inside. Only a sign is ever needed, never a distance - which is what lets this
+                    // work on a field that is not a distance field.
+                    float low = outsideAt;
+                    float high = insideAt;
+                    for (int step = 0; step < RefineSteps; step++)
+                    {
+                        float mid = (low + high) * 0.5;
+                        if (SampleField(origin + safeDirection * mid) >= VoxelGridIsoLevel)
+                            high = mid;
+                        else
+                            low = mid;
+                    }
+                    tHit = high;
+                    hit = true;
+                    running = false;
                 }
                 else
                 {
@@ -132,6 +283,35 @@ namespace Stride.Rendering.Voxels.Grid
 
                     if (any(cell < int3(0, 0, 0)) || any(cell >= cells) || t > tExit)
                         running = false;
+                }
+            }
+
+            if (hit)
+            {
+                float3 position = origin + safeDirection * tHit;
+                hitDistance = tHit;
+                // Cubes take the cell's own colour, which is the point of cubes; a smooth surface
+                // takes the blend, so the material boundary is as smooth as the surface carrying it.
+                hitAlbedo = smooth
+                    ? SampleAlbedo(position)
+                    : Source.Albedo(clamp((int3)floor(position / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0))));
+
+                float3 faceNormal = float3(
+                    axis == 0 ? -stepDirection.x : 0,
+                    axis == 1 ? -stepDirection.y : 0,
+                    axis == 2 ? -stepDirection.z : 0);
+
+                if (smooth)
+                {
+                    float3 gradient = FieldGradient(position);
+                    // Density rises into matter, so the outward normal is the gradient reversed. A
+                    // region flat enough to have no gradient has no orientation either; the face
+                    // just crossed is then the only answer available.
+                    hitNormal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : faceNormal;
+                }
+                else
+                {
+                    hitNormal = faceNormal;
                 }
             }
 

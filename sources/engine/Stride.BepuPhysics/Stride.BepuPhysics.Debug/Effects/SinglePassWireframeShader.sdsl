@@ -158,6 +158,10 @@
             // vertex 0
             streams = input[0];
             streams.Case = vertexCase;
+            // Only xyz are written below, and a float4 left partly written is an error, not
+            // a warning: 'used without having been completely initialized'.
+            streams.EdgeA = 0;
+            streams.EdgeB = 0;
             streams.EdgeA[0] = vertExclude.x * excludeEdgeLength;
             streams.EdgeA[1] = heights[0];
             streams.EdgeA[2] = vertExclude.z * excludeEdgeLength;
@@ -169,6 +173,10 @@
             // vertex 1
             streams = input[1];
             streams.Case = vertexCase;
+            // Only xyz are written below, and a float4 left partly written is an error, not
+            // a warning: 'used without having been completely initialized'.
+            streams.EdgeA = 0;
+            streams.EdgeB = 0;
             streams.EdgeA[0] = vertExclude.x * excludeEdgeLength;
             streams.EdgeA[1] = vertExclude.y * excludeEdgeLength;
             streams.EdgeA[2] = heights[1];
@@ -180,6 +188,10 @@
             // vertex 2
             streams = input[2];
             streams.Case = vertexCase;
+            // Only xyz are written below, and a float4 left partly written is an error, not
+            // a warning: 'used without having been completely initialized'.
+            streams.EdgeA = 0;
+            streams.EdgeB = 0;
             streams.EdgeA[0] = heights[2];
             streams.EdgeA[1] = vertExclude.y * excludeEdgeLength;
             streams.EdgeA[2] = vertExclude.z * excludeEdgeLength;
@@ -202,6 +214,10 @@
                 streams.EdgeB = float4(0, 0, 0, 0);
 
                 streams.Case = vertexCase;
+            // Only xyz are written below, and a float4 left partly written is an error, not
+            // a warning: 'used without having been completely initialized'.
+            streams.EdgeA = 0;
+            streams.EdgeB = 0;
                 streams.EdgeA.xy = points[infoA[vertexCase]];
                 streams.EdgeB.xy = points[infoB[vertexCase]];
 

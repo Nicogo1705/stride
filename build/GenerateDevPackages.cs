@@ -109,12 +109,9 @@ Console.WriteLine("\nBuilding + packing fresh packages...");
 // regardless of the caller's Stride.Local.props.
 // StridePackAssets=false: skip the asset/.sdpkg packing step here - turning it on fails the pack
 // outright on the editor projects (Stride.Editor, Stride.GameStudio), which takes the whole feed
-// down with it. The assets still have to reach the stubs: the dev-redirect hands the asset
-// *compiler* the checkout (NugetStore.GetRealPath -> StrideDevProjectDirectory), but the runtime
-// effect compiler is a different consumer - ShaderSourceManager reads .sdsl off disk from the
-// extracted package, and a package with no stride/Assets throws "Unable to find shader [...]" for
-// everything compiled at runtime rather than baked into the game database. The engine packages
-// that ship shaders therefore get their assets injected into the stub afterwards.
+// down with it. It does not skip shaders: _StridePrepareAssetsForPack also fires for any project
+// holding .sdsl, precisely so a global -p: here cannot strip the shaders the runtime effect
+// compiler reads off disk from the extracted package.
 // Output -> tempPackDir (not NugetDev); we deploy stubs there explicitly in step 3.
 // No --no-build: self-bootstraps a fresh checkout in one go.
 var packExitCode = RunProcess("dotnet", $"pack \"{solution}\" -c {configuration} -p:StrideSkipAutoPack=true -p:StrideDevPackages=false -p:StridePackAssets=false -o \"{tempPackDir}\" --verbosity normal", silent: true, onLine: line =>

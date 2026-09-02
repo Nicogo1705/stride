@@ -25,5 +25,13 @@ namespace Stride.Rendering.Voxels.Grid
             hitAlbedo = float3(1, 1, 1);
             return false;
         }
+
+        /// Diagnostic: what the composed source reports at a point, as
+        /// (samples per axis / 128, density, iso level). A pass that finds nothing looks the same
+        /// whether the source is unbound, the dimensions are zero or the field is empty.
+        float3 Probe(float3 localPosition)
+        {
+            return float3(0, 0, 0);
+        }
     };
 }

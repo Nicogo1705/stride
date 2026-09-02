@@ -11,8 +11,10 @@ namespace Stride.Rendering.Voxels.Grid
     /// overrides Albedo in its own source rather than bending its data to fit one imposed here.
     shader VoxelGridSourcePackedBuffer : IVoxelGridSource
     {
-        stage StructuredBuffer<uint> VoxelGridData;
-        stage int3 VoxelGridSampleCount;
+        // Not 'stage': a stage variable is hoisted out of the composition, so a per-instance key
+        // composed with the source's path would no longer match it and would silently bind nothing.
+        StructuredBuffer<uint> VoxelGridData;
+        int3 VoxelGridSampleCount;
 
         override int3 SampleCount()
         {

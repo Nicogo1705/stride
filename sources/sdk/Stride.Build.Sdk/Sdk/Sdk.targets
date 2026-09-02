@@ -255,8 +255,21 @@
   <!-- Asset Packing Support (StridePackAssets) -->
   <!-- ================================================================ -->
   <!-- When StridePackAssets=true, use Stride.Core.Tasks to copy .sdpkg, assets and templates
-       into the NuGet package. This is a lightweight operation that doesn't need CompilerApp. -->
-  <Target Name="_StridePrepareAssetsForPack" BeforeTargets="_GetPackageFiles" Condition="'$(StridePackAssets)' == 'true' Or '$(StrideContainsAssetTypes)' == 'true'">
+       into the NuGet package. This is a lightweight operation that doesn't need CompilerApp.
+
+       A project that ships shaders packs them whatever those two properties say. Shaders are not
+       optional content: ShaderSourceManager reads .sdsl off disk from the extracted package for
+       everything compiled at runtime rather than baked into a game's database, so a package that
+       drops them fails at the first frame that needs one - "Shader X could not be found" - and the
+       failure surfaces nowhere near the build that caused it. StridePackAssets alone did not
+       protect against that, because it is a property and a global -p: overrides every project's own
+       value: build/GenerateDevPackages.cs packs the whole solution with StridePackAssets=false to
+       skip the slow copy, and silently produced dev packages with no shaders in them. Keying off
+       the shader files themselves cannot be overridden away.
+
+       Projects holding .sdsl as test input rather than as shipped content opt out of the glob with
+       EnableDefaultStrideShaderItems=false, which empties this item and this clause with it. -->
+  <Target Name="_StridePrepareAssetsForPack" BeforeTargets="_GetPackageFiles" Condition="'$(StridePackAssets)' == 'true' Or '$(StrideContainsAssetTypes)' == 'true' Or '@(StrideShaderFiles)' != ''">
     <!-- Host-loadable assembly whose types appear in assets: written into the packed sdpkg's
          AssetAssemblies so the asset compiler loads exactly it (relative to lib/<host-tfm>/). -->
     <PropertyGroup>

@@ -5,13 +5,6 @@
     <TargetFrameworks>$(StrideRuntimeTargetFrameworks)</TargetFrameworks>
     <StrideAssemblyProcessor>true</StrideAssemblyProcessor>
     <StridePackAssets>true</StridePackAssets>
-    <!-- Both, like every other engine package that ships shaders. StridePackAssets alone is not
-         enough: the dev-package generator packs the whole solution with -p:StridePackAssets=false,
-         which overrides this project's own value and drops the .sdsl from the stub - and the
-         runtime effect compiler reads those off disk from the extracted package, so the engine
-         then fails with "Unable to find shader [VoxelizeToFragments]". StrideContainsAssetTypes is
-         not overridden, so the assets are packed either way. -->
-    <StrideContainsAssetTypes>true</StrideContainsAssetTypes>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\shared\SharedAssemblyInfo.cs">
