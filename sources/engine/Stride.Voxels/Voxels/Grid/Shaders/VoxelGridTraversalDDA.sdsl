@@ -29,6 +29,10 @@ namespace Stride.Rendering.Voxels.Grid
         /// Density at or above which a sample counts as solid.
         float VoxelGridIsoLevel;
 
+        /// 1 reads the samples on the outer faces of the grid as air, closing the volume with real
+        /// surface. 0 leaves them alone, for a grid that continues into a neighbour.
+        float VoxelGridSealBorder;
+
         /// 1 solves the crossing inside the cell, for a surface that matches a meshed one; 0 stops
         /// at the cell itself, for a world that is meant to look like cubes. Both walk the same
         /// cells - only what counts as a hit differs.
@@ -43,6 +47,22 @@ namespace Stride.Rendering.Voxels.Grid
         /// what a pixel resolves.
         static const int RefineSteps = 6;
 
+        /// Density of one sample, with the border read as air when the grid is sealed.
+        ///
+        /// A surface exists only where the field crosses the iso level, and a grid whose edge is
+        /// solid never crosses there - so its sides and its underside are not surface at all. They
+        /// still appear, because a ray entering the volume already inside matter stops on the box
+        /// itself, but that is a flat face with the box's normal and a decision taken per ray, which
+        /// is why the join against the real surface comes out in steps a cell wide.
+        float Density(int3 coord)
+        {
+            int3 samples = Source.SampleCount();
+            if (VoxelGridSealBorder > 0.5 && (any(coord <= 0) || any(coord >= samples - int3(1, 1, 1))))
+                return 0.0;
+
+            return Source.Density(coord);
+        }
+
         /// The field between samples, trilinear - the same reconstruction marching cubes and surface
         /// nets interpolate along their edges, so the traced surface and a meshed one agree.
         float SampleField(float3 localPosition)
@@ -51,14 +71,14 @@ namespace Stride.Rendering.Voxels.Grid
             int3 cell = (int3)floor(grid);
             float3 f = grid - (float3)cell;
 
-            float d000 = Source.Density(cell + int3(0, 0, 0));
-            float d100 = Source.Density(cell + int3(1, 0, 0));
-            float d010 = Source.Density(cell + int3(0, 1, 0));
-            float d110 = Source.Density(cell + int3(1, 1, 0));
-            float d001 = Source.Density(cell + int3(0, 0, 1));
-            float d101 = Source.Density(cell + int3(1, 0, 1));
-            float d011 = Source.Density(cell + int3(0, 1, 1));
-            float d111 = Source.Density(cell + int3(1, 1, 1));
+            float d000 = Density(cell + int3(0, 0, 0));
+            float d100 = Density(cell + int3(1, 0, 0));
+            float d010 = Density(cell + int3(0, 1, 0));
+            float d110 = Density(cell + int3(1, 1, 0));
+            float d001 = Density(cell + int3(0, 0, 1));
+            float d101 = Density(cell + int3(1, 0, 1));
+            float d011 = Density(cell + int3(0, 1, 1));
+            float d111 = Density(cell + int3(1, 1, 1));
 
             float dx00 = lerp(d000, d100, f.x);
             float dx10 = lerp(d010, d110, f.x);
@@ -112,10 +132,10 @@ namespace Stride.Rendering.Voxels.Grid
         bool CellIsSolid(int3 cell)
         {
             float sum =
-                Source.Density(cell + int3(0, 0, 0)) + Source.Density(cell + int3(1, 0, 0)) +
-                Source.Density(cell + int3(1, 0, 1)) + Source.Density(cell + int3(0, 0, 1)) +
-                Source.Density(cell + int3(0, 1, 0)) + Source.Density(cell + int3(1, 1, 0)) +
-                Source.Density(cell + int3(1, 1, 1)) + Source.Density(cell + int3(0, 1, 1));
+                Density(cell + int3(0, 0, 0)) + Density(cell + int3(1, 0, 0)) +
+                Density(cell + int3(1, 0, 1)) + Density(cell + int3(0, 0, 1)) +
+                Density(cell + int3(0, 1, 0)) + Density(cell + int3(1, 1, 0)) +
+                Density(cell + int3(1, 1, 1)) + Density(cell + int3(0, 1, 1));
             return sum * 0.125 >= VoxelGridIsoLevel;
         }
 
@@ -125,14 +145,14 @@ namespace Stride.Rendering.Voxels.Grid
         {
             float iso = VoxelGridIsoLevel;
             int inside = 0;
-            inside += Source.Density(cell + int3(0, 0, 0)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(1, 0, 0)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(0, 1, 0)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(1, 1, 0)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(0, 0, 1)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(1, 0, 1)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(0, 1, 1)) >= iso ? 1 : 0;
-            inside += Source.Density(cell + int3(1, 1, 1)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(0, 0, 0)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(1, 0, 0)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(0, 1, 0)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(1, 1, 0)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(0, 0, 1)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(1, 0, 1)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(0, 1, 1)) >= iso ? 1 : 0;
+            inside += Density(cell + int3(1, 1, 1)) >= iso ? 1 : 0;
             return inside > 0 && inside < 8;
         }
 

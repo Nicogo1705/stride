@@ -72,15 +72,12 @@ namespace Stride.Rendering.Voxels.Grid
         {
             base.InitializeCore();
 
-            // Writes depth, and is never rejected by what the depth buffer already held. A pass that
-            // establishes primary visibility has nothing to be occluded by: run before the scene it
-            // gives later geometry something to test against, and run after it, the comparison would
-            // be against a buffer holding whatever the previous pass left - which silently discards
-            // every pixel and costs nothing, so it looks like the pass never ran.
-            shader.DepthStencilState = new DepthStencilStateDescription(true, true)
-            {
-                DepthBufferFunction = CompareFunction.Always,
-            };
+            // Tests and writes depth like any other geometry. Run after a scene has been drawn, the
+            // grid is then occluded by what is in front of it and occludes what is behind - which is
+            // the point of writing depth at all. Not Always: that paints over the scene, and a pass
+            // that hides everything else looks like a pass that works until something has to be seen
+            // in front of it.
+            shader.DepthStencilState = DepthStencilStates.Default;
         }
 
         protected override void DrawCore(RenderDrawContext context)

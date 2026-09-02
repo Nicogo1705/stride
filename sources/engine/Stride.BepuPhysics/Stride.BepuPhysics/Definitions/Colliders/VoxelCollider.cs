@@ -57,6 +57,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     private float _cellSize = 1f;
     private float _isoLevel = 0.5f;
     private bool _invertWinding;
+    private bool _sealBorder = true;
     private float _mass = 1f;
 
     private CollidableComponent? _component;
@@ -126,6 +127,32 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     }
 
     /// <summary>
+    /// Reads the samples on the outer faces of the grid as air, so the volume closes on itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On by default, because a lone grid with a solid edge is otherwise a body with no walls and no
+    /// floor: a surface exists only where the field crosses the iso level, and the edge never
+    /// crosses. Sealing gives up the outermost layer of samples to buy a closed body.
+    /// </para>
+    /// <para>
+    /// Turn it off where the field continues into a neighbouring chunk. Those samples are shared
+    /// with data that does exist, and reading them as air walls every chunk off from the next.
+    /// </para>
+    /// </remarks>
+    public bool SealBorder
+    {
+        get => _sealBorder;
+        set
+        {
+            if (_sealBorder == value)
+                return;
+            _sealBorder = value;
+            _component?.TryUpdateFeatures();
+        }
+    }
+
+    /// <summary>
     /// Mass used for the inertia of a dynamic body carrying this collider.
     /// </summary>
     /// <remarks>
@@ -151,6 +178,21 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     /// <returns>False when there is no field yet, which leaves the collidable unattached.</returns>
     protected abstract bool TryGetSource(out TSource source);
 
+    /// <summary>
+    /// Tells anything holding geometry derived from this field that the field has moved on.
+    /// </summary>
+    /// <remarks>
+    /// Physics does not need it: the narrow phase reads the samples as it goes, so an edit is
+    /// visible to it immediately. What does need it is anything that asked for a <em>copy</em> of the
+    /// surface and kept it - the physics debug view builds a wireframe once and would go on drawing
+    /// the terrain as it was before it was dug.
+    /// <para>
+    /// Cheap here, unlike on a mesh collider: reattaching this collidable swaps a shape slot whose
+    /// contents point at the same memory, with no tree to rebuild.
+    /// </para>
+    /// </remarks>
+    public void NotifyFieldChanged() => InvalidateShape();
+
     /// <summary>Rebuilds the collidable after something other than a sample value changed.</summary>
     /// <remarks>
     /// Not needed for ordinary edits: the narrow phase reads the field on demand, so writing a
@@ -172,6 +214,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
             CellSize = _cellSize,
             IsoLevel = _isoLevel,
             InvertWinding = _invertWinding,
+            SealBorder = _sealBorder,
         };
         return true;
     }

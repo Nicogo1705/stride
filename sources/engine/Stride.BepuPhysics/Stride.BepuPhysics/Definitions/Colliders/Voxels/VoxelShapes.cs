@@ -31,6 +31,18 @@ public unsafe interface IVoxelShape
     /// <summary>Upper bound on what <see cref="GetCellChildren"/> can report for one cell.</summary>
     static abstract int MaxChildrenPerCell { get; }
 
+    /// <summary>
+    /// How many cells beyond the one that owns a child that child may reach.
+    /// </summary>
+    /// <remarks>
+    /// Zero for a shape whose children sit inside their own cell. One for surface nets, whose quads
+    /// are built from the vertices of four neighbouring cells and therefore lie mostly outside the
+    /// cell that owns them - a query that looks only at the cells it touches misses the triangle
+    /// covering the very point it is asking about, which is a hole that opens and closes as the
+    /// query moves by a fraction of a cell.
+    /// </remarks>
+    static abstract int ChildReach { get; }
+
     /// <summary>Cells along X.</summary>
     int CellsX { get; }
     /// <summary>Cells along Y.</summary>
@@ -114,12 +126,15 @@ public static unsafe class VoxelShapeHelpers
             x1 = y1 = z1 = -1;
             return false;
         }
-        x0 = Math.Max(x0, 0);
-        y0 = Math.Max(y0, 0);
-        z0 = Math.Max(z0, 0);
-        x1 = Math.Min(x1, shape.CellsX - 1);
-        y1 = Math.Min(y1, shape.CellsY - 1);
-        z1 = Math.Min(z1, shape.CellsZ - 1);
+        // Widened by the reach: a child owned by a cell just outside this range can still lie
+        // inside the box being asked about.
+        var reach = TShape.ChildReach;
+        x0 = Math.Max(x0 - reach, 0);
+        y0 = Math.Max(y0 - reach, 0);
+        z0 = Math.Max(z0 - reach, 0);
+        x1 = Math.Min(x1 + reach, shape.CellsX - 1);
+        y1 = Math.Min(y1 + reach, shape.CellsY - 1);
+        z1 = Math.Min(z1 + reach, shape.CellsZ - 1);
         return true;
     }
 
@@ -233,19 +248,39 @@ public static unsafe class VoxelShapeHelpers
         ComputeAxisStep(origin.Z, direction.Z, z, cellSize, tEnter, out var stepZ, out var tMaxZ, out var tDeltaZ);
 
         Span<int> children = stackalloc int[TShape.MaxChildrenPerCell];
+        var reach = TShape.ChildReach;
         var t = tEnter;
         while (t <= tExit && t <= maximumT)
         {
-            var count = shape.GetCellChildren(x, y, z, children);
-            for (int i = 0; i < count; ++i)
+            // The block around this cell, not the cell alone: a child owned by a neighbour can be
+            // the one covering the point the ray is passing through. Without this the surface has
+            // holes that open and close as the ray moves a fraction of a cell - it aims at nothing,
+            // then at something, for no visible reason.
+            for (int ox = -reach; ox <= reach; ++ox)
             {
-                var childIndex = children[i];
-                if (!hitHandler.AllowTest(childIndex))
-                    continue;
-                if (shape.RayTestChild(childIndex, origin, direction, out var hitT, out var normal) && hitT <= maximumT)
+                for (int oy = -reach; oy <= reach; ++oy)
                 {
-                    Matrix3x3.Transform(normal, orientation, out normal);
-                    hitHandler.OnRayHit(ray, ref maximumT, hitT, normal, childIndex);
+                    for (int oz = -reach; oz <= reach; ++oz)
+                    {
+                        var cx = x + ox;
+                        var cy = y + oy;
+                        var cz = z + oz;
+                        if ((uint)cx >= (uint)cellsX || (uint)cy >= (uint)cellsY || (uint)cz >= (uint)cellsZ)
+                            continue;
+
+                        var count = shape.GetCellChildren(cx, cy, cz, children);
+                        for (int i = 0; i < count; ++i)
+                        {
+                            var childIndex = children[i];
+                            if (!hitHandler.AllowTest(childIndex))
+                                continue;
+                            if (shape.RayTestChild(childIndex, origin, direction, out var hitT, out var normal) && hitT <= maximumT)
+                            {
+                                Matrix3x3.Transform(normal, orientation, out normal);
+                                hitHandler.OnRayHit(ray, ref maximumT, hitT, normal, childIndex);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -347,6 +382,7 @@ public unsafe struct VoxelBoxShape<TSource> : IHomogeneousCompoundShape<Box, Box
     public static int TypeId => TSource.ShapeTypeIdBase;
     public static int ChildShapeTypeId => Box.Id;
     public static int MaxChildrenPerCell => 1;
+    public static int ChildReach => 0;
 
     public VoxelGridData<TSource> GridData;
 
@@ -438,6 +474,7 @@ public unsafe struct VoxelSphereShape<TSource> : IHomogeneousCompoundShape<Spher
     public static int TypeId => TSource.ShapeTypeIdBase + 1;
     public static int ChildShapeTypeId => Sphere.Id;
     public static int MaxChildrenPerCell => 1;
+    public static int ChildReach => 0;
 
     public VoxelGridData<TSource> GridData;
 
@@ -529,6 +566,12 @@ public unsafe struct VoxelTriangleShape<TSource> : IHomogeneousCompoundShape<Tri
     public static int TypeId => TSource.ShapeTypeIdBase + 2;
     public static int ChildShapeTypeId => Triangle.Id;
     public static int MaxChildrenPerCell => SlotsPerCell;
+
+    /// <summary>
+    /// One. A surface-nets quad is built from the vertices of the four cells around an edge, and a
+    /// marching-cubes triangle can touch any face of its cell, so both reach a cell out.
+    /// </summary>
+    public static int ChildReach => 1;
 
     /// <summary>Child index granularity: childIndex = cellIndex * SlotsPerCell + slot.</summary>
     public const int SlotsPerCell = VoxelGridData<TSource>.MaxSurfaceNetsTrianglesPerCell;

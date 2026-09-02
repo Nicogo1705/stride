@@ -66,6 +66,16 @@ namespace Stride.Rendering.Voxels.Grid
         public float IsoLevel { get; set; } = 0.5f;
 
         /// <summary>
+        /// Reads the samples on the outer faces of the grid as air, so the volume closes on itself
+        /// with real surface rather than with the faces of its own bounding box.
+        /// </summary>
+        /// <remarks>
+        /// Match it to the collider's setting of the same name, or the drawn body and the solid one
+        /// disagree at their edges. Turn both off where the field continues into a neighbour.
+        /// </remarks>
+        public bool SealBorder { get; set; } = true;
+
+        /// <summary>
         /// Whether the crossing is solved inside the cell that contains it.
         /// </summary>
         /// <remarks>
@@ -85,6 +95,7 @@ namespace Stride.Rendering.Voxels.Grid
         private ValueParameterKey<float> cellSizeKey;
         private ValueParameterKey<float> isoLevelKey;
         private ValueParameterKey<float> smoothKey;
+        private ValueParameterKey<float> sealKey;
         private ValueParameterKey<int> maxStepsKey;
 
         public ShaderSource GetShaderSource()
@@ -100,6 +111,7 @@ namespace Stride.Rendering.Voxels.Grid
             cellSizeKey = VoxelGridTraversalDDAKeys.VoxelGridCellSize.ComposeWith(compositionName);
             isoLevelKey = VoxelGridTraversalDDAKeys.VoxelGridIsoLevel.ComposeWith(compositionName);
             smoothKey = VoxelGridTraversalDDAKeys.VoxelGridSmoothSurface.ComposeWith(compositionName);
+            sealKey = VoxelGridTraversalDDAKeys.VoxelGridSealBorder.ComposeWith(compositionName);
             maxStepsKey = VoxelGridTraversalDDAKeys.VoxelGridMaxSteps.ComposeWith(compositionName);
             Source.UpdateLayout("Source." + compositionName);
         }
@@ -109,6 +121,7 @@ namespace Stride.Rendering.Voxels.Grid
             parameters.Set(cellSizeKey, CellSize);
             parameters.Set(isoLevelKey, IsoLevel);
             parameters.Set(smoothKey, Smooth ? 1f : 0f);
+            parameters.Set(sealKey, SealBorder ? 1f : 0f);
             parameters.Set(maxStepsKey, MaxSteps);
             Source.ApplyParameters(parameters);
         }

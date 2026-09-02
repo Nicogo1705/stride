@@ -49,6 +49,10 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     /// <summary>Flips the winding of every generated triangle. See VoxelCollider.InvertWinding.</summary>
     public bool InvertWinding;
 
+    /// <summary>Reads the samples on the outer faces of the grid as air, closing the volume.</summary>
+    /// <remarks>See VoxelCollider.SealBorder for why this is a choice rather than a rule.</remarks>
+    public bool SealBorder;
+
     public readonly int SamplesX => Source.SamplesX;
     public readonly int SamplesY => Source.SamplesY;
     public readonly int SamplesZ => Source.SamplesZ;
@@ -79,12 +83,23 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     /// that may be outside.
     /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public readonly float DensityAt(int x, int y, int z) => Source.Density(x, y, z);
+    public readonly float DensityAt(int x, int y, int z)
+    {
+        // The seal belongs here rather than in the checked accessor below, because this is the one
+        // every corner read goes through. A surface exists only where the field crosses the iso
+        // level, and a grid whose edge is solid never crosses there - so without this the body has
+        // no walls and no floor. It looks closed when drawn, because a ray entering from outside
+        // stops on the box, and is open when collided against, because nothing is there.
+        if (SealBorder && (x <= 0 || y <= 0 || z <= 0 || x >= SamplesX - 1 || y >= SamplesY - 1 || z >= SamplesZ - 1))
+            return 0f;
+
+        return Source.Density(x, y, z);
+    }
 
     /// <summary>Density of one sample, clamping to the edge of the grid.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public readonly float Density(int x, int y, int z)
-        => Source.Density(
+        => DensityAt(
             Math.Clamp(x, 0, SamplesX - 1),
             Math.Clamp(y, 0, SamplesY - 1),
             Math.Clamp(z, 0, SamplesZ - 1));
@@ -188,6 +203,31 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         return Vector3.Lerp(new Vector3(ax, ay, az), new Vector3(bx, by, bz), t) * CellSize;
     }
 
+    /// <summary>
+    /// Which way the field rises across a cell, from differences of its eight corners. Points into
+    /// matter, so an outward normal is this reversed.
+    /// </summary>
+    public readonly Vector3 CellGradient(int cx, int cy, int cz)
+    {
+        var x1 = cx + 1;
+        var y1 = cy + 1;
+        var z1 = cz + 1;
+
+        var d000 = Density(cx, cy, cz);
+        var d100 = Density(x1, cy, cz);
+        var d010 = Density(cx, y1, cz);
+        var d001 = Density(cx, cy, z1);
+        var d110 = Density(x1, y1, cz);
+        var d101 = Density(x1, cy, z1);
+        var d011 = Density(cx, y1, z1);
+        var d111 = Density(x1, y1, z1);
+
+        return new Vector3(
+            (d100 + d110 + d101 + d111) - (d000 + d010 + d001 + d011),
+            (d010 + d110 + d011 + d111) - (d000 + d100 + d001 + d101),
+            (d001 + d101 + d011 + d111) - (d000 + d100 + d010 + d110));
+    }
+
     /// <summary>Number of marching-cubes triangles a cell can produce.</summary>
     public const int MaxMarchingCubesTrianglesPerCell = 5;
 
@@ -228,7 +268,20 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         var a = EdgePosition(cx, cy, cz, e2);
         var b = EdgePosition(cx, cy, cz, e1);
         var c = EdgePosition(cx, cy, cz, e0);
-        triangle = InvertWinding ? new Triangle(c, b, a) : new Triangle(a, b, c);
+        triangle = new Triangle(a, b, c);
+
+        // Oriented against the field rather than trusted from the table: density rises into matter,
+        // so the outward direction is the gradient reversed. One sided triangles make this the
+        // difference between a surface that collides and one that lets everything through from the
+        // wrong side.
+        var outward = -CellGradient(cx, cy, cz);
+        // cross(C - A, B - A), not the other way round: a Bepu triangle faces along that, being
+        // clockwise in a right handed frame. Taking the usual counter-clockwise convention here
+        // orients every face outward and then collides on the inside of all of them.
+        var facing = Vector3.Cross(triangle.C - triangle.A, triangle.B - triangle.A);
+        if (Vector3.Dot(facing, outward) < 0 != InvertWinding)
+            (triangle.B, triangle.C) = (triangle.C, triangle.B);
+
         return true;
     }
 
@@ -337,16 +390,27 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
                 return false;
         }
 
-        // Wind so the face looks towards the air side; a solid minimum corner means the surface
-        // faces the positive side of the axis, and the cycle above is then the wrong way round.
-        var flip = solidAtOrigin ^ InvertWinding;
-        triangle = ((slot & 1) != 0, flip) switch
-        {
-            (false, false) => new Triangle(quad[0], quad[1], quad[2]),
-            (false, true) => new Triangle(quad[2], quad[1], quad[0]),
-            (true, false) => new Triangle(quad[0], quad[2], quad[3]),
-            (true, true) => new Triangle(quad[3], quad[2], quad[0]),
-        };
+        triangle = (slot & 1) != 0
+            ? new Triangle(quad[0], quad[2], quad[3])
+            : new Triangle(quad[0], quad[1], quad[2]);
+
+        // Which way the face has to look is known exactly, not guessed: matter is on the side of the
+        // edge whose sample is solid, so the outward direction is the edge's axis, signed by that.
+        // Orienting each triangle against it is what makes every face of the surface collide -
+        // Bepu triangles are one sided, and a rule applied globally gets one set of faces right and
+        // the opposite set wrong, which reads as a world where only the ground is solid.
+        var outward = new Vector3(
+            axis == 0 ? (solidAtOrigin ? 1f : -1f) : 0f,
+            axis == 1 ? (solidAtOrigin ? 1f : -1f) : 0f,
+            axis == 2 ? (solidAtOrigin ? 1f : -1f) : 0f);
+
+        // cross(C - A, B - A), not the other way round: a Bepu triangle faces along that, being
+        // clockwise in a right handed frame. Taking the usual counter-clockwise convention here
+        // orients every face outward and then collides on the inside of all of them.
+        var facing = Vector3.Cross(triangle.C - triangle.A, triangle.B - triangle.A);
+        if (Vector3.Dot(facing, outward) < 0 != InvertWinding)
+            (triangle.B, triangle.C) = (triangle.C, triangle.B);
+
         return true;
     }
 
