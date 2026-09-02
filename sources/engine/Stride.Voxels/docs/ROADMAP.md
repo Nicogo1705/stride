@@ -44,11 +44,23 @@ The existing rasterizing voxelizer becomes one producer among others.
 The consumer side — mip chain, cone marchers, `LightVoxel` integration — is unchanged.
 This is the enabling step for everything below and the only one that is strictly required.
 
+**Started.** `Voxels/Grid` now holds the seam and the first consumer: `IVoxelGridSource` (SDSL and
+C#) describes a packing once, `VoxelGridSourceTexture3D` and `VoxelGridSourcePackedBuffer` are two
+examples of one, and `VoxelGridRenderer` draws a grid straight from it. What remains for this step is
+the clipmap fill itself - a compute pass writing occupancy and radiance into the brick pool from the
+same source - so that the tracing half of the library can run on data that never went through the
+rasterizer.
+
 ### 2. DDA traversal alongside cone tracing
 
 Add exact grid traversal (DDA, cell by cell) as a marcher, next to the existing cone
 marchers. Where a cone gives a soft, cheap, approximate answer, a DDA ray gives an exact
 one: sharp shadows, primary visibility, precise occlusion.
+
+**Done for primary visibility.** `IVoxelGridTraversal` is the seam, `VoxelGridTraversalDDA` walks the
+grid cell by cell, and `VoxelGridRenderShader` traces one ray per pixel and writes depth, so
+rasterized content composites against voxels with an ordinary depth test. Cone tracing for GI is
+unchanged and untouched.
 
 **This is deliberately not SDF.** Sphere tracing needs a distance that is correct
 *everywhere*, not just near the surface; a marching-cubes density field only guarantees
@@ -89,6 +101,10 @@ replacing the mesh collider built from a GPU readback.
 
 A separate package, later. Hardware ray tracing is D3D12/Vulkan only, so it can never
 replace the raster path — it can only be a second one, selected at build time.
+
+The traversal seam above is where it will plug in: a hardware traced implementation of
+`IVoxelGridTraversal` leaves every consumer of it unchanged, which is why the traversal is an
+interface rather than a function.
 
 When it exists, Stride.Voxels should be able to *use* it where it helps, and fall back to
 its own tracing when it is off or unavailable. The two are complementary, not competing:

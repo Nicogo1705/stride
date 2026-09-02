@@ -1,0 +1,41 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// A grid held in a structured buffer, one value per sample, density in bits 0-7 and material in
+    /// bits 8-15, laid out x-major with z varying fastest.
+    ///
+    /// This is the packing a voxel game commonly keeps its chunks in, where uploading is a widen
+    /// from 16 to 32 bits and nothing else. The material half becomes a colour through a hash, which
+    /// is a placeholder that reads well enough to see the world: a game with real materials
+    /// overrides Albedo in its own source rather than bending its data to fit one imposed here.
+    shader VoxelGridSourcePackedBuffer : IVoxelGridSource
+    {
+        stage StructuredBuffer<uint> VoxelGridData;
+        stage int3 VoxelGridSampleCount;
+
+        override int3 SampleCount()
+        {
+            return VoxelGridSampleCount;
+        }
+
+        uint Fetch(int3 coord)
+        {
+            int index = (coord.x * VoxelGridSampleCount.y + coord.y) * VoxelGridSampleCount.z + coord.z;
+            return VoxelGridData[index];
+        }
+
+        override float Density(int3 coord)
+        {
+            return (Fetch(coord) & 0xFF) / 255.0;
+        }
+
+        override float3 Albedo(int3 coord)
+        {
+            uint material = (Fetch(coord) >> 8) & 0xFF;
+            float hue = frac(material * 0.6180339887);
+            float3 rgb = saturate(abs(frac(hue + float3(0.0, 0.6666, 0.3333)) * 6.0 - 3.0) - 1.0);
+            return lerp(float3(0.6, 0.6, 0.6), rgb, 0.45);
+        }
+    };
+}

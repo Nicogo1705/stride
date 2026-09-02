@@ -1,0 +1,29 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// How a ray finds the surface of a voxel grid.
+    ///
+    /// The seam that keeps the rest of the pipeline honest about what it depends on: everything
+    /// above only wants a hit, a distance and a normal, and does not care how they were found. The
+    /// implementation beside this file walks the grid cell by cell, which needs nothing but the
+    /// occupancy and runs on every graphics API.
+    ///
+    /// The reason it is an interface rather than a function is what comes after it. A hardware ray
+    /// tracing path implements this same shader and everything above it is untouched; so does a
+    /// distance field tracer taking larger steps through empty space. They differ in how they skip
+    /// nothing, which is exactly what an interface should hide.
+    shader IVoxelGridTraversal
+    {
+        /// Traces a ray expressed in the grid local space, where the grid spans
+        /// [0, cells * cellSize] on each axis. Returns whether anything was hit; hitDistance is
+        /// measured along a normalized direction, and hitNormal points away from the surface.
+        bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
+        {
+            hitDistance = 0;
+            hitNormal = float3(0, 1, 0);
+            hitAlbedo = float3(1, 1, 1);
+            return false;
+        }
+    };
+}

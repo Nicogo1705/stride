@@ -1,0 +1,40 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Where a voxel grid's samples come from, and how they are packed.
+    ///
+    /// Every voxel game packs its samples differently - a byte of density, a float, a density byte
+    /// and a material byte in one value, separate arrays - and none of those choices concern the
+    /// things that read the grid, which only ever ask how solid a sample is and what colour it
+    /// carries. So the packing is a composition, and the two implementations beside this file are
+    /// examples rather than a closed set: a game with its own layout writes a dozen lines of SDSL
+    /// and keeps its data exactly as it already uploads it.
+    ///
+    /// The mirror of this seam on the CPU side is Stride.BepuPhysics' IVoxelDensitySource. Same
+    /// idea, same reason: describe a packing once, and let collision, meshing, tracing and lighting
+    /// all read it.
+    shader IVoxelGridSource
+    {
+        /// Samples per axis. One more than the number of cells per axis, since a cell reads the
+        /// eight samples at its corners.
+        int3 SampleCount()
+        {
+            return int3(0, 0, 0);
+        }
+
+        /// Density of one sample. The iso level is compared against whatever range this returns, so
+        /// a signed distance field can be handed over unchanged with an iso level of zero.
+        float Density(int3 coord)
+        {
+            return 0.0;
+        }
+
+        /// Albedo of one sample. Only read at a surface, so an implementation with no material data
+        /// can leave this at white.
+        float3 Albedo(int3 coord)
+        {
+            return float3(1, 1, 1);
+        }
+    };
+}

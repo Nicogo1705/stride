@@ -1,0 +1,141 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Walks the cells a ray crosses, in order, and stops at the first solid one.
+    ///
+    /// A three dimensional DDA: clip the ray to the grid box, then step along whichever axis reaches
+    /// its next cell boundary first. It needs nothing but the occupancy - no acceleration structure
+    /// to build, no distance field to precompute, nothing to rebuild when a voxel changes - and it
+    /// is exact, because a regular grid already is the structure a ray wants.
+    ///
+    /// A sphere tracer would take larger steps through empty space, but it needs a distance correct
+    /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing
+    /// across one walks through walls. When empty space becomes the cost, the answer is a coarse
+    /// occupancy pyramid to skip whole bricks, not a change of algorithm.
+    shader VoxelGridTraversalDDA : IVoxelGridTraversal
+    {
+        compose IVoxelGridSource Source;
+
+        /// Edge length of one cell, in grid local space.
+        float VoxelGridCellSize;
+
+        /// Density at or above which a sample counts as solid.
+        float VoxelGridIsoLevel;
+
+        /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
+        /// touches on the order of 768, so this bounds the worst case rather than the common one.
+        int VoxelGridMaxSteps;
+
+        /// A cell is solid when the mean of its eight corners reaches the iso level - the same rule
+        /// the voxel collider applies, so what is drawn and what is collided against agree.
+        bool CellIsSolid(int3 cell)
+        {
+            float sum =
+                Source.Density(cell + int3(0, 0, 0)) + Source.Density(cell + int3(1, 0, 0)) +
+                Source.Density(cell + int3(1, 0, 1)) + Source.Density(cell + int3(0, 0, 1)) +
+                Source.Density(cell + int3(0, 1, 0)) + Source.Density(cell + int3(1, 1, 0)) +
+                Source.Density(cell + int3(1, 1, 1)) + Source.Density(cell + int3(0, 1, 1));
+            return sum * 0.125 >= VoxelGridIsoLevel;
+        }
+
+        /// Central differences on the density field. Smooth, and free of the faceting a face normal
+        /// gives to a surface meant to look continuous.
+        float3 DensityGradient(int3 cell)
+        {
+            return float3(
+                Source.Density(cell + int3(1, 0, 0)) - Source.Density(cell - int3(1, 0, 0)),
+                Source.Density(cell + int3(0, 1, 0)) - Source.Density(cell - int3(0, 1, 0)),
+                Source.Density(cell + int3(0, 0, 1)) - Source.Density(cell - int3(0, 0, 1)));
+        }
+
+        override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
+        {
+            hitDistance = 0;
+            hitNormal = float3(0, 1, 0);
+            hitAlbedo = float3(1, 1, 1);
+
+            int3 cells = Source.SampleCount() - int3(1, 1, 1);
+            float cellSize = VoxelGridCellSize;
+            float3 boundsMax = (float3)cells * cellSize;
+
+            // A zero component would make the slab test compute 0 * infinity, which is a NaN rather
+            // than the "never crosses this plane" the maths wants. Nudging it off zero keeps the
+            // vectorized form, worth more than the exactness lost in the twelfth digit.
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+
+            float3 toMin = (0.0 - origin) * inverseDirection;
+            float3 toMax = (boundsMax - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            float3 farthest = max(toMin, toMax);
+            float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+            float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
+
+            bool running = tEnter <= tExit;
+            bool hit = false;
+
+            float3 entry = origin + safeDirection * tEnter;
+            int3 cell = clamp((int3)floor(entry / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+            int3 stepDirection = (int3)sign(safeDirection);
+            float3 tDelta = abs(cellSize * inverseDirection);
+            // The boundary ahead is the far face when stepping forwards, the near face otherwise.
+            float3 boundary = ((float3)cell + max(sign(safeDirection), 0.0)) * cellSize;
+            float3 tMax = (boundary - origin) * inverseDirection;
+
+            float t = tEnter;
+            int axis = 0;
+
+            // Neither break nor return: an early return inside a loop miscompiles on some targets,
+            // so the walk ends by clearing its condition instead.
+            for (int i = 0; i < VoxelGridMaxSteps && running; i++)
+            {
+                if (CellIsSolid(cell))
+                {
+                    hit = true;
+                    running = false;
+                    hitDistance = t;
+                    hitAlbedo = Source.Albedo(cell);
+
+                    float3 gradient = DensityGradient(cell);
+                    float3 faceNormal = float3(
+                        axis == 0 ? -stepDirection.x : 0,
+                        axis == 1 ? -stepDirection.y : 0,
+                        axis == 2 ? -stepDirection.z : 0);
+                    // A flat region has no gradient to normalize; the face just crossed is then the
+                    // only normal available.
+                    hitNormal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : faceNormal;
+                }
+                else
+                {
+                    if (tMax.x < tMax.y && tMax.x < tMax.z)
+                    {
+                        cell.x += stepDirection.x;
+                        t = tMax.x;
+                        tMax.x += tDelta.x;
+                        axis = 0;
+                    }
+                    else if (tMax.y < tMax.z)
+                    {
+                        cell.y += stepDirection.y;
+                        t = tMax.y;
+                        tMax.y += tDelta.y;
+                        axis = 1;
+                    }
+                    else
+                    {
+                        cell.z += stepDirection.z;
+                        t = tMax.z;
+                        tMax.z += tDelta.z;
+                        axis = 2;
+                    }
+
+                    if (any(cell < int3(0, 0, 0)) || any(cell >= cells) || t > tExit)
+                        running = false;
+                }
+            }
+
+            return hit;
+        }
+    };
+}
