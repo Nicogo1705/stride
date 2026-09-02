@@ -12,54 +12,52 @@ using Stride.BepuPhysics.Definitions.Colliders.Voxels;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
 using Stride.Core.Mathematics;
-using NBuffer = BepuUtilities.Memory.Buffer<ushort>;
 using NRigidPose = BepuPhysics.RigidPose;
+using NVector3 = System.Numerics.Vector3;
 
 namespace Stride.BepuPhysics.Definitions.Colliders;
 
 /// <summary>
-/// Collides against a voxel density field directly, generating contacts from the field as the
-/// narrow phase asks for them instead of from a mesh built ahead of time.
+/// Collides against a voxel density field directly, generating contacts from the field as the narrow
+/// phase asks for them instead of from a mesh built ahead of time.
 /// </summary>
+/// <typeparam name="TSource">
+/// How the samples are packed - see <see cref="IVoxelDensitySource"/>. A game whose voxels are a
+/// byte, a float, a packed <see cref="ushort"/> or something of its own supplies the matching source
+/// rather than converting its data.
+/// </typeparam>
 /// <remarks>
 /// <para>
 /// This is the collider for a game whose world is already voxels. The usual arrangement - mesh the
 /// chunk, read the vertices back from the GPU, keep a CPU copy so a <see cref="MeshCollider"/> can
 /// build a bounding volume tree over it, and redo all three whenever the terrain is edited - exists
-/// only because Bepu needs triangles. Here the field is the collidable: there is no mesh, no
-/// readback, no per-chunk tree, and no rebuild. Digging is <see cref="SetVoxel"/>, one store.
+/// only because Bepu needs triangles. Here the field is the collidable: no mesh, no readback, no
+/// per-chunk tree and no rebuild. Editing a voxel is a store into the field.
 /// </para>
 /// <para>
 /// Pick what a cell presents to the narrow phase with <see cref="Form"/>. The triangle forms
-/// reproduce the rendered iso-surface exactly, because they run the same marching-cubes table and
-/// the same interpolation the renderer's compute shader runs, on the same samples.
+/// reproduce the iso-surface a renderer meshes from the same field, running the same marching-cubes
+/// table and the same interpolation on the same samples.
 /// </para>
 /// <para>
-/// One caveat worth knowing before choosing a triangle form. Bepu smooths away the bumps a
-/// character feels crossing the internal edges of a triangle mesh with a MeshReduction, and that
-/// machinery is bound to Bepu's concrete Mesh type in this version, so a voxel shape cannot use it
-/// - Bepu's own voxel sample has the same limitation. Expect some catching on edges when sliding
-/// fast across a triangle surface. <see cref="VoxelChildForm.TriangleSurfaceNets"/> suffers least
-/// (far fewer, larger triangles than marching cubes), and <see cref="VoxelChildForm.Sphere"/> not
-/// at all, at the cost of a rounded surface.
-/// </para>
-/// <para>
-/// The sample buffer is native memory owned by this collider, so it outlives attach and detach
-/// cycles and is freed when the collider is disposed or finalized. Writes are visible to the
-/// simulation immediately; make them between steps, not during one.
+/// One caveat before choosing a triangle form. Bepu smooths away the bumps a character feels
+/// crossing the internal edges of a triangle mesh with a MeshReduction, and that machinery is bound
+/// to Bepu's concrete Mesh type in this version, so a voxel shape cannot use it - Bepu's own voxel
+/// sample has the same limitation. Expect some catching on edges when sliding fast across a triangle
+/// surface. <see cref="VoxelChildForm.TriangleSurfaceNets"/> suffers least, having far fewer and
+/// larger triangles, and <see cref="VoxelChildForm.Sphere"/> not at all, at the cost of a rounded
+/// surface.
 /// </para>
 /// </remarks>
-[DataContract]
-public sealed unsafe class VoxelCollider : ICollider, IDisposable
+[DataContract(Inherited = true)]
+public abstract unsafe class VoxelColliderBase<TSource> : ICollider
+    where TSource : unmanaged, IVoxelDensitySource
 {
     private VoxelChildForm _form = VoxelChildForm.TriangleSurfaceNets;
     private float _cellSize = 1f;
     private float _isoLevel = 0.5f;
     private bool _invertWinding;
     private float _mass = 1f;
-
-    private ushort* _samples;
-    private int _samplesX, _samplesY, _samplesZ;
 
     private CollidableComponent? _component;
     CollidableComponent? ICollider.Component { get => _component; set => _component = value; }
@@ -91,15 +89,19 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
     }
 
     /// <summary>
-    /// Density at or above which a sample counts as solid, normalized to 0-1. Must match the value
-    /// the renderer meshes with, or the collision surface will sit beside the visible one.
+    /// Density at or above which a sample counts as solid. Must match the value the renderer meshes
+    /// with, or the collision surface will sit beside the visible one.
     /// </summary>
+    /// <remarks>
+    /// Compared against whatever the source returns, so a field centred on zero - a signed distance
+    /// field, say - simply takes zero here.
+    /// </remarks>
     public float IsoLevel
     {
         get => _isoLevel;
         set
         {
-            _isoLevel = MathUtil.Clamp(value, 0f, 1f);
+            _isoLevel = value;
             _component?.TryUpdateFeatures();
         }
     }
@@ -109,9 +111,9 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
     /// </summary>
     /// <remarks>
     /// Bepu triangles collide on one side only, so a field whose density runs the other way - or a
-    /// renderer that emits the opposite winding - produces a surface that pushes bodies into the
-    /// ground instead of out of it. This is the one-line correction for that; it has no effect on
-    /// the box and sphere forms.
+    /// renderer emitting the opposite winding - produces a surface that pushes bodies into the
+    /// ground instead of out of it. This is the one-line correction; it has no effect on the box and
+    /// sphere forms.
     /// </remarks>
     public bool InvertWinding
     {
@@ -142,6 +144,227 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
         }
     }
 
+    /// <summary>
+    /// Produces the density source describing the field as it stands. Called on attach, so it must
+    /// hand back a view of memory that outlives the collidable, never a temporary.
+    /// </summary>
+    /// <returns>False when there is no field yet, which leaves the collidable unattached.</returns>
+    protected abstract bool TryGetSource(out TSource source);
+
+    /// <summary>Rebuilds the collidable after something other than a sample value changed.</summary>
+    /// <remarks>
+    /// Not needed for ordinary edits: the narrow phase reads the field on demand, so writing a
+    /// sample is visible immediately and changes neither the child layout nor the bounds. Call this
+    /// only when the grid is resized or replaced.
+    /// </remarks>
+    protected void InvalidateShape() => _component?.TryUpdateFeatures();
+
+    private bool TryBuildGrid(out VoxelGridData<TSource> grid)
+    {
+        if (!TryGetSource(out var source))
+        {
+            grid = default;
+            return false;
+        }
+        grid = new VoxelGridData<TSource>
+        {
+            Source = source,
+            CellSize = _cellSize,
+            IsoLevel = _isoLevel,
+            InvertWinding = _invertWinding,
+        };
+        return true;
+    }
+
+    public int Transforms => 1;
+
+    public void GetLocalTransforms(CollidableComponent collidable, Span<ShapeTransform> transforms)
+    {
+        transforms[0].PositionLocal = Vector3.Zero;
+        transforms[0].RotationLocal = Quaternion.Identity;
+        // The grid's own cell size is the only scale it has; entity scale is not applied.
+        transforms[0].Scale = Vector3.One;
+    }
+
+    bool ICollider.TryAttach(Shapes shapes, BufferPool pool, ShapeCacheSystem shapeCache, bool shouldCalculateInertia, out TypedIndex index, out Vector3 centerOfMass, out BodyInertia inertia)
+    {
+        centerOfMass = Vector3.Zero;
+        inertia = default;
+        index = default;
+        if (!TryBuildGrid(out var grid))
+            return false;
+
+        index = _form switch
+        {
+            VoxelChildForm.Box => shapes.Add(new VoxelBoxShape<TSource> { GridData = grid }),
+            VoxelChildForm.Sphere => shapes.Add(new VoxelSphereShape<TSource> { GridData = grid }),
+            VoxelChildForm.TriangleMarchingCubes => shapes.Add(new VoxelTriangleShape<TSource> { GridData = grid, SurfaceNets = false }),
+            _ => shapes.Add(new VoxelTriangleShape<TSource> { GridData = grid, SurfaceNets = true }),
+        };
+
+        if (shouldCalculateInertia)
+        {
+            grid.ComputeLocalBounds(out var min, out var max);
+            var extent = max - min;
+            inertia = new Box(extent.X, extent.Y, extent.Z).ComputeInertia(_mass);
+        }
+        return true;
+    }
+
+    void ICollider.Detach(Shapes shapes, BufferPool pool, TypedIndex index)
+    {
+        // The shape holds a view of memory the collider owns, so removing it must not free anything
+        // - the field survives, ready to be attached again.
+        shapes.Remove(index);
+    }
+
+    void ICollider.RayTest<TRayHitHandler>(Shapes shapes, TypedIndex shapeIndex, in NRigidPose pose, in RayData ray, ref float maximumT, ref TRayHitHandler hitHandler, BufferPool pool)
+    {
+        if (shapeIndex.Type == VoxelBoxShape<TSource>.TypeId)
+            shapes.GetShape<VoxelBoxShape<TSource>>(shapeIndex.Index).RayTest(pose, ray, ref maximumT, pool, ref hitHandler);
+        else if (shapeIndex.Type == VoxelSphereShape<TSource>.TypeId)
+            shapes.GetShape<VoxelSphereShape<TSource>>(shapeIndex.Index).RayTest(pose, ray, ref maximumT, pool, ref hitHandler);
+        else if (shapeIndex.Type == VoxelTriangleShape<TSource>.TypeId)
+            shapes.GetShape<VoxelTriangleShape<TSource>>(shapeIndex.Index).RayTest(pose, ray, ref maximumT, pool, ref hitHandler);
+    }
+
+    void ICollider.AppendModel(List<BasicMeshBuffers> buffer, ShapeCacheSystem shapeCache, out object? cacheOut)
+    {
+        cacheOut = null;
+        if (!TryBuildGrid(out var grid))
+            return;
+
+        // Walking the whole field to build a mesh is exactly what this collider exists to avoid - so
+        // it happens here and nowhere else, only when someone turns the physics debug view on.
+        var vertices = new List<VertexPosition3>();
+        var indices = new List<int>();
+        switch (_form)
+        {
+            case VoxelChildForm.Box:
+                AppendCellSolids(ref grid, vertices, indices, sphere: false);
+                break;
+            case VoxelChildForm.Sphere:
+                AppendCellSolids(ref grid, vertices, indices, sphere: true);
+                break;
+            default:
+                AppendSurface(ref grid, vertices, indices, surfaceNets: _form == VoxelChildForm.TriangleSurfaceNets);
+                break;
+        }
+
+        buffer.Add(new BasicMeshBuffers { Vertices = vertices.ToArray(), Indices = indices.ToArray() });
+    }
+
+    /// <summary>A box per solid cell, or an inscribed octahedron standing in for the sphere form.</summary>
+    private static void AppendCellSolids(ref VoxelGridData<TSource> grid, List<VertexPosition3> vertices, List<int> indices, bool sphere)
+    {
+        var half = grid.CellSize * 0.5f;
+        for (int x = 0; x < grid.CellsX; ++x)
+        {
+            for (int y = 0; y < grid.CellsY; ++y)
+            {
+                for (int z = 0; z < grid.CellsZ; ++z)
+                {
+                    if (!grid.CellIsSolid(x, y, z))
+                        continue;
+                    var centre = grid.CellCentre(x, y, z);
+                    var first = vertices.Count;
+                    if (sphere)
+                    {
+                        foreach (var offset in OctahedronVertices)
+                            vertices.Add(new VertexPosition3(ToStride(centre + offset * half)));
+                        foreach (var i in OctahedronIndices)
+                            indices.Add(first + i);
+                    }
+                    else
+                    {
+                        for (int corner = 0; corner < 8; ++corner)
+                        {
+                            vertices.Add(new VertexPosition3(ToStride(centre + new NVector3(
+                                (corner & 1) != 0 ? half : -half,
+                                (corner & 2) != 0 ? half : -half,
+                                (corner & 4) != 0 ? half : -half))));
+                        }
+                        foreach (var i in BoxIndices)
+                            indices.Add(first + i);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>The iso-surface triangles, the same ones the narrow phase would generate.</summary>
+    private static void AppendSurface(ref VoxelGridData<TSource> grid, List<VertexPosition3> vertices, List<int> indices, bool surfaceNets)
+    {
+        for (int x = 0; x < grid.CellsX; ++x)
+        {
+            for (int y = 0; y < grid.CellsY; ++y)
+            {
+                for (int z = 0; z < grid.CellsZ; ++z)
+                {
+                    var cubeIndex = surfaceNets ? 0 : grid.CubeIndex(x, y, z);
+                    for (int slot = 0; slot < VoxelGridData<TSource>.MaxSurfaceNetsTrianglesPerCell; ++slot)
+                    {
+                        var found = surfaceNets
+                            ? grid.TryGetSurfaceNetsTriangle(x, y, z, slot, out var triangle)
+                            : grid.TryGetMarchingCubesTriangle(x, y, z, cubeIndex, slot, out triangle);
+                        if (!found)
+                            continue;
+                        indices.Add(vertices.Count);
+                        indices.Add(vertices.Count + 1);
+                        indices.Add(vertices.Count + 2);
+                        vertices.Add(new VertexPosition3(ToStride(triangle.A)));
+                        vertices.Add(new VertexPosition3(ToStride(triangle.B)));
+                        vertices.Add(new VertexPosition3(ToStride(triangle.C)));
+                    }
+                }
+            }
+        }
+    }
+
+    private static Vector3 ToStride(NVector3 value) => new(value.X, value.Y, value.Z);
+
+    /// <summary>Corner order matches the bit pattern used above: bit 0 is +X, bit 1 +Y, bit 2 +Z.</summary>
+    private static ReadOnlySpan<int> BoxIndices =>
+    [
+        0, 2, 1, 1, 2, 3, // -Z
+        4, 5, 6, 5, 7, 6, // +Z
+        0, 1, 4, 1, 5, 4, // -Y
+        2, 6, 3, 3, 6, 7, // +Y
+        0, 4, 2, 2, 4, 6, // -X
+        1, 3, 5, 3, 7, 5, // +X
+    ];
+
+    private static readonly NVector3[] OctahedronVertices =
+    [
+        new(-1, 0, 0), new(1, 0, 0),
+        new(0, -1, 0), new(0, 1, 0),
+        new(0, 0, -1), new(0, 0, 1),
+    ];
+
+    private static ReadOnlySpan<int> OctahedronIndices =>
+    [
+        0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2,
+        1, 4, 2, 1, 3, 4, 1, 5, 3, 1, 2, 5,
+    ];
+}
+
+/// <summary>
+/// A <see cref="VoxelColliderBase{TSource}"/> over samples packed one per <see cref="ushort"/>,
+/// density in bits 0-7 and material in bits 8-15 - the layout a voxel game commonly uploads to the
+/// GPU, so one array serves rendering and collision.
+/// </summary>
+/// <remarks>
+/// Owns its samples in native memory, so they survive attach and detach cycles and are freed on
+/// <see cref="Dispose"/> or finalization. A game that already keeps its field in unmanaged memory
+/// can avoid the copy by deriving from <see cref="VoxelColliderBase{TSource}"/> itself and pointing
+/// a source at what it has.
+/// </remarks>
+[DataContract]
+public sealed unsafe class VoxelCollider : VoxelColliderBase<PackedVoxelSource>, IDisposable
+{
+    private ushort* _samples;
+    private int _samplesX, _samplesY, _samplesZ;
+
     /// <summary>Samples along each axis. One more than the number of cells, per axis.</summary>
     [DataMemberIgnore]
     public Int3 SampleCount => new(_samplesX, _samplesY, _samplesZ);
@@ -155,9 +378,7 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
     public bool HasData => _samples != null;
 
     /// <summary>
-    /// Supplies the density field. Samples are packed one per <see cref="ushort"/>, density in bits
-    /// 0-7 and material in bits 8-15, laid out x-major with z varying fastest - the layout a voxel
-    /// game already uses to upload a chunk, so the same array serves both.
+    /// Supplies the density field, laid out x-major with z varying fastest.
     /// </summary>
     /// <remarks>
     /// A grid of n cells per axis needs n+1 samples per axis: a cell reads the eight samples at its
@@ -172,7 +393,8 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
         if (samples.Length < count)
             throw new ArgumentException($"Expected at least {count} samples for a {samplesX}x{samplesY}x{samplesZ} grid, got {samples.Length}.", nameof(samples));
 
-        if (_samples == null || count != _samplesX * _samplesY * _samplesZ)
+        var resized = _samples == null || count != _samplesX * _samplesY * _samplesZ;
+        if (resized)
         {
             ReleaseData();
             _samples = (ushort*)NativeMemory.Alloc((nuint)count, sizeof(ushort));
@@ -181,7 +403,9 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
         _samplesY = samplesY;
         _samplesZ = samplesZ;
         samples[..count].CopyTo(new Span<ushort>(_samples, count));
-        _component?.TryUpdateFeatures();
+        // Only the layout can force a rebuild; sample values are read live.
+        if (resized)
+            InvalidateShape();
     }
 
     /// <summary>
@@ -193,17 +417,10 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
     /// between simulation steps; a write racing the narrow phase is a data race like any other.
     /// </remarks>
     public void SetVoxel(int x, int y, int z, ushort packedDensityAndMaterial)
-    {
-        CheckHasData();
-        _samples[SampleIndex(x, y, z)] = packedDensityAndMaterial;
-    }
+        => _samples[SampleIndex(x, y, z)] = packedDensityAndMaterial;
 
     /// <summary>Reads one sample back, packed as <see cref="SetVoxel"/> takes it.</summary>
-    public ushort GetVoxel(int x, int y, int z)
-    {
-        CheckHasData();
-        return _samples[SampleIndex(x, y, z)];
-    }
+    public ushort GetVoxel(int x, int y, int z) => _samples[SampleIndex(x, y, z)];
 
     /// <summary>Frees the native sample buffer. Safe to call more than once.</summary>
     public void ReleaseData()
@@ -223,93 +440,29 @@ public sealed unsafe class VoxelCollider : ICollider, IDisposable
 
     ~VoxelCollider() => ReleaseData();
 
-    private int SampleIndex(int x, int y, int z)
-    {
-        if ((uint)x >= (uint)_samplesX || (uint)y >= (uint)_samplesY || (uint)z >= (uint)_samplesZ)
-            throw new ArgumentOutOfRangeException(nameof(x), $"({x}, {y}, {z}) is outside a {_samplesX}x{_samplesY}x{_samplesZ} sample grid.");
-        return (x * _samplesY + y) * _samplesZ + z;
-    }
-
-    private void CheckHasData()
+    protected override bool TryGetSource(out PackedVoxelSource source)
     {
         if (_samples == null)
-            throw new InvalidOperationException($"This {nameof(VoxelCollider)} has no data yet; call {nameof(SetData)} first.");
-    }
-
-    private VoxelGridData BuildGrid() => new()
-    {
-        Samples = new NBuffer(_samples, _samplesX * _samplesY * _samplesZ),
-        SamplesX = _samplesX,
-        SamplesY = _samplesY,
-        SamplesZ = _samplesZ,
-        CellSize = _cellSize,
-        IsoLevel = _isoLevel,
-        InvertWinding = _invertWinding,
-    };
-
-    public int Transforms => 1;
-
-    public void GetLocalTransforms(CollidableComponent collidable, Span<ShapeTransform> transforms)
-    {
-        transforms[0].PositionLocal = Vector3.Zero;
-        transforms[0].RotationLocal = Quaternion.Identity;
-        // The grid's own cell size is the only scale it has; entity scale is not applied.
-        transforms[0].Scale = Vector3.One;
-    }
-
-    bool ICollider.TryAttach(Shapes shapes, BufferPool pool, ShapeCacheSystem shapeCache, bool shouldCalculateInertia, out TypedIndex index, out Vector3 centerOfMass, out BodyInertia inertia)
-    {
-        centerOfMass = Vector3.Zero;
-        inertia = default;
-        index = default;
-        if (_samples == null)
+        {
+            source = default;
             return false;
-
-        var grid = BuildGrid();
-        index = _form switch
-        {
-            VoxelChildForm.Box => shapes.Add(new VoxelBoxShape { GridData = grid }),
-            VoxelChildForm.Sphere => shapes.Add(new VoxelSphereShape { GridData = grid }),
-            VoxelChildForm.TriangleMarchingCubes => shapes.Add(new VoxelTriangleShape { GridData = grid, SurfaceNets = false }),
-            _ => shapes.Add(new VoxelTriangleShape { GridData = grid, SurfaceNets = true }),
-        };
-
-        if (shouldCalculateInertia)
-        {
-            grid.ComputeLocalBounds(out var min, out var max);
-            var extent = max - min;
-            inertia = new Box(extent.X, extent.Y, extent.Z).ComputeInertia(_mass);
         }
+        source = new PackedVoxelSource
+        {
+            Samples = new Buffer<ushort>(_samples, _samplesX * _samplesY * _samplesZ),
+            SamplesX = _samplesX,
+            SamplesY = _samplesY,
+            SamplesZ = _samplesZ,
+        };
         return true;
     }
 
-    void ICollider.Detach(Shapes shapes, BufferPool pool, TypedIndex index)
+    private int SampleIndex(int x, int y, int z)
     {
-        // The shape holds a view of memory this collider owns, so removing it must not free
-        // anything - the field survives, ready to be attached again.
-        shapes.Remove(index);
-    }
-
-    void ICollider.AppendModel(List<BasicMeshBuffers> buffer, ShapeCacheSystem shapeCache, out object? cacheOut)
-    {
-        // Nothing to hand the debug renderer: there is no mesh to draw, and generating one here
-        // would rebuild exactly the thing this collider exists to avoid.
-        cacheOut = null;
-    }
-
-    void ICollider.RayTest<TRayHitHandler>(Shapes shapes, TypedIndex shapeIndex, in NRigidPose pose, in RayData ray, ref float maximumT, ref TRayHitHandler hitHandler, BufferPool pool)
-    {
-        switch (shapeIndex.Type)
-        {
-            case VoxelBoxShape.Id:
-                shapes.GetShape<VoxelBoxShape>(shapeIndex.Index).RayTest(pose, ray, ref maximumT, pool, ref hitHandler);
-                break;
-            case VoxelSphereShape.Id:
-                shapes.GetShape<VoxelSphereShape>(shapeIndex.Index).RayTest(pose, ray, ref maximumT, pool, ref hitHandler);
-                break;
-            case VoxelTriangleShape.Id:
-                shapes.GetShape<VoxelTriangleShape>(shapeIndex.Index).RayTest(pose, ray, ref maximumT, pool, ref hitHandler);
-                break;
-        }
+        if (_samples == null)
+            throw new InvalidOperationException($"This {nameof(VoxelCollider)} has no data yet; call {nameof(SetData)} first.");
+        if ((uint)x >= (uint)_samplesX || (uint)y >= (uint)_samplesY || (uint)z >= (uint)_samplesZ)
+            throw new ArgumentOutOfRangeException(nameof(x), $"({x}, {y}, {z}) is outside a {_samplesX}x{_samplesY}x{_samplesZ} sample grid.");
+        return (x * _samplesY + y) * _samplesZ + z;
     }
 }

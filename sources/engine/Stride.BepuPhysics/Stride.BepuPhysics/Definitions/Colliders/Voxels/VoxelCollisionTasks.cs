@@ -10,26 +10,40 @@ using BepuPhysics.CollisionDetection.SweepTasks;
 namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 
 /// <summary>
-/// Teaches a simulation how to collide and sweep against the voxel shapes.
+/// Teaches a simulation how to collide and sweep against voxel shapes.
 /// </summary>
 /// <remarks>
 /// Bepu discovers shape types through registered tasks rather than reflection, so every pairing has
 /// to be spelled out: each of the six convex types against each voxel shape, plus the two compound
-/// types, plus the sweep equivalents. That is twenty-four tasks per voxel shape and seventy-two in
-/// total, which sounds worse than it is - they are empty generic instantiations, and the cost is
-/// paid once when the simulation is created.
+/// types, plus the sweep equivalents. That is twenty-four tasks per voxel shape and seventy-two per
+/// density source, which sounds worse than it is - they are empty generic instantiations, and the
+/// cost is paid once when the simulation is created.
 /// </remarks>
 public static class VoxelCollisionTasks
 {
     /// <summary>
-    /// Registers every collision and sweep task for the three voxel shapes. Call once per
-    /// simulation, after it has been created.
+    /// Registers the collision and sweep tasks for one density source, covering all three shapes
+    /// built over it. Call once per simulation, after it has been created.
     /// </summary>
-    public static void Register(Simulation simulation)
+    /// <remarks>
+    /// <see cref="BepuSimulation"/> already does this for the built-in sources. A game defining its
+    /// own <see cref="IVoxelDensitySource"/> calls this for it, once, with shape type ids that do
+    /// not collide with anything else in that simulation.
+    /// </remarks>
+    public static void Register<TSource>(Simulation simulation)
+        where TSource : unmanaged, IVoxelDensitySource
     {
-        Register<VoxelBoxShape, Box, BoxWide>(simulation);
-        Register<VoxelSphereShape, Sphere, SphereWide>(simulation);
-        Register<VoxelTriangleShape, Triangle, TriangleWide>(simulation);
+        Register<VoxelBoxShape<TSource>, Box, BoxWide>(simulation);
+        Register<VoxelSphereShape<TSource>, Sphere, SphereWide>(simulation);
+        Register<VoxelTriangleShape<TSource>, Triangle, TriangleWide>(simulation);
+    }
+
+    /// <summary>Registers every task for the built-in density sources.</summary>
+    public static void RegisterDefaults(Simulation simulation)
+    {
+        Register<PackedVoxelSource>(simulation);
+        Register<ByteVoxelSource>(simulation);
+        Register<FloatVoxelSource>(simulation);
     }
 
     private static void Register<TShape, TChild, TChildWide>(Simulation simulation)

@@ -18,25 +18,37 @@ namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 /// What the shared voxel machinery needs from each of the shapes below.
 /// </summary>
 /// <remarks>
-/// The three shapes differ only in what a cell contributes to the narrow phase. Everything else -
-/// bounds, overlap queries, ray traversal - is the same grid walk, written once in
-/// <see cref="VoxelShapeHelpers"/> and reached through this interface.
+/// The shapes differ only in what a cell contributes to the narrow phase. Everything else - bounds,
+/// bounding box queries, ray traversal - is the same grid walk, written once in
+/// <see cref="VoxelShapeHelpers"/> and reached through this interface. Deliberately not generic over
+/// the density source: the walk needs the cell layout and never a sample.
 /// </remarks>
 public unsafe interface IVoxelShape
 {
     /// <summary>Bepu type id of the child shape: Box.Id, Sphere.Id or Triangle.Id.</summary>
     static abstract int ChildShapeTypeId { get; }
 
-    /// <summary>The density field. Returned by value; take a local copy rather than re-reading it per cell.</summary>
-    VoxelGridData Grid { get; }
-
     /// <summary>Upper bound on what <see cref="GetCellChildren"/> can report for one cell.</summary>
     static abstract int MaxChildrenPerCell { get; }
 
+    /// <summary>Cells along X.</summary>
+    int CellsX { get; }
+    /// <summary>Cells along Y.</summary>
+    int CellsY { get; }
+    /// <summary>Cells along Z.</summary>
+    int CellsZ { get; }
+    /// <summary>Edge length of one cell, in world units.</summary>
+    float CellSize { get; }
+
     /// <summary>
-    /// Children this cell actually contributes, as child indices. Zero for a cell the surface does
-    /// not touch, which is the common case and the reason nothing is stored per child.
+    /// Children this cell contributes, as child indices.
     /// </summary>
+    /// <remarks>
+    /// Decides existence without building geometry - a handful of sample reads - because a query is
+    /// mostly cells that contribute nothing. The geometry is built later, in
+    /// <c>GetLocalChild</c> and <see cref="RayTestChild"/>, only for children that are actually
+    /// tested.
+    /// </remarks>
     int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices);
 
     /// <summary>Tests one child against a ray already expressed in the shape's local space.</summary>
@@ -53,28 +65,29 @@ public unsafe interface IVoxelShape
 /// The grid walks every voxel shape shares: bounds, bounding box queries, and ray traversal.
 /// </summary>
 /// <remarks>
-/// None of this uses an acceleration structure, and that is the point. Bepu's own
-/// <see cref="Mesh"/> - and the voxel collidable in Bepu's demos - build a bounding volume tree
-/// over the children, because a triangle soup has no structure to exploit. A regular grid already
-/// is the structure: a bounding box maps to a range of cell indices by division, and a ray walks
-/// the cells it crosses in order. So there is no tree to build when the collidable is created and
-/// none to refit when a voxel is edited.
+/// None of this uses an acceleration structure, and that is the point. Bepu's own <see cref="Mesh"/>
+/// - and the voxel collidable in Bepu's demos - build a bounding volume tree over the children,
+/// because a triangle soup has no structure to exploit. A regular grid already is the structure: a
+/// bounding box maps to a range of cell indices by division, and a ray walks the cells it crosses in
+/// order. So there is no tree to build when the collidable is created and none to refit when a voxel
+/// is edited.
 /// </remarks>
 public static unsafe class VoxelShapeHelpers
 {
     /// <summary>Bounds of the whole grid under an orientation, from the eight corners of its box.</summary>
-    public static void ComputeBounds(in VoxelGridData grid, Quaternion orientation, out Vector3 min, out Vector3 max)
+    public static void ComputeBounds<TShape>(ref TShape shape, Quaternion orientation, out Vector3 min, out Vector3 max)
+        where TShape : unmanaged, IVoxelShape
     {
-        grid.ComputeLocalBounds(out var localMin, out var localMax);
+        var localMax = new Vector3(shape.CellsX, shape.CellsY, shape.CellsZ) * shape.CellSize;
         Matrix3x3.CreateFromQuaternion(orientation, out var basis);
         min = new Vector3(float.MaxValue);
         max = new Vector3(float.MinValue);
         for (int i = 0; i < 8; ++i)
         {
             var corner = new Vector3(
-                (i & 1) != 0 ? localMax.X : localMin.X,
-                (i & 2) != 0 ? localMax.Y : localMin.Y,
-                (i & 4) != 0 ? localMax.Z : localMin.Z);
+                (i & 1) != 0 ? localMax.X : 0f,
+                (i & 2) != 0 ? localMax.Y : 0f,
+                (i & 4) != 0 ? localMax.Z : 0f);
             Matrix3x3.Transform(corner, basis, out var rotated);
             min = Vector3.Min(rotated, min);
             max = Vector3.Max(rotated, max);
@@ -82,18 +95,46 @@ public static unsafe class VoxelShapeHelpers
     }
 
     /// <summary>
-    /// Reports every child overlapping a local space bounding box to a breakable enumerator. This
-    /// is the shape of query Bepu's boundary smoothing would use; it is also the simplest way to
-    /// express the grid walk, so the other two overloads are written in terms of the same loop.
+    /// Clamps a local space bounding box to the range of cells it can touch. False when the box
+    /// misses the grid entirely.
+    /// </summary>
+    public static bool GetCellRange<TShape>(ref TShape shape, Vector3 min, Vector3 max, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1)
+        where TShape : unmanaged, IVoxelShape
+    {
+        var inverseCellSize = 1f / shape.CellSize;
+        x0 = (int)MathF.Floor(min.X * inverseCellSize);
+        y0 = (int)MathF.Floor(min.Y * inverseCellSize);
+        z0 = (int)MathF.Floor(min.Z * inverseCellSize);
+        x1 = (int)MathF.Floor(max.X * inverseCellSize);
+        y1 = (int)MathF.Floor(max.Y * inverseCellSize);
+        z1 = (int)MathF.Floor(max.Z * inverseCellSize);
+        if (x1 < 0 || y1 < 0 || z1 < 0 || x0 >= shape.CellsX || y0 >= shape.CellsY || z0 >= shape.CellsZ)
+        {
+            x0 = y0 = z0 = 0;
+            x1 = y1 = z1 = -1;
+            return false;
+        }
+        x0 = Math.Max(x0, 0);
+        y0 = Math.Max(y0, 0);
+        z0 = Math.Max(z0, 0);
+        x1 = Math.Min(x1, shape.CellsX - 1);
+        y1 = Math.Min(y1, shape.CellsY - 1);
+        z1 = Math.Min(z1, shape.CellsZ - 1);
+        return true;
+    }
+
+    /// <summary>
+    /// Reports every child overlapping a local space bounding box to a breakable enumerator. The
+    /// other two overloads are written in terms of this same loop.
     /// </summary>
     public static void EnumerateOverlaps<TShape, TEnumerator>(ref TShape shape, Vector3 min, Vector3 max, ref TEnumerator enumerator)
         where TShape : unmanaged, IVoxelShape
         where TEnumerator : IBreakableForEach<int>
     {
-        var grid = shape.Grid;
-        if (!grid.GetCellRange(min, max, out var x0, out var y0, out var z0, out var x1, out var y1, out var z1))
+        if (!GetCellRange(ref shape, min, max, out var x0, out var y0, out var z0, out var x1, out var y1, out var z1))
             return;
         Span<int> children = stackalloc int[TShape.MaxChildrenPerCell];
+        // z varies fastest, matching the sample layout, so the walk runs along cache lines.
         for (int x = x0; x <= x1; ++x)
         {
             for (int y = y0; y <= y1; ++y)
@@ -164,26 +205,28 @@ public static unsafe class VoxelShapeHelpers
     /// A three dimensional DDA: clip the ray to the grid box, then step from cell to cell along
     /// whichever axis reaches its next boundary first. Cells are visited in increasing distance, so
     /// a handler that narrows <paramref name="maximumT"/> on a hit stops the walk almost
-    /// immediately - which is what makes this cheap for the common short probe.
+    /// immediately - which is what makes this cheap for the short probes a game actually casts.
     /// </remarks>
     public static void RayTest<TShape, TRayHitHandler>(ref TShape shape, in NRigidPose pose, in RayData ray, ref float maximumT, ref TRayHitHandler hitHandler)
         where TShape : unmanaged, IVoxelShape
         where TRayHitHandler : struct, IShapeRayHitHandler
     {
-        var grid = shape.Grid;
         Matrix3x3.CreateFromQuaternion(pose.Orientation, out var orientation);
         Matrix3x3.TransformTranspose(ray.Origin - pose.Position, orientation, out var origin);
         Matrix3x3.TransformTranspose(ray.Direction, orientation, out var direction);
 
-        grid.ComputeLocalBounds(out var boundsMin, out var boundsMax);
-        if (!TryClipToBox(origin, direction, boundsMin, boundsMax, maximumT, out var tEnter, out var tExit))
+        var cellSize = shape.CellSize;
+        var cellsX = shape.CellsX;
+        var cellsY = shape.CellsY;
+        var cellsZ = shape.CellsZ;
+        var boundsMax = new Vector3(cellsX, cellsY, cellsZ) * cellSize;
+        if (!TryClipToBox(origin, direction, boundsMax, maximumT, out var tEnter, out var tExit))
             return;
 
-        var cellSize = grid.CellSize;
         var entry = origin + direction * tEnter;
-        var x = Math.Clamp((int)MathF.Floor(entry.X / cellSize), 0, grid.CellsX - 1);
-        var y = Math.Clamp((int)MathF.Floor(entry.Y / cellSize), 0, grid.CellsY - 1);
-        var z = Math.Clamp((int)MathF.Floor(entry.Z / cellSize), 0, grid.CellsZ - 1);
+        var x = Math.Clamp((int)MathF.Floor(entry.X / cellSize), 0, cellsX - 1);
+        var y = Math.Clamp((int)MathF.Floor(entry.Y / cellSize), 0, cellsY - 1);
+        var z = Math.Clamp((int)MathF.Floor(entry.Z / cellSize), 0, cellsZ - 1);
 
         ComputeAxisStep(origin.X, direction.X, x, cellSize, tEnter, out var stepX, out var tMaxX, out var tDeltaX);
         ComputeAxisStep(origin.Y, direction.Y, y, cellSize, tEnter, out var stepY, out var tMaxY, out var tDeltaY);
@@ -211,7 +254,7 @@ public static unsafe class VoxelShapeHelpers
                 x += stepX;
                 t = tMaxX;
                 tMaxX += tDeltaX;
-                if (x < 0 || x >= grid.CellsX)
+                if ((uint)x >= (uint)cellsX)
                     return;
             }
             else if (tMaxY < tMaxZ)
@@ -219,7 +262,7 @@ public static unsafe class VoxelShapeHelpers
                 y += stepY;
                 t = tMaxY;
                 tMaxY += tDeltaY;
-                if (y < 0 || y >= grid.CellsY)
+                if ((uint)y >= (uint)cellsY)
                     return;
             }
             else
@@ -227,7 +270,7 @@ public static unsafe class VoxelShapeHelpers
                 z += stepZ;
                 t = tMaxZ;
                 tMaxZ += tDeltaZ;
-                if (z < 0 || z >= grid.CellsZ)
+                if ((uint)z >= (uint)cellsZ)
                     return;
             }
         }
@@ -245,8 +288,8 @@ public static unsafe class VoxelShapeHelpers
         }
     }
 
-    /// <summary>Slab test clipping a ray to a local space box, bounded by the ray's maximum length.</summary>
-    private static bool TryClipToBox(Vector3 origin, Vector3 direction, Vector3 min, Vector3 max, float maximumT, out float tEnter, out float tExit)
+    /// <summary>Slab test clipping a ray to the grid box, bounded by the ray's maximum length.</summary>
+    private static bool TryClipToBox(Vector3 origin, Vector3 direction, Vector3 max, float maximumT, out float tEnter, out float tExit)
     {
         tEnter = 0f;
         tExit = maximumT;
@@ -254,16 +297,15 @@ public static unsafe class VoxelShapeHelpers
         {
             var o = axis == 0 ? origin.X : axis == 1 ? origin.Y : origin.Z;
             var d = axis == 0 ? direction.X : axis == 1 ? direction.Y : direction.Z;
-            var lo = axis == 0 ? min.X : axis == 1 ? min.Y : min.Z;
             var hi = axis == 0 ? max.X : axis == 1 ? max.Y : max.Z;
             if (MathF.Abs(d) < 1e-9f)
             {
-                if (o < lo || o > hi)
+                if (o < 0f || o > hi)
                     return false;
                 continue;
             }
             var inverse = 1f / d;
-            var t0 = (lo - o) * inverse;
+            var t0 = -o * inverse;
             var t1 = (hi - o) * inverse;
             if (t0 > t1)
                 (t0, t1) = (t1, t0);
@@ -298,21 +340,25 @@ public static unsafe class VoxelShapeHelpers
 /// <summary>
 /// A voxel grid presented to the narrow phase as one box per occupied cell.
 /// </summary>
-public unsafe struct VoxelBoxShape : IHomogeneousCompoundShape<Box, BoxWide>, IBoundsQueryableCompound, IVoxelShape
+public unsafe struct VoxelBoxShape<TSource> : IHomogeneousCompoundShape<Box, BoxWide>, IVoxelShape
+    where TSource : unmanaged, IVoxelDensitySource
 {
-    /// <summary>Ids past Bepu's built-ins, which end at Mesh = 8. Must be unique within a simulation.</summary>
-    public const int Id = 12;
-    public static int TypeId => Id;
+    /// <summary>The first of the three ids <typeparamref name="TSource"/> reserves.</summary>
+    public static int TypeId => TSource.ShapeTypeIdBase;
     public static int ChildShapeTypeId => Box.Id;
     public static int MaxChildrenPerCell => 1;
 
-    public VoxelGridData GridData;
-    public readonly VoxelGridData Grid => GridData;
+    public VoxelGridData<TSource> GridData;
+
+    public readonly int CellsX => GridData.CellsX;
+    public readonly int CellsY => GridData.CellsY;
+    public readonly int CellsZ => GridData.CellsZ;
+    public readonly float CellSize => GridData.CellSize;
 
     public readonly int ChildCount => GridData.CellCount;
 
     public static ShapeBatch CreateShapeBatch(BufferPool pool, int initialCapacity, Shapes shapeBatches)
-        => new HomogeneousCompoundShapeBatch<VoxelBoxShape, Box, BoxWide>(pool, initialCapacity);
+        => new HomogeneousCompoundShapeBatch<VoxelBoxShape<TSource>, Box, BoxWide>(pool, initialCapacity);
 
     public readonly int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices)
     {
@@ -350,13 +396,12 @@ public unsafe struct VoxelBoxShape : IHomogeneousCompoundShape<Box, BoxWide>, IB
     {
         GridData.DecomposeCell(childIndex, out var cx, out var cy, out var cz);
         localPosition = GridData.CellCentre(cx, cy, cz);
-        var half = new Vector3(GridData.CellSize * 0.5f);
-        Unsafe.Write(destination, half);
+        Unsafe.Write(destination, new Vector3(GridData.CellSize * 0.5f));
         return sizeof(Box);
     }
 
-    public readonly void ComputeBounds(Quaternion orientation, out Vector3 min, out Vector3 max)
-        => VoxelShapeHelpers.ComputeBounds(GridData, orientation, out min, out max);
+    public void ComputeBounds(Quaternion orientation, out Vector3 min, out Vector3 max)
+        => VoxelShapeHelpers.ComputeBounds(ref this, orientation, out min, out max);
 
     public void RayTest<TRayHitHandler>(in NRigidPose pose, in RayData ray, ref float maximumT, BufferPool pool, ref TRayHitHandler hitHandler)
         where TRayHitHandler : struct, IShapeRayHitHandler
@@ -369,37 +414,42 @@ public unsafe struct VoxelBoxShape : IHomogeneousCompoundShape<Box, BoxWide>, IB
     public readonly void FindLocalOverlaps<TOverlaps, TSubpairOverlaps>(ref Buffer<OverlapQueryForPair> pairs, BufferPool pool, Shapes shapes, ref TOverlaps overlaps)
         where TOverlaps : struct, ICollisionTaskOverlaps<TSubpairOverlaps>
         where TSubpairOverlaps : struct, ICollisionTaskSubpairOverlaps
-        => VoxelShapeHelpers.FindLocalOverlaps<VoxelBoxShape, TOverlaps, TSubpairOverlaps>(ref pairs, pool, ref overlaps);
+        => VoxelShapeHelpers.FindLocalOverlaps<VoxelBoxShape<TSource>, TOverlaps, TSubpairOverlaps>(ref pairs, pool, ref overlaps);
 
     public void FindLocalOverlaps<TOverlaps>(Vector3 min, Vector3 max, Vector3 sweep, float maximumT, BufferPool pool, Shapes shapes, void* overlaps)
         where TOverlaps : ICollisionTaskSubpairOverlaps
-        => VoxelShapeHelpers.FindLocalOverlaps<VoxelBoxShape, TOverlaps>(min, max, sweep, maximumT, pool, overlaps, ref this);
+        => VoxelShapeHelpers.FindLocalOverlaps<VoxelBoxShape<TSource>, TOverlaps>(min, max, sweep, maximumT, pool, overlaps, ref this);
 
     public void FindLocalOverlaps<TEnumerator>(Vector3 min, Vector3 max, BufferPool pool, Shapes shapes, ref TEnumerator enumerator)
         where TEnumerator : IBreakableForEach<int>
         => VoxelShapeHelpers.EnumerateOverlaps(ref this, min, max, ref enumerator);
 
-    /// <summary>The grid buffer is owned by the collider, not by the shape; nothing to release here.</summary>
+    /// <summary>The samples belong to the collider, not to the shape; nothing to release here.</summary>
     public readonly void Dispose(BufferPool pool) { }
 }
 
 /// <summary>
 /// A voxel grid presented to the narrow phase as one sphere inscribed in each occupied cell.
 /// </summary>
-public unsafe struct VoxelSphereShape : IHomogeneousCompoundShape<Sphere, SphereWide>, IBoundsQueryableCompound, IVoxelShape
+public unsafe struct VoxelSphereShape<TSource> : IHomogeneousCompoundShape<Sphere, SphereWide>, IVoxelShape
+    where TSource : unmanaged, IVoxelDensitySource
 {
-    public const int Id = 13;
-    public static int TypeId => Id;
+    /// <summary>The second of the three ids <typeparamref name="TSource"/> reserves.</summary>
+    public static int TypeId => TSource.ShapeTypeIdBase + 1;
     public static int ChildShapeTypeId => Sphere.Id;
     public static int MaxChildrenPerCell => 1;
 
-    public VoxelGridData GridData;
-    public readonly VoxelGridData Grid => GridData;
+    public VoxelGridData<TSource> GridData;
+
+    public readonly int CellsX => GridData.CellsX;
+    public readonly int CellsY => GridData.CellsY;
+    public readonly int CellsZ => GridData.CellsZ;
+    public readonly float CellSize => GridData.CellSize;
 
     public readonly int ChildCount => GridData.CellCount;
 
     public static ShapeBatch CreateShapeBatch(BufferPool pool, int initialCapacity, Shapes shapeBatches)
-        => new HomogeneousCompoundShapeBatch<VoxelSphereShape, Sphere, SphereWide>(pool, initialCapacity);
+        => new HomogeneousCompoundShapeBatch<VoxelSphereShape<TSource>, Sphere, SphereWide>(pool, initialCapacity);
 
     public readonly int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices)
     {
@@ -432,13 +482,12 @@ public unsafe struct VoxelSphereShape : IHomogeneousCompoundShape<Sphere, Sphere
     {
         GridData.DecomposeCell(childIndex, out var cx, out var cy, out var cz);
         localPosition = GridData.CellCentre(cx, cy, cz);
-        var radius = GridData.CellSize * 0.5f;
-        Unsafe.Write(destination, radius);
+        Unsafe.Write(destination, GridData.CellSize * 0.5f);
         return sizeof(Sphere);
     }
 
-    public readonly void ComputeBounds(Quaternion orientation, out Vector3 min, out Vector3 max)
-        => VoxelShapeHelpers.ComputeBounds(GridData, orientation, out min, out max);
+    public void ComputeBounds(Quaternion orientation, out Vector3 min, out Vector3 max)
+        => VoxelShapeHelpers.ComputeBounds(ref this, orientation, out min, out max);
 
     public void RayTest<TRayHitHandler>(in NRigidPose pose, in RayData ray, ref float maximumT, BufferPool pool, ref TRayHitHandler hitHandler)
         where TRayHitHandler : struct, IShapeRayHitHandler
@@ -451,11 +500,11 @@ public unsafe struct VoxelSphereShape : IHomogeneousCompoundShape<Sphere, Sphere
     public readonly void FindLocalOverlaps<TOverlaps, TSubpairOverlaps>(ref Buffer<OverlapQueryForPair> pairs, BufferPool pool, Shapes shapes, ref TOverlaps overlaps)
         where TOverlaps : struct, ICollisionTaskOverlaps<TSubpairOverlaps>
         where TSubpairOverlaps : struct, ICollisionTaskSubpairOverlaps
-        => VoxelShapeHelpers.FindLocalOverlaps<VoxelSphereShape, TOverlaps, TSubpairOverlaps>(ref pairs, pool, ref overlaps);
+        => VoxelShapeHelpers.FindLocalOverlaps<VoxelSphereShape<TSource>, TOverlaps, TSubpairOverlaps>(ref pairs, pool, ref overlaps);
 
     public void FindLocalOverlaps<TOverlaps>(Vector3 min, Vector3 max, Vector3 sweep, float maximumT, BufferPool pool, Shapes shapes, void* overlaps)
         where TOverlaps : ICollisionTaskSubpairOverlaps
-        => VoxelShapeHelpers.FindLocalOverlaps<VoxelSphereShape, TOverlaps>(min, max, sweep, maximumT, pool, overlaps, ref this);
+        => VoxelShapeHelpers.FindLocalOverlaps<VoxelSphereShape<TSource>, TOverlaps>(min, max, sweep, maximumT, pool, overlaps, ref this);
 
     public void FindLocalOverlaps<TEnumerator>(Vector3 min, Vector3 max, BufferPool pool, Shapes shapes, ref TEnumerator enumerator)
         where TEnumerator : IBreakableForEach<int>
@@ -466,60 +515,75 @@ public unsafe struct VoxelSphereShape : IHomogeneousCompoundShape<Sphere, Sphere
 
 /// <summary>
 /// A voxel grid presented to the narrow phase as the triangles of its iso-surface, generated by
-/// either marching cubes or surface nets from the same field the renderer meshes.
+/// either marching cubes or surface nets from the same field a renderer would mesh.
 /// </summary>
 /// <remarks>
 /// One shape covers both algorithms: they differ only in how a cell turns into triangles, and both
-/// address at most <see cref="VoxelGridData.MaxSurfaceNetsTrianglesPerCell"/> children per cell.
-/// Marching cubes uses five of those six slots and leaves the last empty, which costs nothing -
-/// slots are an indexing convention, never storage.
+/// address at most six children per cell. Marching cubes uses five of those six slots and leaves the
+/// last empty, which costs nothing - slots are an indexing convention, never storage.
 /// </remarks>
-public unsafe struct VoxelTriangleShape : IHomogeneousCompoundShape<Triangle, TriangleWide>, IBoundsQueryableCompound, IVoxelShape
+public unsafe struct VoxelTriangleShape<TSource> : IHomogeneousCompoundShape<Triangle, TriangleWide>, IVoxelShape
+    where TSource : unmanaged, IVoxelDensitySource
 {
-    public const int Id = 14;
-    public static int TypeId => Id;
+    /// <summary>The third of the three ids <typeparamref name="TSource"/> reserves.</summary>
+    public static int TypeId => TSource.ShapeTypeIdBase + 2;
     public static int ChildShapeTypeId => Triangle.Id;
     public static int MaxChildrenPerCell => SlotsPerCell;
 
     /// <summary>Child index granularity: childIndex = cellIndex * SlotsPerCell + slot.</summary>
-    public const int SlotsPerCell = VoxelGridData.MaxSurfaceNetsTrianglesPerCell;
+    public const int SlotsPerCell = VoxelGridData<TSource>.MaxSurfaceNetsTrianglesPerCell;
 
-    public VoxelGridData GridData;
+    public VoxelGridData<TSource> GridData;
 
     /// <summary>Surface nets when set, marching cubes when clear.</summary>
     public bool SurfaceNets;
 
-    public readonly VoxelGridData Grid => GridData;
+    public readonly int CellsX => GridData.CellsX;
+    public readonly int CellsY => GridData.CellsY;
+    public readonly int CellsZ => GridData.CellsZ;
+    public readonly float CellSize => GridData.CellSize;
 
     public readonly int ChildCount => GridData.CellCount * SlotsPerCell;
 
     public static ShapeBatch CreateShapeBatch(BufferPool pool, int initialCapacity, Shapes shapeBatches)
-        => new HomogeneousCompoundShapeBatch<VoxelTriangleShape, Triangle, TriangleWide>(pool, initialCapacity);
+        => new HomogeneousCompoundShapeBatch<VoxelTriangleShape<TSource>, Triangle, TriangleWide>(pool, initialCapacity);
+
+    /// <summary>
+    /// Which slots of a cell carry a triangle, without building any of them.
+    /// </summary>
+    /// <remarks>
+    /// Marching cubes classifies the cell once and reads the length off the case table. Surface nets
+    /// tests three edges for a sign change - two sample reads each - and never touches a vertex.
+    /// Either way a cell that contributes nothing, which is nearly all of them, costs eight sample
+    /// reads or six.
+    /// </remarks>
+    public readonly int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices)
+    {
+        var cellIndex = GridData.CellIndex(cx, cy, cz) * SlotsPerCell;
+        var count = 0;
+        if (SurfaceNets)
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (!GridData.SurfaceNetsEdgeStraddles(cx, cy, cz, axis, out _))
+                    continue;
+                childIndices[count++] = cellIndex + axis * 2;
+                childIndices[count++] = cellIndex + axis * 2 + 1;
+            }
+        }
+        else
+        {
+            var triangles = VoxelGridData<TSource>.MarchingCubesTriangleCount(GridData.CubeIndex(cx, cy, cz));
+            for (int slot = 0; slot < triangles; ++slot)
+                childIndices[count++] = cellIndex + slot;
+        }
+        return count;
+    }
 
     private readonly bool TryGetTriangle(int cx, int cy, int cz, int slot, out Triangle triangle)
         => SurfaceNets
             ? GridData.TryGetSurfaceNetsTriangle(cx, cy, cz, slot, out triangle)
-            : slot < VoxelGridData.MaxMarchingCubesTrianglesPerCell
-                ? GridData.TryGetMarchingCubesTriangle(cx, cy, cz, slot, out triangle)
-                : Miss(out triangle);
-
-    private static bool Miss(out Triangle triangle)
-    {
-        triangle = default;
-        return false;
-    }
-
-    public readonly int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices)
-    {
-        var cellIndex = GridData.CellIndex(cx, cy, cz);
-        var count = 0;
-        for (int slot = 0; slot < SlotsPerCell; ++slot)
-        {
-            if (TryGetTriangle(cx, cy, cz, slot, out _))
-                childIndices[count++] = cellIndex * SlotsPerCell + slot;
-        }
-        return count;
-    }
+            : GridData.TryGetMarchingCubesTriangle(cx, cy, cz, GridData.CubeIndex(cx, cy, cz), slot, out triangle);
 
     public readonly void GetLocalChild(int childIndex, out Triangle childShape)
     {
@@ -561,8 +625,8 @@ public unsafe struct VoxelTriangleShape : IHomogeneousCompoundShape<Triangle, Tr
         return sizeof(Triangle);
     }
 
-    public readonly void ComputeBounds(Quaternion orientation, out Vector3 min, out Vector3 max)
-        => VoxelShapeHelpers.ComputeBounds(GridData, orientation, out min, out max);
+    public void ComputeBounds(Quaternion orientation, out Vector3 min, out Vector3 max)
+        => VoxelShapeHelpers.ComputeBounds(ref this, orientation, out min, out max);
 
     public void RayTest<TRayHitHandler>(in NRigidPose pose, in RayData ray, ref float maximumT, BufferPool pool, ref TRayHitHandler hitHandler)
         where TRayHitHandler : struct, IShapeRayHitHandler
@@ -575,11 +639,11 @@ public unsafe struct VoxelTriangleShape : IHomogeneousCompoundShape<Triangle, Tr
     public readonly void FindLocalOverlaps<TOverlaps, TSubpairOverlaps>(ref Buffer<OverlapQueryForPair> pairs, BufferPool pool, Shapes shapes, ref TOverlaps overlaps)
         where TOverlaps : struct, ICollisionTaskOverlaps<TSubpairOverlaps>
         where TSubpairOverlaps : struct, ICollisionTaskSubpairOverlaps
-        => VoxelShapeHelpers.FindLocalOverlaps<VoxelTriangleShape, TOverlaps, TSubpairOverlaps>(ref pairs, pool, ref overlaps);
+        => VoxelShapeHelpers.FindLocalOverlaps<VoxelTriangleShape<TSource>, TOverlaps, TSubpairOverlaps>(ref pairs, pool, ref overlaps);
 
     public void FindLocalOverlaps<TOverlaps>(Vector3 min, Vector3 max, Vector3 sweep, float maximumT, BufferPool pool, Shapes shapes, void* overlaps)
         where TOverlaps : ICollisionTaskSubpairOverlaps
-        => VoxelShapeHelpers.FindLocalOverlaps<VoxelTriangleShape, TOverlaps>(min, max, sweep, maximumT, pool, overlaps, ref this);
+        => VoxelShapeHelpers.FindLocalOverlaps<VoxelTriangleShape<TSource>, TOverlaps>(min, max, sweep, maximumT, pool, overlaps, ref this);
 
     public void FindLocalOverlaps<TEnumerator>(Vector3 min, Vector3 max, BufferPool pool, Shapes shapes, ref TEnumerator enumerator)
         where TEnumerator : IBreakableForEach<int>

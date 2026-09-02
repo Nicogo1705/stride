@@ -5,58 +5,58 @@ using System;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using BepuPhysics.Collidables;
-using BepuUtilities.Memory;
 
 namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 
 /// <summary>
-/// The density field a voxel collidable reads, and every piece of geometry derived from it.
+/// A voxel density field and every piece of geometry derived from it.
 /// </summary>
 /// <remarks>
 /// <para>
-/// One <see cref="ushort"/> per sample, density in bits 0-7 and material in bits 8-15 - the layout a
-/// voxel game already uses to hand its chunks to the GPU, so one array serves rendering and
-/// collision. Samples are laid out x-major, z varying fastest.
+/// How the samples are packed is <typeparamref name="TSource"/>'s business - see
+/// <see cref="IVoxelDensitySource"/>. This adds what geometry needs on top: the cell size, the iso
+/// level, and the marching-cubes and surface-nets constructions.
 /// </para>
 /// <para>
-/// The buffer holds <em>samples</em>, not cells: a grid of n cells per axis needs n+1 samples per
+/// The source holds <em>samples</em>, not cells: a grid of n cells per axis needs n+1 samples per
 /// axis, because a cell reads the eight samples at its corners. Cell (cx, cy, cz) spans local
 /// [cx, cx+1] x [cy, cy+1] x [cz, cz+1] scaled by <see cref="CellSize"/>, with the grid origin at
 /// the local origin.
 /// </para>
 /// <para>
+/// Split in two on purpose, cheap tests apart from expensive constructions: asking <em>whether</em>
+/// a cell contributes anything costs a handful of sample reads (<see cref="CubeIndex"/>,
+/// <see cref="CellIsSolid"/>, <see cref="SurfaceNetsEdgeStraddles"/>), while actually building a
+/// triangle is only paid for the children the narrow phase goes on to test. A broad phase query
+/// touching a thousand cells therefore does a thousand cheap tests and a handful of expensive ones.
+/// </para>
+/// <para>
 /// This lives in unmanaged memory - Bepu keeps shapes in its own pools and hands them back as raw
-/// pointers - so it can hold a <see cref="Buffer{T}"/> and nothing managed.
+/// pointers - so neither it nor the source may hold anything managed.
 /// </para>
 /// </remarks>
-public struct VoxelGridData
+public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySource
 {
-    /// <summary>Packed samples: bits 0-7 density, bits 8-15 material.</summary>
-    public Buffer<ushort> Samples;
-
-    /// <summary>Samples along X. Cells along X is this minus one.</summary>
-    public int SamplesX;
-    /// <summary>Samples along Y. Cells along Y is this minus one.</summary>
-    public int SamplesY;
-    /// <summary>Samples along Z. Cells along Z is this minus one.</summary>
-    public int SamplesZ;
+    /// <summary>Where the samples come from and how they are packed.</summary>
+    public TSource Source;
 
     /// <summary>Edge length of one cell, in world units.</summary>
     public float CellSize;
 
-    /// <summary>Density at or above which a sample counts as solid, normalized to 0-1.</summary>
+    /// <summary>Density at or above which a sample counts as solid.</summary>
     public float IsoLevel;
 
     /// <summary>Flips the winding of every generated triangle. See VoxelCollider.InvertWinding.</summary>
     public bool InvertWinding;
 
-    public readonly int CellsX => SamplesX - 1;
-    public readonly int CellsY => SamplesY - 1;
-    public readonly int CellsZ => SamplesZ - 1;
-    public readonly int CellCount => CellsX * CellsY * CellsZ;
+    public readonly int SamplesX => Source.SamplesX;
+    public readonly int SamplesY => Source.SamplesY;
+    public readonly int SamplesZ => Source.SamplesZ;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public readonly int SampleIndex(int x, int y, int z) => (x * SamplesY + y) * SamplesZ + z;
+    public readonly int CellsX => Source.SamplesX - 1;
+    public readonly int CellsY => Source.SamplesY - 1;
+    public readonly int CellsZ => Source.SamplesZ - 1;
+    public readonly int CellCount => CellsX * CellsY * CellsZ;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public readonly int CellIndex(int cx, int cy, int cz) => (cx * CellsY + cy) * CellsZ + cz;
@@ -69,25 +69,25 @@ public struct VoxelGridData
         cx = remainder / CellsY;
     }
 
-    /// <summary>Density of one sample, normalized to 0-1. Out of range coordinates clamp, as in the renderer.</summary>
+    /// <summary>
+    /// Density of one sample, with no bounds check.
+    /// </summary>
+    /// <remarks>
+    /// Everything below reads the eight corners of a cell, and a cell's corners are inside the
+    /// sample grid by construction - cell indices stop one short of the sample count on every axis.
+    /// So the hot path does not clamp. <see cref="Density"/> is the checked version for callers
+    /// that may be outside.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly float DensityAt(int x, int y, int z) => Source.Density(x, y, z);
+
+    /// <summary>Density of one sample, clamping to the edge of the grid.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public readonly float Density(int x, int y, int z)
-    {
-        x = Math.Clamp(x, 0, SamplesX - 1);
-        y = Math.Clamp(y, 0, SamplesY - 1);
-        z = Math.Clamp(z, 0, SamplesZ - 1);
-        return (Samples[SampleIndex(x, y, z)] & 0xFF) * (1f / 255f);
-    }
-
-    /// <summary>Material id of one sample.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public readonly byte Material(int x, int y, int z)
-    {
-        x = Math.Clamp(x, 0, SamplesX - 1);
-        y = Math.Clamp(y, 0, SamplesY - 1);
-        z = Math.Clamp(z, 0, SamplesZ - 1);
-        return (byte)(Samples[SampleIndex(x, y, z)] >> 8);
-    }
+        => Source.Density(
+            Math.Clamp(x, 0, SamplesX - 1),
+            Math.Clamp(y, 0, SamplesY - 1),
+            Math.Clamp(z, 0, SamplesZ - 1));
 
     /// <summary>
     /// Whether a cell is solid enough to carry a box or sphere child: the mean of its eight corners
@@ -96,16 +96,16 @@ public struct VoxelGridData
     /// <remarks>
     /// Deliberately the mean rather than all-eight, which erodes the surface by a cell and drops
     /// characters through the ground, or any-of-eight, which inflates it by a cell. The mean stays
-    /// within half a cell of the rendered iso-surface on either side.
+    /// within half a cell of the iso-surface on either side.
     /// </remarks>
     public readonly bool CellIsSolid(int cx, int cy, int cz)
     {
-        var sum = 0f;
-        for (int i = 0; i < 8; ++i)
-        {
-            var corner = i * 3;
-            sum += Density(cx + CubeCorners[corner], cy + CubeCorners[corner + 1], cz + CubeCorners[corner + 2]);
-        }
+        var x1 = cx + 1;
+        var y1 = cy + 1;
+        var z1 = cz + 1;
+        var sum =
+            DensityAt(cx, cy, cz) + DensityAt(x1, cy, cz) + DensityAt(x1, cy, z1) + DensityAt(cx, cy, z1) +
+            DensityAt(cx, y1, cz) + DensityAt(x1, y1, cz) + DensityAt(x1, y1, z1) + DensityAt(cx, y1, z1);
         return sum * 0.125f >= IsoLevel;
     }
 
@@ -114,38 +114,7 @@ public struct VoxelGridData
     public readonly Vector3 CellCentre(int cx, int cy, int cz)
         => new Vector3(cx + 0.5f, cy + 0.5f, cz + 0.5f) * CellSize;
 
-    /// <summary>
-    /// Clamps a local-space bounding box to the range of cells it can touch. False when the box
-    /// misses the grid entirely.
-    /// </summary>
-    public readonly bool GetCellRange(Vector3 min, Vector3 max, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1)
-    {
-        var inverseCellSize = 1f / CellSize;
-        x0 = (int)MathF.Floor(min.X * inverseCellSize);
-        y0 = (int)MathF.Floor(min.Y * inverseCellSize);
-        z0 = (int)MathF.Floor(min.Z * inverseCellSize);
-        x1 = (int)MathF.Floor(max.X * inverseCellSize);
-        y1 = (int)MathF.Floor(max.Y * inverseCellSize);
-        z1 = (int)MathF.Floor(max.Z * inverseCellSize);
-        if (x1 < 0 || y1 < 0 || z1 < 0 || x0 >= CellsX || y0 >= CellsY || z0 >= CellsZ)
-        {
-            x0 = y0 = z0 = 0;
-            x1 = y1 = z1 = -1;
-            return false;
-        }
-        x0 = Math.Max(x0, 0);
-        y0 = Math.Max(y0, 0);
-        z0 = Math.Max(z0, 0);
-        x1 = Math.Min(x1, CellsX - 1);
-        y1 = Math.Min(y1, CellsY - 1);
-        z1 = Math.Min(z1, CellsZ - 1);
-        return true;
-    }
-
-    /// <summary>
-    /// Bounds of the whole grid in local space. Analytic - it never walks the samples, which is the
-    /// point of a regular grid.
-    /// </summary>
+    /// <summary>Bounds of the whole grid in local space. Analytic; it never walks the samples.</summary>
     public readonly void ComputeLocalBounds(out Vector3 min, out Vector3 max)
     {
         min = Vector3.Zero;
@@ -155,9 +124,9 @@ public struct VoxelGridData
     // -- Marching cubes ----------------------------------------------------------------------
 
     /// <summary>
-    /// The eight corner offsets of a cell, three bytes each, in the order the triangle table
-    /// indexes them. A span of bytes rather than of a small struct so the compiler can hand back a
-    /// pointer into the data section instead of allocating on every call.
+    /// The eight corner offsets of a cell, three bytes each, in the order the triangle table indexes
+    /// them. A span of bytes rather than of a small struct so the compiler hands back a pointer into
+    /// the data section instead of allocating on every call.
     /// </summary>
     public static ReadOnlySpan<byte> CubeCorners =>
     [
@@ -174,22 +143,28 @@ public struct VoxelGridData
     ];
 
     /// <summary>
-    /// Classifies a cell into a marching-cubes case index.
+    /// Classifies a cell into a marching-cubes case index. Eight sample reads, and the only thing a
+    /// cheap test needs.
     /// </summary>
     /// <remarks>
-    /// A bit is set when the corner is <em>air</em>, density below the iso level. That is the
-    /// convention the table below was tabulated for, and the one the renderer's compute shader
-    /// uses, so the two agree cell for cell.
+    /// A bit is set when the corner is <em>air</em>, density below the iso level, which is the
+    /// convention the table below is tabulated for.
     /// </remarks>
     public readonly int CubeIndex(int cx, int cy, int cz)
     {
+        var x1 = cx + 1;
+        var y1 = cy + 1;
+        var z1 = cz + 1;
+        var iso = IsoLevel;
         var cubeIndex = 0;
-        for (int i = 0; i < 8; ++i)
-        {
-            var corner = i * 3;
-            if (Density(cx + CubeCorners[corner], cy + CubeCorners[corner + 1], cz + CubeCorners[corner + 2]) < IsoLevel)
-                cubeIndex |= 1 << i;
-        }
+        if (DensityAt(cx, cy, cz) < iso) cubeIndex |= 1 << 0;
+        if (DensityAt(x1, cy, cz) < iso) cubeIndex |= 1 << 1;
+        if (DensityAt(x1, cy, z1) < iso) cubeIndex |= 1 << 2;
+        if (DensityAt(cx, cy, z1) < iso) cubeIndex |= 1 << 3;
+        if (DensityAt(cx, y1, cz) < iso) cubeIndex |= 1 << 4;
+        if (DensityAt(x1, y1, cz) < iso) cubeIndex |= 1 << 5;
+        if (DensityAt(x1, y1, z1) < iso) cubeIndex |= 1 << 6;
+        if (DensityAt(cx, y1, z1) < iso) cubeIndex |= 1 << 7;
         return cubeIndex;
     }
 
@@ -204,28 +179,43 @@ public struct VoxelGridData
         var bx = cx + CubeCorners[b];
         var by = cy + CubeCorners[b + 1];
         var bz = cz + CubeCorners[b + 2];
-        var densityA = Density(ax, ay, az);
-        var densityB = Density(bx, by, bz);
+        var densityA = DensityAt(ax, ay, az);
+        var densityB = DensityAt(bx, by, bz);
         var delta = densityB - densityA;
         // A zero delta means both corners sit exactly on the iso level; the midpoint is as good an
         // answer as any, and it avoids dividing by zero.
         var t = MathF.Abs(delta) > 1e-6f ? Math.Clamp((IsoLevel - densityA) / delta, 0f, 1f) : 0.5f;
-        var pointA = new Vector3(ax, ay, az);
-        var pointB = new Vector3(bx, by, bz);
-        return Vector3.Lerp(pointA, pointB, t) * CellSize;
+        return Vector3.Lerp(new Vector3(ax, ay, az), new Vector3(bx, by, bz), t) * CellSize;
     }
 
     /// <summary>Number of marching-cubes triangles a cell can produce.</summary>
     public const int MaxMarchingCubesTrianglesPerCell = 5;
 
+    /// <summary>How many triangles a classified cell produces. A table scan, no geometry.</summary>
+    public static int MarchingCubesTriangleCount(int cubeIndex)
+    {
+        if (cubeIndex == 0 || cubeIndex == 255)
+            return 0;
+        var offset = cubeIndex * 16;
+        for (int slot = 0; slot < MaxMarchingCubesTrianglesPerCell; ++slot)
+        {
+            if (TriangleTable[offset + slot * 3] < 0)
+                return slot;
+        }
+        return MaxMarchingCubesTrianglesPerCell;
+    }
+
     /// <summary>
-    /// The slot'th marching-cubes triangle of a cell, or false when the cell has fewer than that many.
+    /// The slot'th marching-cubes triangle of an already classified cell.
     /// </summary>
-    public readonly bool TryGetMarchingCubesTriangle(int cx, int cy, int cz, int slot, out Triangle triangle)
+    /// <remarks>
+    /// Takes the case index rather than recomputing it, so a caller walking several slots of one
+    /// cell pays for the classification once.
+    /// </remarks>
+    public readonly bool TryGetMarchingCubesTriangle(int cx, int cy, int cz, int cubeIndex, int slot, out Triangle triangle)
     {
         triangle = default;
-        var cubeIndex = CubeIndex(cx, cy, cz);
-        if (cubeIndex == 0 || cubeIndex == 255)
+        if (cubeIndex == 0 || cubeIndex == 255 || slot >= MaxMarchingCubesTrianglesPerCell)
             return false;
         var offset = cubeIndex * 16 + slot * 3;
         var e0 = TriangleTable[offset];
@@ -233,7 +223,8 @@ public struct VoxelGridData
             return false;
         var e1 = TriangleTable[offset + 1];
         var e2 = TriangleTable[offset + 2];
-        // Reversed relative to the table, matching the renderer's emission order.
+        // Reversed relative to the table, which is the winding convention that puts the face normal
+        // on the air side for the air-is-set classification above.
         var a = EdgePosition(cx, cy, cz, e2);
         var b = EdgePosition(cx, cy, cz, e1);
         var c = EdgePosition(cx, cy, cz, e0);
@@ -247,13 +238,50 @@ public struct VoxelGridData
     public const int MaxSurfaceNetsTrianglesPerCell = 6;
 
     /// <summary>
+    /// Whether the edge leaving a cell's minimum corner along an axis crosses the iso level, and the
+    /// four cells sharing it all exist. Two sample reads and three comparisons - this is the cheap
+    /// test that decides whether a cell owns a quad at all.
+    /// </summary>
+    /// <remarks>
+    /// No validity check on the four cells beyond their indices: an edge inside the grid is shared
+    /// by four cells that all straddle the surface if it does, so only the border needs excluding.
+    /// </remarks>
+    public readonly bool SurfaceNetsEdgeStraddles(int cx, int cy, int cz, int axis, out bool solidAtOrigin)
+    {
+        solidAtOrigin = DensityAt(cx, cy, cz) >= IsoLevel;
+
+        // The quad spans the four cells around the edge, which step back by one on the two axes the
+        // edge does not run along. At the low border those cells do not exist, so no quad is owned.
+        int nx = cx, ny = cy, nz = cz;
+        switch (axis)
+        {
+            case 0:
+                if (cy < 1 || cz < 1)
+                    return false;
+                nx = cx + 1;
+                break;
+            case 1:
+                if (cz < 1 || cx < 1)
+                    return false;
+                ny = cy + 1;
+                break;
+            default:
+                if (cx < 1 || cy < 1)
+                    return false;
+                nz = cz + 1;
+                break;
+        }
+        return solidAtOrigin != (DensityAt(nx, ny, nz) >= IsoLevel);
+    }
+
+    /// <summary>
     /// The surface-nets vertex of a cell: the mean of the iso-surface crossings on its edges.
     /// False for a cell the surface does not pass through.
     /// </summary>
     public readonly bool TryGetSurfaceNetsVertex(int cx, int cy, int cz, out Vector3 vertex)
     {
         vertex = default;
-        if (cx < 0 || cy < 0 || cz < 0 || cx >= CellsX || cy >= CellsY || cz >= CellsZ)
+        if ((uint)cx >= (uint)CellsX || (uint)cy >= (uint)CellsY || (uint)cz >= (uint)CellsZ)
             return false;
         var cubeIndex = CubeIndex(cx, cy, cz);
         if (cubeIndex == 0 || cubeIndex == 255)
@@ -279,31 +307,20 @@ public struct VoxelGridData
     /// The slot'th surface-nets triangle owned by a cell.
     /// </summary>
     /// <remarks>
-    /// A cell owns the quads of the three edges leaving its minimum corner. Such an edge, when it
-    /// straddles the iso level, is shared by four cells whose surface-nets vertices form a quad;
-    /// slots 0-5 are (edge X, edge Y, edge Z) x (first triangle, second triangle). Ownership by the
-    /// minimum corner is what emits every quad exactly once.
+    /// A cell owns the quads of the three edges leaving its minimum corner; slots 0-5 are
+    /// (edge X, edge Y, edge Z) x (first triangle, second triangle). Ownership by the minimum corner
+    /// is what emits every quad exactly once. Existence is decided far more cheaply by
+    /// <see cref="SurfaceNetsEdgeStraddles"/>; this is the construction.
     /// </remarks>
     public readonly bool TryGetSurfaceNetsTriangle(int cx, int cy, int cz, int slot, out Triangle triangle)
     {
         triangle = default;
         var axis = slot / 2;
-        var second = (slot & 1) != 0;
-
-        var solidHere = Density(cx, cy, cz) >= IsoLevel;
-        int nx = cx, ny = cy, nz = cz;
-        switch (axis)
-        {
-            case 0: nx = cx + 1; break;
-            case 1: ny = cy + 1; break;
-            default: nz = cz + 1; break;
-        }
-        var solidThere = Density(nx, ny, nz) >= IsoLevel;
-        if (solidHere == solidThere)
+        if (!SurfaceNetsEdgeStraddles(cx, cy, cz, axis, out var solidAtOrigin))
             return false;
 
-        // The four cells around that edge, walked as a cycle: (0,0) (0,-1) (-1,-1) (-1,0) in the
-        // two axes the edge does not run along.
+        // The four cells around that edge, walked as a cycle: (0,0) (0,-1) (-1,-1) (-1,0) in the two
+        // axes the edge does not run along.
         Span<Vector3> quad = stackalloc Vector3[4];
         for (int i = 0; i < 4; ++i)
         {
@@ -320,10 +337,10 @@ public struct VoxelGridData
                 return false;
         }
 
-        // Wind so the face looks towards the air side; solidHere means the surface faces the
-        // positive side of the axis, and the cycle above is then the wrong way round.
-        var flip = solidHere ^ InvertWinding;
-        triangle = (second, flip) switch
+        // Wind so the face looks towards the air side; a solid minimum corner means the surface
+        // faces the positive side of the axis, and the cycle above is then the wrong way round.
+        var flip = solidAtOrigin ^ InvertWinding;
+        triangle = ((slot & 1) != 0, flip) switch
         {
             (false, false) => new Triangle(quad[0], quad[1], quad[2]),
             (false, true) => new Triangle(quad[2], quad[1], quad[0]),
@@ -335,8 +352,8 @@ public struct VoxelGridData
 
     /// <summary>
     /// Marching cubes case table: sixteen entries per case, edge indices in groups of three,
-    /// terminated by -1. Taken unchanged from the table the renderer's compute shader indexes, so
-    /// the collision surface and the drawn surface are the same surface.
+    /// terminated by -1. The standard table, in the corner and edge ordering of
+    /// <see cref="CubeCorners"/> and <see cref="EdgeCorners"/> above.
     /// </summary>
     public static ReadOnlySpan<sbyte> TriangleTable =>
     [

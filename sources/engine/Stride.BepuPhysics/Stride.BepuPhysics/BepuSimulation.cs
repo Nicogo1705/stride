@@ -313,7 +313,7 @@ public sealed class BepuSimulation : IDisposable
 
         // Bepu finds shape types through registered collision tasks rather than reflection, so the
         // voxel shapes have to be announced before anything can collide with a VoxelCollider.
-        Definitions.Colliders.Voxels.VoxelCollisionTasks.Register(Simulation);
+        Definitions.Colliders.Voxels.VoxelCollisionTasks.RegisterDefaults(Simulation);
 
         CollidableMaterials.Initialize(Simulation);
         ContactEvents.Initialize();

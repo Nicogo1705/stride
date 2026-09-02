@@ -80,7 +80,7 @@ The consequences for a voxel game are the point of the exercise:
   mining/building game: no regeneration, no queue, no latency.
 - Distant LOD is a mip of the grid — the same structure that serves the GI.
 
-### 4. Physics from the same data (see PHYSICS.md)
+### 4. Physics from the same data (done)
 
 A Bepu collidable that reads the same voxel array and generates contacts on the fly,
 replacing the mesh collider built from a GPU readback.
