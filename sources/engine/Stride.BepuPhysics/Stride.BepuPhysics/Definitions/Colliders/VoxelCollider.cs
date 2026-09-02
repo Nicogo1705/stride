@@ -59,6 +59,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     private bool _invertWinding;
     private bool _sealBorder = true;
     private float _mass = 1f;
+    private float _sphereRadiusScale = 1f;
 
     private CollidableComponent? _component;
     CollidableComponent? ICollider.Component { get => _component; set => _component = value; }
@@ -153,6 +154,30 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     }
 
     /// <summary>
+    /// Radius of one sphere child, as a multiple of half a cell. Only the sphere form reads it.
+    /// </summary>
+    /// <remarks>
+    /// At 1 a sphere is inscribed in its cell, so two neighbours are exactly tangent and the
+    /// diagonals between them are open: a small body moving fast can pass between two solid cells.
+    /// Raising it closes that at the cost of a surface that bulges out of the field - the sphere
+    /// that reaches the corner of its own cell is at the square root of three, about 1.73, and
+    /// overlaps its neighbours heavily. Around 1.4 covers the face diagonals, which is where things
+    /// actually slip through, without the surface standing far off the drawn one.
+    /// </remarks>
+    public float SphereRadiusScale
+    {
+        get => _sphereRadiusScale;
+        set
+        {
+            value.ValidateGreaterThanZeroFinite(this);
+            if (_sphereRadiusScale == value)
+                return;
+            _sphereRadiusScale = value;
+            _component?.TryUpdateFeatures();
+        }
+    }
+
+    /// <summary>
     /// Mass used for the inertia of a dynamic body carrying this collider.
     /// </summary>
     /// <remarks>
@@ -215,6 +240,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
             IsoLevel = _isoLevel,
             InvertWinding = _invertWinding,
             SealBorder = _sealBorder,
+            SphereRadiusScale = _sphereRadiusScale,
         };
         return true;
     }
@@ -298,8 +324,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     }
 
     /// <summary>
-    /// A box per solid cell on the surface, or an inscribed octahedron standing in for the sphere
-    /// form.
+    /// A box per solid cell on the surface, or an icosahedron at the sphere form's own radius.
     /// </summary>
     /// <remarks>
     /// Only cells with an empty neighbour. Drawing every solid cell means drawing the whole inside
@@ -310,6 +335,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
     private static void AppendCellSolids(ref VoxelGridData<TSource> grid, List<VertexPosition3> vertices, List<int> indices, bool sphere)
     {
         var half = grid.CellSize * 0.5f;
+        var radius = grid.SphereRadius;
         for (int x = 0; x < grid.CellsX; ++x)
         {
             for (int y = 0; y < grid.CellsY; ++y)
@@ -329,9 +355,9 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
                     var first = vertices.Count;
                     if (sphere)
                     {
-                        foreach (var offset in OctahedronVertices)
-                            vertices.Add(new VertexPosition3(ToStride(centre + offset * half)));
-                        foreach (var i in OctahedronIndices)
+                        foreach (var offset in IcosahedronVertices)
+                            vertices.Add(new VertexPosition3(ToStride(centre + offset * radius)));
+                        foreach (var i in IcosahedronIndices)
                             indices.Add(first + i);
                     }
                     else
@@ -393,22 +419,45 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         1, 3, 5, 3, 7, 5, // +X
     ];
 
-    private static readonly NVector3[] OctahedronVertices =
-    [
-        new(-1, 0, 0), new(1, 0, 0),
-        new(0, -1, 0), new(0, 1, 0),
-        new(0, 0, -1), new(0, 0, 1),
-    ];
+    /// <summary>
+    /// A unit icosahedron, standing in for a sphere child.
+    /// </summary>
+    /// <remarks>
+    /// An octahedron was here, and it reads as far smaller than the sphere it stands for: its faces
+    /// sit at 0.58 of the radius, so a field of tangent spheres is drawn as a field of separated
+    /// diamonds with wide gaps that are not there. An icosahedron's faces sit at 0.79, close enough
+    /// that what is drawn touching is what is touching. Twelve vertices and twenty faces per cell,
+    /// against six and eight - the shell of a modest grid is a few hundred thousand triangles either
+    /// way.
+    /// </remarks>
+    private static readonly NVector3[] IcosahedronVertices = BuildIcosahedron();
+
+    private static NVector3[] BuildIcosahedron()
+    {
+        // The twelve corners are the cyclic permutations of (0, +-1, +-phi), normalised.
+        const float phi = 1.618034f;
+        NVector3[] vertices =
+        [
+            new(-1, phi, 0), new(1, phi, 0), new(-1, -phi, 0), new(1, -phi, 0),
+            new(0, -1, phi), new(0, 1, phi), new(0, -1, -phi), new(0, 1, -phi),
+            new(phi, 0, -1), new(phi, 0, 1), new(-phi, 0, -1), new(-phi, 0, 1),
+        ];
+        for (int i = 0; i < vertices.Length; ++i)
+            vertices[i] = NVector3.Normalize(vertices[i]);
+        return vertices;
+    }
 
     /// <summary>
-    /// Wound the same way round as the box above. The debug view culls back faces, so an octahedron
-    /// wound the other way is built, uploaded and then drawn as nothing at all - which looks exactly
-    /// like a collider form that produces no geometry.
+    /// Wound the same way round as the box above. The debug view culls back faces, so a solid wound
+    /// the other way is built, uploaded and then drawn as nothing at all - which looks exactly like
+    /// a collider form that produces no geometry.
     /// </summary>
-    private static ReadOnlySpan<int> OctahedronIndices =>
+    private static ReadOnlySpan<int> IcosahedronIndices =>
     [
-        0, 4, 2, 0, 3, 4, 0, 5, 3, 0, 2, 5,
-        1, 2, 4, 1, 4, 3, 1, 3, 5, 1, 5, 2,
+        0, 5, 11, 0, 1, 5, 0, 7, 1, 0, 10, 7, 0, 11, 10,
+        1, 9, 5, 5, 4, 11, 11, 2, 10, 10, 6, 7, 7, 8, 1,
+        3, 4, 9, 3, 2, 4, 3, 6, 2, 3, 8, 6, 3, 9, 8,
+        4, 5, 9, 2, 11, 4, 6, 10, 2, 8, 7, 6, 9, 1, 8,
     ];
 }
 

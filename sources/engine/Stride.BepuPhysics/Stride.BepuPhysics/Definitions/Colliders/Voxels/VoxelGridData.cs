@@ -49,6 +49,12 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     /// <summary>Flips the winding of every generated triangle. See VoxelCollider.InvertWinding.</summary>
     public bool InvertWinding;
 
+    /// <summary>Radius of one sphere child, as a multiple of half a cell. See VoxelCollider.SphereRadiusScale.</summary>
+    public float SphereRadiusScale;
+
+    /// <summary>Radius of one sphere child, in world units.</summary>
+    public readonly float SphereRadius => CellSize * 0.5f * (SphereRadiusScale > 0 ? SphereRadiusScale : 1);
+
     /// <summary>Reads the samples on the outer faces of the grid as air, closing the volume.</summary>
     /// <remarks>See VoxelCollider.SealBorder for why this is a choice rather than a rule.</remarks>
     public bool SealBorder;

@@ -497,7 +497,7 @@ public unsafe struct VoxelSphereShape<TSource> : IHomogeneousCompoundShape<Spher
     }
 
     public readonly void GetLocalChild(int childIndex, out Sphere childShape)
-        => childShape = new Sphere(GridData.CellSize * 0.5f);
+        => childShape = new Sphere(GridData.SphereRadius);
 
     public readonly void GetPosedLocalChild(int childIndex, out Sphere childShape, out NRigidPose childPose)
     {
@@ -507,7 +507,7 @@ public unsafe struct VoxelSphereShape<TSource> : IHomogeneousCompoundShape<Spher
     }
 
     public readonly void GetLocalChild(int childIndex, ref SphereWide childShapeWide)
-        => GatherScatter.GetFirst(ref childShapeWide.Radius) = GridData.CellSize * 0.5f;
+        => GatherScatter.GetFirst(ref childShapeWide.Radius) = GridData.SphereRadius;
 
     public readonly bool RayTestChild(int childIndex, Vector3 origin, Vector3 direction, out float t, out Vector3 normal)
     {

@@ -23,6 +23,9 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     [DataMemberRange(0.0f, 10.0f, 0.001f, 0.002f, 4)]
     public float LineWidth = 3f;
 
+    /// <summary>How far past a line's edge it fades out, in pixels. Zero draws a hard, aliased edge.</summary>
+    public float LineFeather = 1f;
+
     public override Type SupportedRenderObjectType => typeof(WireFrameRenderObject);
 
     public SinglePassWireframeRenderFeature()
@@ -76,6 +79,7 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
         _shader.Parameters.Set(TransformationKeys.WorldScale, new Vector3(1.002f));
         _shader.Parameters.Set(SinglePassWireframeShaderKeys.Viewport, new Vector4(context.RenderContext.RenderView.ViewSize, 0, 0));
         _shader.Parameters.Set(SinglePassWireframeShaderKeys.LineWidth, LineWidth);
+        _shader.Parameters.Set(SinglePassWireframeShaderKeys.LineFeather, LineFeather);
 
         foreach (var myRenderObject in _wireframes)
         {

@@ -14,6 +14,9 @@
     float LineWidth;
     float3 LineColor;
 
+    /// <summary>How far past the line's edge it fades out, in pixels.</summary>
+    float LineFeather = 1.0;
+
     cbuffer PerView
     {
         stage float4 Viewport;
@@ -127,20 +130,33 @@
             lengthsWS[1] = length(edgesWS[1]);
             lengthsWS[2] = length(edgesWS[2]);
 
-            float maxLength = max(max(lengthsWS[0], lengthsWS[1]), lengthsWS[2]);
+            // A quad split into two triangles leaves a diagonal down the middle of every face, and
+            // hiding it is what this is for. It is recognised by being much the longest edge - at
+            // least the square root of two times the sides it spans, and that only for a square.
+            //
+            // Recognised, not assumed. Excluding whichever edge happens to be longest hides a real
+            // edge of every triangle in a mesh that is not made of quads, and comparing each length
+            // against the maximum instead excludes all three of an equilateral triangle, so the mesh
+            // draws as nothing: an icosahedron, or a marching-cubes surface, is built, uploaded and
+            // rendered blank - which reads as geometry that was never generated at all.
+            float longest = max(max(lengthsWS[0], lengthsWS[1]), lengthsWS[2]);
+            float shortest = min(min(lengthsWS[0], lengthsWS[1]), lengthsWS[2]);
+            float middle = lengthsWS[0] + lengthsWS[1] + lengthsWS[2] - longest - shortest;
 
-            // Exactly one edge, not every edge that ties for longest. This hides the diagonal of a
-            // quad split into two triangles, which is what it is for; comparing each length against
-            // the maximum instead excludes all three whenever a triangle is equilateral, and the
-            // whole mesh then draws as nothing. An octahedron is equilateral, so a collider made of
-            // them was built, uploaded and rendered blank - which reads as geometry that was never
-            // generated at all.
-            bool excludeFirst = lengthsWS[0] >= lengthsWS[1] && lengthsWS[0] >= lengthsWS[2];
-            bool excludeSecond = !excludeFirst && lengthsWS[1] >= lengthsWS[2];
+            // Halfway between a square's diagonal ratio and an equilateral triangle's 1, so a quad
+            // stretched or sheared well out of square is still recognised and a triangle mesh is
+            // still drawn whole.
+            bool splitQuad = longest > 1.2 * middle;
+
+            // Exactly one edge even so: two edges tied for longest in a triangle that did come from
+            // a quad would otherwise take both.
+            bool excludeFirst = splitQuad && lengthsWS[0] >= lengthsWS[1] && lengthsWS[0] >= lengthsWS[2];
+            bool excludeSecond = splitQuad && !excludeFirst && lengthsWS[1] >= lengthsWS[2];
+            bool excludeThird = splitQuad && !excludeFirst && !excludeSecond;
 
             vertExclude.x = excludeFirst ? 1 : 0;
             vertExclude.y = excludeSecond ? 1 : 0;
-            vertExclude.z = (!excludeFirst && !excludeSecond) ? 1 : 0;
+            vertExclude.z = excludeThird ? 1 : 0;
 
             // compute the cos angle of each vertices
             float cosAngles[3];
@@ -155,9 +171,11 @@
             heights[0] = lengths[2] * sqrt(1 - cosAngles[2] * cosAngles[2]);
 
             float edgeSigns[3];
-            edgeSigns[0] = (edges[0] > 0 ? 1 : -1);
-            edgeSigns[1] = (edges[1] > 0 ? 1 : -1);
-            edgeSigns[2] = (edges[2] > 0 ? 1 : -1);
+            // The x component decides the sign; the source compared the whole float2 against a
+            // scalar, which is a different question with an answer the compiler picks for you.
+            edgeSigns[0] = edges[0].x > 0 ? 1 : -1;
+            edgeSigns[1] = edges[1].x > 0 ? 1 : -1;
+            edgeSigns[2] = edges[2].x > 0 ? 1 : -1;
 
             float edgeOffsets[3];
             edgeOffsets[0] = lengths[0] * (0.5 - 0.5 * edgeSigns[0]);
@@ -252,12 +270,19 @@
     stage override void PSMain()
     {
         float dist = evalMinDistanceToEdges();
-        if (dist > 0.5 * LineWidth)
+
+        // A ramp across the last pixel instead of a hard cut. A wireframe is nearly all edge, and
+        // one drawn by a straight threshold is a field of staircases that crawl as the camera turns
+        // - which reads as geometry that is jagged rather than as a line that is aliased.
+        float alpha = saturate((0.5 * LineWidth + LineFeather - dist) / max(LineFeather, 1e-4));
+        if (alpha <= 0.004)
         {
             // too far from edge
             discard;
         }
 
-        streams.ColorTarget = float4(LineColor, 1);
+        // The blend state is premultiplied: One against InverseSourceAlpha. Handing it a colour that
+        // is not premultiplied leaves the faded flank of every line washed out towards white.
+        streams.ColorTarget = float4(LineColor * alpha, alpha);
     }
 };

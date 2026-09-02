@@ -451,27 +451,60 @@ namespace Stride.Rendering.Voxels.Grid
 
                 if (nets)
                 {
-                    // The quads surface nets actually stitches, rather than a plane standing in for
-                    // them: a cell owns the three quads of the edges leaving its minimum corner, and
-                    // each is spanned by the vertices of the four cells around that edge. That is
-                    // eight cell vertices, shared between the three quads.
+                    // Every quad surface nets stitches that can cover a point in this cell, not
+                    // just the three the cell owns. A quad is spanned by the vertices of the four
+                    // cells around a grid edge, so the one covering a pixel usually belongs to a
+                    // neighbour: testing only the owned three left most pixels on the fallback
+                    // below, which is a different surface, and the two interleaved as shingles.
+                    // The same reach the collider needed, for the same reason.
                     //
-                    // Done here, once, at the cell the crossing was found in - not during the walk.
-                    // Doing it per step is what made the shader compiler run away: every density
-                    // read goes through the source composition and is inlined, so a few hundred of
-                    // them multiplied by a walk of hundreds of steps never finishes compiling.
+                    // Nineteen cell vertices - every offset with at least one zero component - and
+                    // twelve quads. At twelve edge crossings and two density reads each that is 456
+                    // reads, all inlined through the source composition, and it compiles without
+                    // trouble. What made the compiler run away before was doing this work at every
+                    // step of the walk; once per pixel, the count alone is not the problem.
                     int3 c = netsCell;
-                    float4 v000 = CellVertex(c);
-                    float4 v100 = CellVertex(c - int3(1, 0, 0));
-                    float4 v010 = CellVertex(c - int3(0, 1, 0));
-                    float4 v001 = CellVertex(c - int3(0, 0, 1));
-                    float4 v110 = CellVertex(c - int3(1, 1, 0));
-                    float4 v101 = CellVertex(c - int3(1, 0, 1));
-                    float4 v011 = CellVertex(c - int3(0, 1, 1));
 
-                    float4 best = MeetQuad(v000, v010, v011, v001, origin, safeDirection);
-                    best = Nearer(best, MeetQuad(v000, v001, v101, v100, origin, safeDirection));
-                    best = Nearer(best, MeetQuad(v000, v100, v110, v010, origin, safeDirection));
+                    float4 vP00 = CellVertex(c + int3( 1,  0,  0));
+                    float4 vM00 = CellVertex(c + int3(-1,  0,  0));
+                    float4 v0P0 = CellVertex(c + int3( 0,  1,  0));
+                    float4 v0M0 = CellVertex(c + int3( 0, -1,  0));
+                    float4 v00P = CellVertex(c + int3( 0,  0,  1));
+                    float4 v00M = CellVertex(c + int3( 0,  0, -1));
+                    float4 v000 = CellVertex(c);
+
+                    float4 v0PP = CellVertex(c + int3( 0,  1,  1));
+                    float4 v0PM = CellVertex(c + int3( 0,  1, -1));
+                    float4 v0MP = CellVertex(c + int3( 0, -1,  1));
+                    float4 v0MM = CellVertex(c + int3( 0, -1, -1));
+
+                    float4 vP0P = CellVertex(c + int3( 1,  0,  1));
+                    float4 vP0M = CellVertex(c + int3( 1,  0, -1));
+                    float4 vM0P = CellVertex(c + int3(-1,  0,  1));
+                    float4 vM0M = CellVertex(c + int3(-1,  0, -1));
+
+                    float4 vPP0 = CellVertex(c + int3( 1,  1,  0));
+                    float4 vPM0 = CellVertex(c + int3( 1, -1,  0));
+                    float4 vMP0 = CellVertex(c + int3(-1,  1,  0));
+                    float4 vMM0 = CellVertex(c + int3(-1, -1,  0));
+
+                    // The four quads on the x edges, wound round the edge.
+                    float4 best = MeetQuad(v000, v0M0, v0MM, v00M, origin, safeDirection);
+                    best = Nearer(best, MeetQuad(v00P, v0MP, v0M0, v000, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v0P0, v000, v00M, v0PM, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v0PP, v00P, v000, v0P0, origin, safeDirection));
+
+                    // The four on the y edges.
+                    best = Nearer(best, MeetQuad(v000, vM00, vM0M, v00M, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v00P, vM0P, vM00, v000, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vP00, v000, v00M, vP0M, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vP0P, v00P, v000, vP00, origin, safeDirection));
+
+                    // The four on the z edges.
+                    best = Nearer(best, MeetQuad(v000, vM00, vMM0, v0M0, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v0P0, vMP0, vM00, v000, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vP00, v000, v0M0, vPM0, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vPP0, v0P0, v000, vP00, origin, safeDirection));
 
                     if (best.w > 0)
                     {
@@ -482,12 +515,10 @@ namespace Stride.Rendering.Voxels.Grid
                     }
                     else
                     {
-                        // The covering quad belongs to a cell further out than the ones looked at.
-                        // Keeping the crossing is better than dropping the pixel.
                         hitNormal = normalize(-CellNormal(netsCell));
                     }
                 }
-                                else if (smooth)
+                else if (smooth)
                 {
                     float3 gradient = FieldGradient(position);
                     // Density rises into matter, so the outward normal is the gradient reversed. A
