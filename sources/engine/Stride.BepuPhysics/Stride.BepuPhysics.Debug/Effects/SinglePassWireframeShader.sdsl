@@ -129,9 +129,18 @@
 
             float maxLength = max(max(lengthsWS[0], lengthsWS[1]), lengthsWS[2]);
 
-            vertExclude.x = lengthsWS[0] == maxLength ? 1 : 0;
-            vertExclude.y = lengthsWS[1] == maxLength ? 1 : 0;
-            vertExclude.z = lengthsWS[2] == maxLength ? 1 : 0;
+            // Exactly one edge, not every edge that ties for longest. This hides the diagonal of a
+            // quad split into two triangles, which is what it is for; comparing each length against
+            // the maximum instead excludes all three whenever a triangle is equilateral, and the
+            // whole mesh then draws as nothing. An octahedron is equilateral, so a collider made of
+            // them was built, uploaded and rendered blank - which reads as geometry that was never
+            // generated at all.
+            bool excludeFirst = lengthsWS[0] >= lengthsWS[1] && lengthsWS[0] >= lengthsWS[2];
+            bool excludeSecond = !excludeFirst && lengthsWS[1] >= lengthsWS[2];
+
+            vertExclude.x = excludeFirst ? 1 : 0;
+            vertExclude.y = excludeSecond ? 1 : 0;
+            vertExclude.z = (!excludeFirst && !excludeSecond) ? 1 : 0;
 
             // compute the cos angle of each vertices
             float cosAngles[3];

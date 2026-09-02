@@ -236,6 +236,51 @@ namespace Stride.Rendering.Voxels.Grid
                 (d001 + d101 + d011 + d111) - (d000 + d100 + d010 + d110));
         }
 
+        /// Where a ray meets a triangle: the distance in w, zero in w when it does not.
+        /// Two sided on purpose - a facet is looked at from whichever side the camera happens to be.
+        float4 MeetTriangle(float3 a, float3 b, float3 c, float3 origin, float3 direction)
+        {
+            float3 ab = b - a;
+            float3 ac = c - a;
+            float3 normal = cross(ab, ac);
+
+            float denominator = dot(normal, direction);
+            float hitT = abs(denominator) > 1e-12 ? dot(normal, a - origin) / denominator : -1;
+
+            // Barycentric test at the intersection, in the plane's own frame.
+            float3 planePoint = origin + direction * hitT - a;
+            float d00 = dot(ab, ab);
+            float d01 = dot(ab, ac);
+            float d11 = dot(ac, ac);
+            float d20 = dot(planePoint, ab);
+            float d21 = dot(planePoint, ac);
+            float area = d00 * d11 - d01 * d01;
+
+            float v = abs(area) > 1e-12 ? (d11 * d20 - d01 * d21) / area : -1;
+            float w = abs(area) > 1e-12 ? (d00 * d21 - d01 * d20) / area : -1;
+
+            bool inside = hitT > 0 && v >= 0 && w >= 0 && v + w <= 1;
+            return inside ? float4(normalize(normal), hitT) : float4(0, 1, 0, 0);
+        }
+
+        /// The nearer of two hits, either of which may be nothing.
+        float4 Nearer(float4 first, float4 second)
+        {
+            bool takeSecond = second.w > 0 && (first.w <= 0 || second.w < first.w);
+            return takeSecond ? second : first;
+        }
+
+        /// Where a ray meets the quad four cell vertices span, as two triangles.
+        float4 MeetQuad(float4 v0, float4 v1, float4 v2, float4 v3, float3 origin, float3 direction)
+        {
+            if (v0.w <= 0 || v1.w <= 0 || v2.w <= 0 || v3.w <= 0)
+                return float4(0, 1, 0, 0);
+
+            float4 first = MeetTriangle(v0.xyz, v1.xyz, v2.xyz, origin, direction);
+            float4 second = MeetTriangle(v0.xyz, v2.xyz, v3.xyz, origin, direction);
+            return Nearer(first, second);
+        }
+
         override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
         {
             hitDistance = 0;
@@ -406,36 +451,43 @@ namespace Stride.Rendering.Voxels.Grid
 
                 if (nets)
                 {
-                    // Surface nets keeps one vertex per cell and joins them, so its surface is a
-                    // facet about that vertex rather than the field's own crossing. Meeting the
-                    // plane through the vertex, oriented by the cell, is that facet - and doing it
-                    // once, on the cell the crossing was found in, rather than searching the
-                    // neighbours is what keeps it compiling and cheap.
-                    float4 vertex = CellVertex(netsCell);
-                    float3 planeNormal = -CellNormal(netsCell);
-                    float denominator = dot(planeNormal, safeDirection);
+                    // The quads surface nets actually stitches, rather than a plane standing in for
+                    // them: a cell owns the three quads of the edges leaving its minimum corner, and
+                    // each is spanned by the vertices of the four cells around that edge. That is
+                    // eight cell vertices, shared between the three quads.
+                    //
+                    // Done here, once, at the cell the crossing was found in - not during the walk.
+                    // Doing it per step is what made the shader compiler run away: every density
+                    // read goes through the source composition and is inlined, so a few hundred of
+                    // them multiplied by a walk of hundreds of steps never finishes compiling.
+                    int3 c = netsCell;
+                    float4 v000 = CellVertex(c);
+                    float4 v100 = CellVertex(c - int3(1, 0, 0));
+                    float4 v010 = CellVertex(c - int3(0, 1, 0));
+                    float4 v001 = CellVertex(c - int3(0, 0, 1));
+                    float4 v110 = CellVertex(c - int3(1, 1, 0));
+                    float4 v101 = CellVertex(c - int3(1, 0, 1));
+                    float4 v011 = CellVertex(c - int3(0, 1, 1));
 
-                    if (vertex.w > 0 && abs(denominator) > 1e-9)
+                    float4 best = MeetQuad(v000, v010, v011, v001, origin, safeDirection);
+                    best = Nearer(best, MeetQuad(v000, v001, v101, v100, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v000, v100, v110, v010, origin, safeDirection));
+
+                    if (best.w > 0)
                     {
-                        float planeT = dot(planeNormal, vertex.xyz - origin) / denominator;
-                        float3 low = ((float3)netsCell - 0.5) * cellSize;
-                        float3 high = ((float3)netsCell + 1.5) * cellSize;
-                        float3 planePoint = origin + safeDirection * planeT;
-
-                        if (planeT > 0 && all(planePoint >= low) && all(planePoint <= high))
-                        {
-                            hitDistance = planeT;
-                            position = planePoint;
-                        }
-
-                        hitNormal = normalize(planeNormal);
+                        hitDistance = best.w;
+                        position = origin + safeDirection * best.w;
+                        // Facing the camera, because a quad is stitched without a preferred side.
+                        hitNormal = dot(best.xyz, safeDirection) > 0 ? -best.xyz : best.xyz;
                     }
                     else
                     {
-                        hitNormal = -normalize(safeDirection);
+                        // The covering quad belongs to a cell further out than the ones looked at.
+                        // Keeping the crossing is better than dropping the pixel.
+                        hitNormal = normalize(-CellNormal(netsCell));
                     }
                 }
-                else if (smooth)
+                                else if (smooth)
                 {
                     float3 gradient = FieldGradient(position);
                     // Density rises into matter, so the outward normal is the gradient reversed. A

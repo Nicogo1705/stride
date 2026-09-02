@@ -400,10 +400,15 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         new(0, 0, -1), new(0, 0, 1),
     ];
 
+    /// <summary>
+    /// Wound the same way round as the box above. The debug view culls back faces, so an octahedron
+    /// wound the other way is built, uploaded and then drawn as nothing at all - which looks exactly
+    /// like a collider form that produces no geometry.
+    /// </summary>
     private static ReadOnlySpan<int> OctahedronIndices =>
     [
-        0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2,
-        1, 4, 2, 1, 3, 4, 1, 5, 3, 1, 2, 5,
+        0, 4, 2, 0, 3, 4, 0, 5, 3, 0, 2, 5,
+        1, 2, 4, 1, 4, 3, 1, 3, 5, 1, 5, 2,
     ];
 }
 
