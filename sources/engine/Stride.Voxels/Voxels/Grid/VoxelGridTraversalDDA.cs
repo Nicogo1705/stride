@@ -33,6 +33,26 @@ namespace Stride.Rendering.Voxels.Grid
         void ApplyParameters(ParameterCollection parameters);
     }
 
+    /// <summary>Which surface a traversal stops on.</summary>
+    public enum VoxelSurfaceForm
+    {
+        /// <summary>The cells themselves. A world that is meant to look like cubes.</summary>
+        Cubes,
+
+        /// <summary>
+        /// The crossing on the trilinear field, which is where marching cubes puts its vertices - so
+        /// this is the surface a marching-cubes mesh or collider has.
+        /// </summary>
+        MarchingCubes,
+
+        /// <summary>
+        /// The facet about the cell's surface-nets vertex, which is what surface nets meshes. It
+        /// smooths the crossings rather than sitting on them, so it is a different surface from
+        /// <see cref="MarchingCubes"/> - which is exactly why it is worth being able to ask for it.
+        /// </summary>
+        SurfaceNets,
+    }
+
     /// <summary>
     /// Walks the cells a ray crosses, in order, and stops at the first solid one.
     /// </summary>
@@ -76,15 +96,21 @@ namespace Stride.Rendering.Voxels.Grid
         public bool SealBorder { get; set; } = true;
 
         /// <summary>
-        /// Whether the crossing is solved inside the cell that contains it.
+        /// Which surface the walk stops on. All three walk the same cells.
         /// </summary>
         /// <remarks>
-        /// On, the surface matches the one a renderer or a collider meshes from the same samples,
-        /// because it is the same trilinear reconstruction. Off, the ray stops at the cell and the
-        /// world is made of cubes - not a lesser answer, a different one, and the right one for a
-        /// game that means its blocks. Both walk the same cells.
+        /// Worth matching to the collider's form: cubes with a box collider, and marching cubes with
+        /// a marching-cubes collider, are the same surface. Surface nets is a different one, so
+        /// pairing it with either of the others draws one body and collides with another.
         /// </remarks>
-        public bool Smooth { get; set; } = true;
+        public VoxelSurfaceForm Surface { get; set; } = VoxelSurfaceForm.MarchingCubes;
+
+        /// <summary>Kept for callers that only ever wanted cubes off or on.</summary>
+        public bool Smooth
+        {
+            get => Surface != VoxelSurfaceForm.Cubes;
+            set => Surface = value ? VoxelSurfaceForm.MarchingCubes : VoxelSurfaceForm.Cubes;
+        }
 
         /// <summary>
         /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
@@ -94,7 +120,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         private ValueParameterKey<float> cellSizeKey;
         private ValueParameterKey<float> isoLevelKey;
-        private ValueParameterKey<float> smoothKey;
+        private ValueParameterKey<float> surfaceKey;
         private ValueParameterKey<float> sealKey;
         private ValueParameterKey<int> maxStepsKey;
 
@@ -110,7 +136,7 @@ namespace Stride.Rendering.Voxels.Grid
         {
             cellSizeKey = VoxelGridTraversalDDAKeys.VoxelGridCellSize.ComposeWith(compositionName);
             isoLevelKey = VoxelGridTraversalDDAKeys.VoxelGridIsoLevel.ComposeWith(compositionName);
-            smoothKey = VoxelGridTraversalDDAKeys.VoxelGridSmoothSurface.ComposeWith(compositionName);
+            surfaceKey = VoxelGridTraversalDDAKeys.VoxelGridSurfaceMode.ComposeWith(compositionName);
             sealKey = VoxelGridTraversalDDAKeys.VoxelGridSealBorder.ComposeWith(compositionName);
             maxStepsKey = VoxelGridTraversalDDAKeys.VoxelGridMaxSteps.ComposeWith(compositionName);
             Source.UpdateLayout("Source." + compositionName);
@@ -120,7 +146,7 @@ namespace Stride.Rendering.Voxels.Grid
         {
             parameters.Set(cellSizeKey, CellSize);
             parameters.Set(isoLevelKey, IsoLevel);
-            parameters.Set(smoothKey, Smooth ? 1f : 0f);
+            parameters.Set(surfaceKey, (float)Surface);
             parameters.Set(sealKey, SealBorder ? 1f : 0f);
             parameters.Set(maxStepsKey, MaxSteps);
             Source.ApplyParameters(parameters);

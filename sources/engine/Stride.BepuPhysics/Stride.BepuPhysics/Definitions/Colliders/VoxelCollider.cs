@@ -297,7 +297,16 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         buffer.Add(new BasicMeshBuffers { Vertices = vertices.ToArray(), Indices = indices.ToArray() });
     }
 
-    /// <summary>A box per solid cell, or an inscribed octahedron standing in for the sphere form.</summary>
+    /// <summary>
+    /// A box per solid cell on the surface, or an inscribed octahedron standing in for the sphere
+    /// form.
+    /// </summary>
+    /// <remarks>
+    /// Only cells with an empty neighbour. Drawing every solid cell means drawing the whole inside
+    /// of the body - hundreds of thousands of solids for a modest grid, a mesh too large to build,
+    /// and nothing on screen to show for it. The shell is what there is to look at anyway: it is
+    /// where the narrow phase ever meets anything.
+    /// </remarks>
     private static void AppendCellSolids(ref VoxelGridData<TSource> grid, List<VertexPosition3> vertices, List<int> indices, bool sphere)
     {
         var half = grid.CellSize * 0.5f;
@@ -308,6 +317,13 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
                 for (int z = 0; z < grid.CellsZ; ++z)
                 {
                     if (!grid.CellIsSolid(x, y, z))
+                        continue;
+
+                    var exposed =
+                        !grid.CellIsSolid(x - 1, y, z) || !grid.CellIsSolid(x + 1, y, z) ||
+                        !grid.CellIsSolid(x, y - 1, z) || !grid.CellIsSolid(x, y + 1, z) ||
+                        !grid.CellIsSolid(x, y, z - 1) || !grid.CellIsSolid(x, y, z + 1);
+                    if (!exposed)
                         continue;
                     var centre = grid.CellCentre(x, y, z);
                     var first = vertices.Count;

@@ -115,6 +115,11 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     /// </remarks>
     public readonly bool CellIsSolid(int cx, int cy, int cz)
     {
+        // Outside the grid counts as empty, so a caller asking about a neighbour off the edge gets
+        // the answer it expects rather than an out of range read.
+        if ((uint)cx >= (uint)CellsX || (uint)cy >= (uint)CellsY || (uint)cz >= (uint)CellsZ)
+            return false;
+
         var x1 = cx + 1;
         var y1 = cy + 1;
         var z1 = cz + 1;

@@ -33,10 +33,14 @@ namespace Stride.Rendering.Voxels.Grid
         /// surface. 0 leaves them alone, for a grid that continues into a neighbour.
         float VoxelGridSealBorder;
 
-        /// 1 solves the crossing inside the cell, for a surface that matches a meshed one; 0 stops
-        /// at the cell itself, for a world that is meant to look like cubes. Both walk the same
-        /// cells - only what counts as a hit differs.
-        float VoxelGridSmoothSurface;
+        /// Which surface the walk stops on. 0: the cells themselves, a world of cubes. 1: the
+        /// crossing on the trilinear field, which is where marching cubes puts its vertices. 2: the
+        /// plane through the cell's surface-nets vertex, which is what surface nets meshes.
+        ///
+        /// All three walk the same cells; only what counts as a hit differs. Offering all three is
+        /// what lets a collider be asked for the same surface, so the body that is drawn and the
+        /// body that is solid are one body rather than two that follow each other.
+        float VoxelGridSurfaceMode;
 
         /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
         /// touches on the order of 768, so this bounds the worst case rather than the common one.
@@ -162,6 +166,76 @@ namespace Stride.Rendering.Voxels.Grid
             return float3(Source.SampleCount().x / 128.0, Source.Density(cell), VoxelGridIsoLevel);
         }
 
+        /// One edge's contribution to the mean of the crossings: the crossing in xyz, and 1 in w
+        /// when the surface passes through that edge at all.
+        ///
+        /// A value in and a value out, with no inout parameter and no early return. Those are what
+        /// the shader compiler would not finish on - not an error, a compile that never returns, so
+        /// the game hangs waiting for a task rather than reporting anything.
+        float4 EdgeCrossing(int3 a, int3 b)
+        {
+            float iso = VoxelGridIsoLevel;
+            float da = Density(a);
+            float db = Density(b);
+
+            float delta = db - da;
+            float t = abs(delta) > 1e-6 ? saturate((iso - da) / delta) : 0.5;
+            // Not named 'point': that is a reserved word in the shader language, and the parse
+            // failure it causes is reported against the line after it.
+            float3 crossing = lerp((float3)a, (float3)b, t) * VoxelGridCellSize;
+
+            bool crosses = (da >= iso) != (db >= iso);
+            return crosses ? float4(crossing, 1) : float4(0, 0, 0, 0);
+        }
+
+        /// The one vertex surface nets keeps for a cell: the mean of the crossings on its edges,
+        /// in xyz, with the number of them in w.
+        float4 CellVertex(int3 c)
+        {
+            float4 sum = float4(0, 0, 0, 0);
+
+            sum += EdgeCrossing(c + int3(0, 0, 0), c + int3(1, 0, 0));
+            sum += EdgeCrossing(c + int3(0, 1, 0), c + int3(1, 1, 0));
+            sum += EdgeCrossing(c + int3(0, 0, 1), c + int3(1, 0, 1));
+            sum += EdgeCrossing(c + int3(0, 1, 1), c + int3(1, 1, 1));
+
+            sum += EdgeCrossing(c + int3(0, 0, 0), c + int3(0, 1, 0));
+            sum += EdgeCrossing(c + int3(1, 0, 0), c + int3(1, 1, 0));
+            sum += EdgeCrossing(c + int3(0, 0, 1), c + int3(0, 1, 1));
+            sum += EdgeCrossing(c + int3(1, 0, 1), c + int3(1, 1, 1));
+
+            sum += EdgeCrossing(c + int3(0, 0, 0), c + int3(0, 0, 1));
+            sum += EdgeCrossing(c + int3(1, 0, 0), c + int3(1, 0, 1));
+            sum += EdgeCrossing(c + int3(0, 1, 0), c + int3(0, 1, 1));
+            sum += EdgeCrossing(c + int3(1, 1, 0), c + int3(1, 1, 1));
+
+            return sum.w > 0 ? float4(sum.xyz / sum.w, 1) : float4(0, 0, 0, 0);
+        }
+
+        /// Which way the field rises across a cell, from its eight corners.
+        ///
+        /// Eight reads, against the forty-eight a central difference on the reconstructed field
+        /// costs. That matters more than it looks: every read goes through the source composition,
+        /// and the shader compiler inlines those - a normal taken the expensive way, for several
+        /// cells, inside a walk of hundreds of steps, is a compile that never finishes rather than
+        /// one that reports anything.
+        float3 CellNormal(int3 c)
+        {
+            float d000 = Density(c + int3(0, 0, 0));
+            float d100 = Density(c + int3(1, 0, 0));
+            float d010 = Density(c + int3(0, 1, 0));
+            float d001 = Density(c + int3(0, 0, 1));
+            float d110 = Density(c + int3(1, 1, 0));
+            float d101 = Density(c + int3(1, 0, 1));
+            float d011 = Density(c + int3(0, 1, 1));
+            float d111 = Density(c + int3(1, 1, 1));
+
+            return float3(
+                (d100 + d110 + d101 + d111) - (d000 + d010 + d001 + d011),
+                (d010 + d110 + d011 + d111) - (d000 + d100 + d001 + d101),
+                (d001 + d101 + d011 + d111) - (d000 + d100 + d010 + d110));
+        }
+
         override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
         {
             hitDistance = 0;
@@ -185,7 +259,10 @@ namespace Stride.Rendering.Voxels.Grid
             float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
             float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
 
-            bool smooth = VoxelGridSmoothSurface > 0.5;
+            bool cubes = VoxelGridSurfaceMode < 0.5;
+            bool marching = VoxelGridSurfaceMode >= 0.5 && VoxelGridSurfaceMode < 1.5;
+            bool nets = VoxelGridSurfaceMode >= 1.5;
+            bool smooth = !cubes;
             bool running = tEnter <= tExit;
             bool hit = false;
             float tHit = 0;
@@ -213,6 +290,11 @@ namespace Stride.Rendering.Voxels.Grid
             float3 tMax = (boundary - origin) * inverseDirection;
 
             float t = tEnter;
+
+            // The facet a surface-nets hit landed on, kept because its own orientation is what makes
+            // that surface look like surface nets; taking the field gradient at the point instead
+            // smooths it straight back into the marching-cubes surface.
+            int3 netsCell = int3(0, 0, 0);
 
             // Neither break nor return: an early return inside a loop miscompiles on some targets,
             // so the walk ends by clearing its condition instead.
@@ -276,6 +358,7 @@ namespace Stride.Rendering.Voxels.Grid
                     tHit = high;
                     hit = true;
                     running = false;
+                    netsCell = cell;
                 }
                 else
                 {
@@ -321,7 +404,38 @@ namespace Stride.Rendering.Voxels.Grid
                     axis == 1 ? -stepDirection.y : 0,
                     axis == 2 ? -stepDirection.z : 0);
 
-                if (smooth)
+                if (nets)
+                {
+                    // Surface nets keeps one vertex per cell and joins them, so its surface is a
+                    // facet about that vertex rather than the field's own crossing. Meeting the
+                    // plane through the vertex, oriented by the cell, is that facet - and doing it
+                    // once, on the cell the crossing was found in, rather than searching the
+                    // neighbours is what keeps it compiling and cheap.
+                    float4 vertex = CellVertex(netsCell);
+                    float3 planeNormal = -CellNormal(netsCell);
+                    float denominator = dot(planeNormal, safeDirection);
+
+                    if (vertex.w > 0 && abs(denominator) > 1e-9)
+                    {
+                        float planeT = dot(planeNormal, vertex.xyz - origin) / denominator;
+                        float3 low = ((float3)netsCell - 0.5) * cellSize;
+                        float3 high = ((float3)netsCell + 1.5) * cellSize;
+                        float3 planePoint = origin + safeDirection * planeT;
+
+                        if (planeT > 0 && all(planePoint >= low) && all(planePoint <= high))
+                        {
+                            hitDistance = planeT;
+                            position = planePoint;
+                        }
+
+                        hitNormal = normalize(planeNormal);
+                    }
+                    else
+                    {
+                        hitNormal = -normalize(safeDirection);
+                    }
+                }
+                else if (smooth)
                 {
                     float3 gradient = FieldGradient(position);
                     // Density rises into matter, so the outward normal is the gradient reversed. A
