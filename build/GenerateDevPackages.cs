@@ -114,7 +114,18 @@ Console.WriteLine("\nBuilding + packing fresh packages...");
 // compiler reads off disk from the extracted package.
 // Output -> tempPackDir (not NugetDev); we deploy stubs there explicitly in step 3.
 // No --no-build: self-bootstraps a fresh checkout in one go.
-var packExitCode = RunProcess("dotnet", $"pack \"{solution}\" -c {configuration} -p:StrideSkipAutoPack=true -p:StrideDevPackages=false -p:StridePackAssets=false -o \"{tempPackDir}\" --verbosity normal", silent: true, onLine: line =>
+// Worker nodes from an earlier build outlive it by a quarter of an hour and keep handles on the
+// packages they wrote, so the next run cannot delete them, fails halfway, and leaves the feeds in a
+// state where every project compiles against a different mix of old and new - CS0117 errors that
+// point at nothing wrong in the code. No node reuse for this run, and the leftovers of any other are
+// shut down first.
+RunProcess("dotnet", "build-server shutdown", silent: true, onLine: _ => { });
+foreach (var node in Process.GetProcessesByName("MSBuild"))
+{
+    try { node.Kill(); node.WaitForExit(5000); } catch { /* already gone, or not ours to kill */ }
+}
+
+var packExitCode = RunProcess("dotnet", $"pack \"{solution}\" -c {configuration} -nodeReuse:false -p:StrideSkipAutoPack=true -p:StrideDevPackages=false -p:StridePackAssets=false -o \"{tempPackDir}\" --verbosity normal", silent: true, onLine: line =>
 {
     // "Successfully created package 'X.nupkg'." is emitted once per project at pack completion.
     var packMarker = "Successfully created package '";

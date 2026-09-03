@@ -38,6 +38,17 @@ namespace Stride.Rendering.Voxels.Grid
 
         /// DIAGNOSTIC: 0 shades normally, 1 shows the normal, 2 shows the distance.
 
+        /// The configured ray limit, which the processor sets to the grid's diagonal when nothing
+        /// else was asked for - a distance that reaches from one side of the volume to the other.
+        ///
+        /// Not computed here from the sample count: int3 arithmetic on an inherited method's result
+        /// is a construct this shader compiler refuses ("Unsupported type for GetElementType"), and
+        /// the value is known on the CPU anyway. The fallback only matters if nothing was set at all.
+        float VoxelGridMaxDistanceOrDiagonal()
+        {
+            return VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
+        }
+
         override void Compute()
         {
             // The ray, in the grid's own space. Taking it from the eye through this fragment rather
@@ -51,18 +62,39 @@ namespace Stride.Rendering.Voxels.Grid
             // the mixins here, and reading it gave every pixel the same point, so the whole screen
             // traced one ray. From inside the volume that ray still lands on the field and the grid
             // looks right, which is why it seemed to be about distance.
-            float3 originLocal = mul(float4(Eye.xyz, 1), WorldInverse).xyz;
             float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
-            float3 towards = targetLocal - originLocal;
+            float3 originLocal;
+            float3 directionLocal;
 
-            float travel = length(towards);
-            float3 directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
+            // Perspective or orthographic, and the two want different rays.
+            //
+            // Under a perspective projection every ray leaves the eye, so the eye is the origin and
+            // the fragment gives the direction. Under an orthographic one the rays are parallel and
+            // the eye is not a point they leave from: build the ray from it anyway and the direction
+            // is wrong by an amount that grows as the fragment nears the eye. Shadow maps are drawn
+            // orthographically, and this is why the highest thing in the field cast no shadow while
+            // everything lower did. A projection is orthographic when w does not depend on z.
+            bool orthographic = abs(Projection._34) < 1e-6 && abs(Projection._44 - 1.0) < 1e-6;
+            if (orthographic)
+            {
+                float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
+                directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
+                // Far enough back along the ray to be outside the volume; the traversal clips to it.
+                originLocal = targetLocal - directionLocal * VoxelGridMaxDistanceOrDiagonal();
+            }
+            else
+            {
+                originLocal = mul(float4(Eye.xyz, 1), WorldInverse).xyz;
+                float3 towards = targetLocal - originLocal;
+                float travel = length(towards);
+                directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
+            }
 
             // Zero means no limit, as the property that feeds this says it does. Passing it straight
             // through instead rejects everything further than nothing from the eye, so the surface
             // shows only where it touches the camera and vanishes as you back away - which reads as
             // a culling problem rather than as a distance of zero.
-            float limit = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 1e9;
+            float limit = orthographic ? 2.0 * VoxelGridMaxDistanceOrDiagonal() : (VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 1e9);
 
             float hitDistance;
             float3 hitNormal;
