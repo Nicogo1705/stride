@@ -5,6 +5,7 @@ using Stride.Core;
 using Stride.Engine;
 using Stride.Engine.Design;
 using Stride.Rendering.Materials;
+using Stride.Rendering.Materials.ComputeColors;
 
 namespace Stride.Rendering.Voxels.Grid
 {
@@ -63,6 +64,19 @@ namespace Stride.Rendering.Voxels.Grid
         /// <userdoc>Whether the grid casts shadows, as a model does.</userdoc>
         [DataMember(20)]
         public bool CastShadows { get; set; } = true;
+
+        /// <summary>
+        /// What the surface emits, for the default material. Null emits nothing.
+        /// </summary>
+        /// <remarks>
+        /// A compute colour rather than a colour, because what is worth emitting varies across a
+        /// field: a shader here reads the surface's own streams - the albedo the traversal found,
+        /// its position - and decides. A lit voxel world with no analytic light at all is a field
+        /// whose emissive parts light the rest through a voxel GI volume.
+        /// </remarks>
+        /// <userdoc>What the surface emits, when the material is the default one. Leave empty to emit nothing.</userdoc>
+        [DataMember(25)]
+        public IComputeColor Emissive { get; set; }
 
         /// <summary>
         /// Diagnostic view of the drawn surface, see <see cref="VoxelGridFieldKeys.Debug"/>. Zero

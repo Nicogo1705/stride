@@ -32,6 +32,9 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The traversal's shader as it was when the material was built.</summary>
             public ShaderSource Shader;
 
+            /// <summary>The emissive the default material was built with.</summary>
+            public IComputeColor Emissive;
+
             /// <summary>The box's buffers, released when it is rebuilt or the component goes.</summary>
             public GraphicsBuffer VertexBuffer;
             public GraphicsBuffer IndexBuffer;
@@ -106,7 +109,7 @@ namespace Stride.Rendering.Voxels.Grid
             var wanted = component.Material;
             var rebuild = state.Material == null
                           || (wanted != null && state.Material != wanted)
-                          || (wanted == null && !Equals(state.Shader, shader));
+                          || (wanted == null && (!Equals(state.Shader, shader) || !ReferenceEquals(state.Emissive, component.Emissive)));
             if (rebuild)
             {
                 if (wanted != null)
@@ -123,6 +126,7 @@ namespace Stride.Rendering.Voxels.Grid
                 }
 
                 state.Shader = shader;
+                state.Emissive = component.Emissive;
                 state.Model = null;
 
                 // The far faces are kept, so the volume is drawn from inside as well as from outside
@@ -268,6 +272,10 @@ namespace Stride.Rendering.Voxels.Grid
                         Environment = new MaterialSpecularMicrofacetEnvironmentGGXPolynomial(),
                     },
                     MicroSurface = new MaterialGlossinessMapFeature(new ComputeFloat(0.35f)),
+
+                    // Whatever the component says the surface emits. The slot runs after the
+                    // surface feature, so a shader put here reads the traced albedo and position.
+                    Emissive = component.Emissive is null ? null : new MaterialEmissiveMapFeature(component.Emissive),
                 },
             };
 
