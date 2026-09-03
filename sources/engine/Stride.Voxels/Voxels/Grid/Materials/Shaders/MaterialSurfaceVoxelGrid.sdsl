@@ -21,7 +21,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// The fragment this runs on is a face of the proxy box - the far one, so the volume is drawn
     /// from inside as well as from outside - and the ray through it is the same ray whichever face
     /// carries it.
-    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, IVoxelGridTraversal
+    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, IVoxelGridTraversal, ShadowMapCasterPassInfo
     {
         // The traversal and its source are inherited, not composed, so all three share one scope
         // and the field's resource is declared once. See VoxelGridTraversalDDA.
@@ -66,10 +66,28 @@ namespace Stride.Rendering.Voxels.Grid
                 directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
             }
 
+            float reachAlong = orthographic ? 2.0 * reach : reach;
+
+            // A shadow map reads the depth and nothing else, so in a shadow caster pass the ray is
+            // asked only where it meets the field, and settles a fraction of a cell past it - on
+            // the far side, so the surface never shadows itself - for a third of the reads. The
+            // pass is known from the effect, not guessed from the projection: an orthographic
+            // camera still gets the full surface.
+            if (streams.IsShadowMapCasterPass > 0.5)
+            {
+                float occluderDistance;
+                if (!Occlude(originLocal, directionLocal, reachAlong, occluderDistance))
+                    discard;
+
+                float4 occluderClip = mul(mul(float4(originLocal + directionLocal * occluderDistance, 1), World), ViewProjection);
+                streams.Depth = occluderClip.z / occluderClip.w;
+                return;
+            }
+
             float hitDistance;
             float3 hitNormal;
             float3 hitAlbedo;
-            bool found = Trace(originLocal, directionLocal, orthographic ? 2.0 * reach : reach, hitDistance, hitNormal, hitAlbedo);
+            bool found = Trace(originLocal, directionLocal, reachAlong, hitDistance, hitNormal, hitAlbedo);
 
             // Diagnostic 1: the box itself, green where the ray met the field and red where it did
             // not, on the box's own depth and without discarding - so the box is seen whatever the

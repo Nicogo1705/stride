@@ -26,6 +26,18 @@ namespace Stride.Rendering.Voxels.Grid
             return false;
         }
 
+        /// The same ray, asked only whether and where it meets the surface - for a shadow map,
+        /// which reads nothing but the depth. Free to stop within a fraction of a cell of the
+        /// surface, on its far side rather than its near one so a receiver at the true surface
+        /// is never behind its own shadow. No normal, no colour, none of the reads they cost.
+        /// Not named after Trace: a method whose name begins with another's was resolved to the
+        /// wrong body by the shader mixer, and a shadow ray then found nothing.
+        bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
+        {
+            hitDistance = 0;
+            return false;
+        }
+
         /// Diagnostic: what the composed source reports at a point, as
         /// (samples per axis / 128, density, iso level). A pass that finds nothing looks the same
         /// whether the source is unbound, the dimensions are zero or the field is empty.

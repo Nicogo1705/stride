@@ -1,0 +1,14 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// The vertex half of the voxel surface: nothing to displace, only the pass stream to define,
+    /// so that the pixel half may ask which pass it is in whatever the pass.
+    shader MaterialSurfaceVoxelGridVertex : IMaterialSurfaceVertex, ShadowMapCasterPassInfo
+    {
+        override void Compute()
+        {
+            streams.IsShadowMapCasterPass = 0;
+        }
+    };
+}

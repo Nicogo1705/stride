@@ -1,0 +1,25 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Shadows
+{
+    /// <summary>
+    /// Lets a material shader ask whether it is being run to write a shadow map.
+    /// </summary>
+    /// <remarks>
+    /// A material's pixel stage is composed into every pass that keeps a pixel shader, and the
+    /// shadow caster passes are among them when the material asks for it. Most materials have no
+    /// reason to care; one that finds its surface at a cost - a ray walked through a volume, a
+    /// parallax search - can settle for a depth good enough for a shadow and skip what a shadow
+    /// never reads: the normal, the colour, the last bits of precision.
+    ///
+    /// The answer is a stream, so it crosses composition boundaries the way every stream does.
+    /// Whoever asks must also write it to 0 in the vertex stage, so that it is defined in every
+    /// pass; <see cref="ShadowMapCasterPassMarker"/>, mixed into the caster effects, writes 1 in
+    /// the pixel stage before the material chain runs. A float rather than a bool: a bool cannot
+    /// be carried from the vertex stage to the pixel stage.
+    /// </remarks>
+    shader ShadowMapCasterPassInfo
+    {
+        stage stream float IsShadowMapCasterPass;
+    };
+}

@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
   <!--
     Dev Packages Mode: when StrideDevPackages=true, skip NuGet auto-packing and use
@@ -79,8 +79,10 @@
                                   Condition="'%(_StrideDevPackagesStubManifest.Identity)' != ''" />
     </ItemGroup>
 
-    <Delete Files="@(_StrideDevPackagesToDelete)" />
-    <Delete Files="$(_StrideDevPackagesStampCheck)" Condition="'$(_StrideDevPackagesStampExisted)' == 'true'" />
+    <!-- Every project in a parallel build runs this, and the first to delete a stub wins: a stub
+         another node is deleting at the same moment is not an error, it is already gone. -->
+    <Delete Files="@(_StrideDevPackagesToDelete)" ContinueOnError="WarnAndContinue" />
+    <Delete Files="$(_StrideDevPackagesStampCheck)" Condition="'$(_StrideDevPackagesStampExisted)' == 'true'" ContinueOnError="WarnAndContinue" />
 
     <Message Importance="High" Text="Cleaned dev-redirect packages. Next build will generate real packages."
              Condition="'$(_StrideDevPackagesStampExisted)' == 'true'" />

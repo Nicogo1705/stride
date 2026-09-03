@@ -70,6 +70,9 @@ namespace Stride.Rendering.Voxels.Grid
 
             context.AddShaderSource(MaterialShaderStage.Pixel, mixin);
 
+            // The vertex half defines the pass stream the pixel half reads, in every pass.
+            context.AddShaderSource(MaterialShaderStage.Vertex, new ShaderClassSource("MaterialSurfaceVoxelGridVertex"));
+
             // The depth-only passes - Z prepass and shadow maps - rasterise the mesh with the vertex
             // stage alone unless told otherwise, and for this material the mesh is the proxy box: the
             // prepass would hold the box's depth and the real surface behind it would fail the depth

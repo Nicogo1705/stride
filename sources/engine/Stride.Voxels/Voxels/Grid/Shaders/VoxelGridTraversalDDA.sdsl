@@ -289,6 +289,125 @@ namespace Stride.Rendering.Voxels.Grid
             return Nearer(first, second);
         }
 
+        /// The walk of Trace with the hit left coarse: a shadow map wants a depth within a fraction
+        /// of a cell, past the surface rather than short of it, and nothing else. The bisection, the
+        /// gradient and the colour - some hundred reads on every texel that lands on the field, and
+        /// a shadow map has several times the texels the screen has - are not spent.
+        ///
+        /// A copy of the walk rather than a flag through it: the compiler folds a constant branch,
+        /// and the two walks then differ only where they should. Surface nets settles for the
+        /// trilinear crossing here, which is within a cell of its own facets.
+        override bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
+        {
+            hitDistance = 0;
+
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float cellSize = VoxelGridCellSize;
+            float3 boundsMax = (float3)cells * cellSize;
+
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+
+            float3 toMin = (0.0 - origin) * inverseDirection;
+            float3 toMax = (boundsMax - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            float3 farthest = max(toMin, toMax);
+            float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+            float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
+
+            bool cubes = TSurface == 0;
+            bool smooth = !cubes;
+            bool running = tEnter <= tExit;
+            bool hit = false;
+            float tHit = 0;
+
+            bool startsInside = tEnter <= 0;
+            if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
+            {
+                hit = true;
+                running = false;
+                tHit = tEnter;
+            }
+
+            int levels = clamp(VoxelGridOccupancyLevels, 0, 16);
+            int level = levels;
+            float t = tEnter;
+            float nudge = cellSize * 1e-3;
+            int3 cell = int3(0, 0, 0);
+
+            int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            for (int i = 0; i < steps && running; i++)
+            {
+                float3 probe = origin + safeDirection * (t + nudge);
+                cell = clamp((int3)floor(probe / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+
+                int size = 1 << level;
+                int3 brick = cell / size;
+                float3 brickMin = (float3)(brick * size) * cellSize;
+                float3 brickMax = brickMin + (float)size * cellSize;
+                float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
+                float tLeave = min(min(farSide.x, farSide.y), farSide.z);
+
+                bool empty = false;
+                if (level > 0)
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1)).g < VoxelGridIsoLevel;
+
+                if (level > 0 && !empty)
+                {
+                    level--;
+                }
+                else
+                {
+                    bool atCell = level == 0;
+                    float tSegmentEnd = min(tLeave, tExit);
+
+                    bool solidCube = atCell && !smooth && CellIsSolid(cell);
+
+                    // The first of four points across the cell found inside is the hit: at most a
+                    // quarter of a cell past the surface, never short of it.
+                    bool crosses = false;
+                    float insideAt = tSegmentEnd;
+                    if (atCell && smooth && CellStraddles(cell))
+                    {
+                        float t1 = lerp(t, tSegmentEnd, 0.25);
+                        float t2 = lerp(t, tSegmentEnd, 0.50);
+                        float t3 = lerp(t, tSegmentEnd, 0.75);
+
+                        bool in1 = SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
+                        bool in2 = SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
+                        bool in3 = SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
+                        bool in4 = SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
+
+                        crosses = in1 || in2 || in3 || in4;
+                        insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                    }
+
+                    if (solidCube)
+                    {
+                        tHit = t;
+                        hit = true;
+                        running = false;
+                    }
+                    else if (crosses)
+                    {
+                        tHit = insideAt;
+                        hit = true;
+                        running = false;
+                    }
+                    else
+                    {
+                        t = tLeave;
+                        level = min(level + 1, levels);
+                        if (t >= tExit)
+                            running = false;
+                    }
+                }
+            }
+
+            hitDistance = tHit;
+            return hit;
+        }
+
         override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
         {
             hitDistance = 0;
