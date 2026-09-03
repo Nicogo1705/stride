@@ -17,8 +17,11 @@ namespace Stride.Rendering.Voxels.Grid
     ///
     /// A sphere tracer would take larger steps through empty space, but it needs a distance correct
     /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing across
-    /// one walks through walls. When empty space becomes the cost, the answer is a coarse occupancy
-    /// pyramid to skip whole bricks, not a change of algorithm.
+    /// one walks through walls. Empty space is crossed instead on a min/max pyramid of the field: the
+    /// walk starts on the coarsest brick, leaps over a brick whose maximum is under the iso level,
+    /// and descends a level into any other, down to the cell. What counts as a hit is decided at
+    /// the cell, exactly as without the pyramid; the pyramid only decides which cells are worth
+    /// reaching.
     ///
     /// TSurface is which surface the walk stops on, and it is a permutation rather than a parameter:
     /// 0 the cells themselves, a world of cubes; 1 the crossing on the trilinear field, where marching
@@ -52,6 +55,18 @@ namespace Stride.Rendering.Voxels.Grid
             /// corner touches on the order of 768, so this bounds the worst case, not the common one.
             [Link("VoxelGridField.MaxSteps")]
             stage int VoxelGridMaxSteps;
+
+            /// Levels in the occupancy pyramid: level N is bricks of 2^N cells, held in mip N - 1.
+            /// Zero when there is no pyramid, and every cell on the ray is visited.
+            [Link("VoxelGridField.OccupancyLevels")]
+            stage int VoxelGridOccupancyLevels;
+        }
+
+        rgroup PerMaterial
+        {
+            /// The pyramid: least density in red, greatest in green, see VoxelGridOccupancy.
+            [Link("VoxelGridField.Occupancy")]
+            stage Texture3D<float2> VoxelGridOccupancy;
         }
 
         /// Bisection steps that place the crossing once the interval holding it is known. Each
@@ -322,15 +337,21 @@ namespace Stride.Rendering.Voxels.Grid
                 tHit = tEnter;
             }
 
-            float3 entry = origin + safeDirection * tEnter;
-            int3 cell = clamp((int3)floor(entry / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
-            int3 stepDirection = (int3)sign(safeDirection);
-            float3 tDelta = abs(cellSize * inverseDirection);
-            // The boundary ahead is the far face when stepping forwards, the near face otherwise.
-            float3 boundary = ((float3)cell + max(sign(safeDirection), 0.0)) * cellSize;
-            float3 tMax = (boundary - origin) * inverseDirection;
-
+            // The walk holds a distance along the ray and a level of the pyramid, and every step
+            // looks at the brick of that level the ray is in just past that distance. An empty brick
+            // is left through its far face in one step, and the next look is a level coarser; any
+            // other brick is looked at again a level finer; at level zero the brick is a cell and
+            // the surface is settled there. With no pyramid at all the walk stays at the cell.
+            int levels = clamp(VoxelGridOccupancyLevels, 0, 16);
+            int level = levels;
             float t = tEnter;
+
+            // A hair past the distance, so the position lands inside the next brick rather than on
+            // the boundary just crossed. A thousandth of a cell is far below anything the surface
+            // solver resolves, and far above what float error on the boundary reaches.
+            float nudge = cellSize * 1e-3;
+
+            int3 cell = int3(0, 0, 0);
 
             // The facet a surface-nets hit landed on, kept because its own orientation is what makes
             // that surface look like surface nets; taking the field gradient at the point instead
@@ -344,95 +365,105 @@ namespace Stride.Rendering.Voxels.Grid
             int steps = clamp(VoxelGridMaxSteps, 0, 4096);
             for (int i = 0; i < steps && running; i++)
             {
-                float tLeave = min(min(tMax.x, tMax.y), tMax.z);
-                float tSegmentEnd = min(tLeave, tExit);
+                float3 probe = origin + safeDirection * (t + nudge);
+                cell = clamp((int3)floor(probe / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
 
-                bool solidCube = !smooth && CellIsSolid(cell);
+                // The brick at this level, and where the ray leaves it.
+                int size = 1 << level;
+                int3 brick = cell / size;
+                float3 brickMin = (float3)(brick * size) * cellSize;
+                float3 brickMax = brickMin + (float)size * cellSize;
+                float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
+                float tLeave = min(min(farSide.x, farSide.y), farSide.z);
+                int leaveAxis = farSide.x <= farSide.y && farSide.x <= farSide.z ? 0 : (farSide.y <= farSide.z ? 1 : 2);
 
-                // Only a cell whose corners straddle the iso level can hold surface, and almost none
-                // do: eight reads decide it, and the thirty-two below are spent on those cells alone.
-                // An explicit branch, because && is not guaranteed to short-circuit in a shader.
-                bool crosses = false;
-                float insideAt = tSegmentEnd;
-                float outsideAt = t;
-                if (smooth && CellStraddles(cell))
+                // One read decides a whole brick: nothing in it reaches the iso level, so no cell in
+                // it holds surface or solid.
+                bool empty = false;
+                if (level > 0)
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1)).g < VoxelGridIsoLevel;
+
+                if (level > 0 && !empty)
                 {
-                    // Four points across the segment this cell gives the ray: testing only where it
-                    // leaves misses a surface that enters and leaves within one cell, which is what
-                    // a shallow silhouette does, and the ray then lands one cell too far - a
-                    // staircase along every such edge. Flat rather than a loop, since the bisection
-                    // below is one already and the parser takes no third level of nesting.
-                    float t1 = lerp(t, tSegmentEnd, 0.25);
-                    float t2 = lerp(t, tSegmentEnd, 0.50);
-                    float t3 = lerp(t, tSegmentEnd, 0.75);
-
-                    bool in1 = SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
-                    bool in2 = SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
-                    bool in3 = SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
-                    bool in4 = SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
-
-                    crosses = in1 || in2 || in3 || in4;
-
-                    // The first point known to be inside, and the last one known to be outside: the
-                    // crossing is between them.
-                    insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
-                    outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
-                }
-
-                if (solidCube)
-                {
-                    // Cubes: the hit is the face the ray crossed to get here, which is where it
-                    // already stands.
-                    tHit = t;
-                    hit = true;
-                    running = false;
-                }
-                else if (crosses)
-                {
-                    // Bisect between where the ray was still outside and the first point known to be
-                    // inside. Only a sign is ever needed, never a distance - which is what lets this
-                    // work on a field that is not a distance field.
-                    float low = outsideAt;
-                    float high = insideAt;
-                    for (int step = 0; step < RefineSteps; step++)
-                    {
-                        float mid = (low + high) * 0.5;
-                        if (SampleField(origin + safeDirection * mid) >= VoxelGridIsoLevel)
-                            high = mid;
-                        else
-                            low = mid;
-                    }
-                    tHit = high;
-                    hit = true;
-                    running = false;
-                    netsCell = cell;
+                    level--;
                 }
                 else
                 {
-                    if (tMax.x < tMax.y && tMax.x < tMax.z)
+                    bool atCell = level == 0;
+                    float tSegmentEnd = min(tLeave, tExit);
+
+                    bool solidCube = atCell && !smooth && CellIsSolid(cell);
+
+                    // Only a cell whose corners straddle the iso level can hold surface, and almost
+                    // none do: eight reads decide it, and the thirty-two below are spent on those
+                    // cells alone. An explicit branch, because && is not guaranteed to short-circuit
+                    // in a shader.
+                    bool crosses = false;
+                    float insideAt = tSegmentEnd;
+                    float outsideAt = t;
+                    if (atCell && smooth && CellStraddles(cell))
                     {
-                        cell.x += stepDirection.x;
-                        t = tMax.x;
-                        tMax.x += tDelta.x;
-                        axis = 0;
+                        // Four points across the segment this cell gives the ray: testing only where
+                        // it leaves misses a surface that enters and leaves within one cell, which is
+                        // what a shallow silhouette does, and the ray then lands one cell too far - a
+                        // staircase along every such edge. Flat rather than a loop, since the
+                        // bisection below is one already and the parser takes no third level.
+                        float t1 = lerp(t, tSegmentEnd, 0.25);
+                        float t2 = lerp(t, tSegmentEnd, 0.50);
+                        float t3 = lerp(t, tSegmentEnd, 0.75);
+
+                        bool in1 = SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
+                        bool in2 = SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
+                        bool in3 = SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
+                        bool in4 = SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
+
+                        crosses = in1 || in2 || in3 || in4;
+
+                        // The first point known to be inside, and the last one known to be outside:
+                        // the crossing is between them.
+                        insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                        outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
                     }
-                    else if (tMax.y < tMax.z)
+
+                    if (solidCube)
                     {
-                        cell.y += stepDirection.y;
-                        t = tMax.y;
-                        tMax.y += tDelta.y;
-                        axis = 1;
+                        // Cubes: the hit is the face the ray crossed to get here, which is where it
+                        // already stands.
+                        tHit = t;
+                        hit = true;
+                        running = false;
+                    }
+                    else if (crosses)
+                    {
+                        // Bisect between where the ray was still outside and the first point known
+                        // to be inside. Only a sign is ever needed, never a distance - which is what
+                        // lets this work on a field that is not a distance field.
+                        float low = outsideAt;
+                        float high = insideAt;
+                        for (int step = 0; step < RefineSteps; step++)
+                        {
+                            float mid = (low + high) * 0.5;
+                            if (SampleField(origin + safeDirection * mid) >= VoxelGridIsoLevel)
+                                high = mid;
+                            else
+                                low = mid;
+                        }
+                        tHit = high;
+                        hit = true;
+                        running = false;
+                        netsCell = cell;
                     }
                     else
                     {
-                        cell.z += stepDirection.z;
-                        t = tMax.z;
-                        tMax.z += tDelta.z;
-                        axis = 2;
+                        // Out through the far face, and the next look is a level coarser: past an
+                        // empty brick the ray is likely in more of the same, and past a cell that held
+                        // nothing the brick around it may yet be skipped as a whole.
+                        t = tLeave;
+                        axis = leaveAxis;
+                        level = min(level + 1, levels);
+                        if (t >= tExit)
+                            running = false;
                     }
-
-                    if (any(cell < int3(0, 0, 0)) || any(cell >= cells) || t > tExit)
-                        running = false;
                 }
             }
 
@@ -446,10 +477,11 @@ namespace Stride.Rendering.Voxels.Grid
                     ? SampleAlbedo(position)
                     : Albedo(clamp((int3)floor(position / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0))));
 
+                // The face just crossed, facing back along the ray.
                 float3 faceNormal = float3(
-                    axis == 0 ? -stepDirection.x : 0,
-                    axis == 1 ? -stepDirection.y : 0,
-                    axis == 2 ? -stepDirection.z : 0);
+                    axis == 0 ? -sign(safeDirection.x) : 0,
+                    axis == 1 ? -sign(safeDirection.y) : 0,
+                    axis == 2 ? -sign(safeDirection.z) : 0);
 
                 if (nets)
                 {

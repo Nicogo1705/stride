@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using Stride.Core;
+using Stride.Rendering;
 using Stride.Shaders;
 
 namespace Stride.Rendering.Voxels.Grid
@@ -70,8 +71,8 @@ namespace Stride.Rendering.Voxels.Grid
     /// </para>
     /// <para>
     /// Not sphere tracing, deliberately: that wants a distance correct everywhere, and a marching
-    /// cubes density field only guarantees the sign. When empty space becomes the cost, the answer
-    /// is a coarse occupancy pyramid to skip whole bricks, not a change of algorithm.
+    /// cubes density field only guarantees the sign. Empty space is skipped instead by the min/max
+    /// pyramid in <see cref="Occupancy"/>, brick by brick, without changing what a hit is.
     /// </para>
     /// </remarks>
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
@@ -116,6 +117,17 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         public int MaxSteps { get; set; } = 512;
 
+        /// <summary>
+        /// The min/max pyramid over the field, which lets a ray leap over bricks that hold no
+        /// surface. Optional: without it every cell on the ray is visited.
+        /// </summary>
+        /// <remarks>
+        /// Owned by whoever owns the samples, since it is rebuilt from them - the region an edit
+        /// touched, in the same call that writes the edit.
+        /// </remarks>
+        [DataMemberIgnore]
+        public VoxelGridOccupancy Occupancy { get; set; }
+
         public ShaderSource GetShaderSource()
         {
             // Mixed beside its source rather than composing it, so both share one scope and the
@@ -135,6 +147,8 @@ namespace Stride.Rendering.Voxels.Grid
             parameters.Set(VoxelGridFieldKeys.IsoLevel, IsoLevel);
             parameters.Set(VoxelGridFieldKeys.SealBorder, SealBorder ? 1f : 0f);
             parameters.Set(VoxelGridFieldKeys.MaxSteps, MaxSteps);
+            parameters.Set(VoxelGridFieldKeys.Occupancy, Occupancy?.Texture);
+            parameters.Set(VoxelGridFieldKeys.OccupancyLevels, Occupancy?.Levels ?? 0);
             Source.ApplyParameters(parameters);
         }
     }

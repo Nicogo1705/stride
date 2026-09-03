@@ -38,6 +38,12 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The field as a structured buffer of packed samples.</summary>
         public static readonly ObjectParameterKey<Buffer> Data = ParameterKeys.NewObject<Buffer>();
 
+        /// <summary>The min/max pyramid over the field, see <see cref="VoxelGridOccupancy"/>.</summary>
+        public static readonly ObjectParameterKey<Texture> Occupancy = ParameterKeys.NewObject<Texture>();
+
+        /// <summary>Levels in the pyramid; 0 when there is none and every cell is walked.</summary>
+        public static readonly ValueParameterKey<int> OccupancyLevels = ParameterKeys.NewValue<int>();
+
         /// <summary>Edge length of one cell, in grid local units.</summary>
         public static readonly ValueParameterKey<float> CellSize = ParameterKeys.NewValue<float>();
 
