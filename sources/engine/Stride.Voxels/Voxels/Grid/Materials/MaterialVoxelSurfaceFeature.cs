@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Rendering.Materials;
 using Stride.Shaders;
 
@@ -27,9 +28,9 @@ namespace Stride.Rendering.Voxels.Grid
     /// wrong" long before anyone can say which of the ten things is missing.
     /// </para>
     /// <para>
-    /// Order matters, as it does for any material feature: added first, the field's own palette is
-    /// the base colour and a diffuse feature after it overrides that, which is how a user replaces
-    /// the palette with a map of their own.
+    /// The field's colour is left in <c>matColorBase</c> for the diffuse slot to read through
+    /// <c>ComputeColorVoxelAlbedo</c>; a material that puts a texture in that slot instead simply
+    /// does not consult the palette.
     /// </para>
     /// </remarks>
     [DataContract("MaterialVoxelSurfaceFeature")]
@@ -44,16 +45,15 @@ namespace Stride.Rendering.Voxels.Grid
         /// How far along a ray the surface is still looked for, in grid local units. Zero lets the
         /// traversal run to the far side of the grid.
         /// </summary>
+        /// <userdoc>How far a ray looks for the surface, in the grid's own units. Leave at zero to reach the far side of the grid.</userdoc>
         [DataMember(10)]
+        [DataMemberRange(0.0, 3)]
         [Display("Max Distance")]
         public float MaxDistance { get; set; }
 
-        /// <summary>See <see cref="VoxelGridFieldKeys.Debug"/>. Taken from STRIDE_VOXEL_DEBUG when set.</summary>
+        /// <summary>See <see cref="VoxelGridFieldKeys.Debug"/>.</summary>
         [DataMemberIgnore]
-        public float Debug { get; set; } = DebugFromEnvironment();
-
-        private static float DebugFromEnvironment()
-            => float.TryParse(System.Environment.GetEnvironmentVariable("STRIDE_VOXEL_DEBUG"), out var mode) ? mode : 0f;
+        public float Debug { get; set; }
 
         public override void GenerateShader(MaterialGeneratorContext context)
         {

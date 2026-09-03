@@ -8,6 +8,7 @@ using Stride.Games;
 using Stride.Graphics;
 using Stride.Rendering.Materials;
 using Stride.Rendering.Materials.ComputeColors;
+using Stride.Shaders;
 using GraphicsBuffer = Stride.Graphics.Buffer;
 
 namespace Stride.Rendering.Voxels.Grid
@@ -17,7 +18,9 @@ namespace Stride.Rendering.Voxels.Grid
     /// </summary>
     public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>
     {
-        public class State
+        /// <summary>What the processor keeps per component: the model standing in for the grid, and
+        /// what it was built from, so it is rebuilt only when that changes.</summary>
+        public sealed class State
         {
             public ModelComponent Model;
             public Material Material;
@@ -26,8 +29,28 @@ namespace Stride.Rendering.Voxels.Grid
             public float CellSize;
             public int ExtentRevision = -1;
 
-            /// <summary>What the traversal's shader looked like when the material was built.</summary>
-            public string ShaderSignature;
+            /// <summary>The traversal's shader as it was when the material was built.</summary>
+            public ShaderSource Shader;
+
+            /// <summary>The box's buffers, released when it is rebuilt or the component goes.</summary>
+            public GraphicsBuffer VertexBuffer;
+            public GraphicsBuffer IndexBuffer;
+
+            public void ReleaseBuffers()
+            {
+                VertexBuffer?.Dispose();
+                IndexBuffer?.Dispose();
+                VertexBuffer = null;
+                IndexBuffer = null;
+            }
+        }
+
+        private IGraphicsDeviceService graphicsDeviceService;
+
+        protected override void OnSystemAdd()
+        {
+            base.OnSystemAdd();
+            graphicsDeviceService = Services.GetService<IGraphicsDeviceService>();
         }
 
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component) => new();
@@ -37,11 +60,12 @@ namespace Stride.Rendering.Voxels.Grid
             if (state.Model?.Entity is { } carrier && carrier != entity)
                 entity.RemoveChild(carrier);
             state.Model = null;
+            state.ReleaseBuffers();
         }
 
         public override void Update(GameTime time)
         {
-            var device = Services.GetService<IGraphicsDeviceService>()?.GraphicsDevice;
+            var device = graphicsDeviceService?.GraphicsDevice;
             if (device == null)
                 return;
 
@@ -62,7 +86,11 @@ namespace Stride.Rendering.Voxels.Grid
                 state.Model.IsShadowCaster = component.CastShadows;
 
                 // The pass parameters are what the mesh render feature copies from, every frame.
-                state.Surface?.ApplyParameters(state.Material.Passes[0].Parameters);
+                if (state.Surface != null)
+                {
+                    state.Surface.Debug = component.DebugView;
+                    state.Surface.ApplyParameters(state.Material.Passes[0].Parameters);
+                }
             }
         }
 
@@ -73,12 +101,12 @@ namespace Stride.Rendering.Voxels.Grid
 
             // The traversal's shader is a permutation: change the surface form and it is a different
             // shader, so the default material is built again. A material the user supplied is theirs
-            // to regenerate.
-            var signature = component.Traversal.GetShaderSource()?.ToString();
+            // to regenerate. Shader sources compare structurally, so no string is built for it.
+            var shader = component.Traversal.GetShaderSource();
             var wanted = component.Material;
             var rebuild = state.Material == null
                           || (wanted != null && state.Material != wanted)
-                          || (wanted == null && state.ShaderSignature != signature);
+                          || (wanted == null && !Equals(state.Shader, shader));
             if (rebuild)
             {
                 if (wanted != null)
@@ -94,7 +122,7 @@ namespace Stride.Rendering.Voxels.Grid
                     state.Surface = built;
                 }
 
-                state.ShaderSignature = signature;
+                state.Shader = shader;
                 state.Model = null;
 
                 // The far faces are kept, so the volume is drawn from inside as well as from outside
@@ -118,8 +146,9 @@ namespace Stride.Rendering.Voxels.Grid
 
             var extent = new Vector3(samples.X - 1, samples.Y - 1, samples.Z - 1) * cellSize;
 
+            state.ReleaseBuffers();
             var model = new Model { state.Material };
-            model.Add(BuildBoxMesh(device, extent, out var bounds, out var sphere));
+            model.Add(BuildBoxMesh(device, extent, state, out var bounds, out var sphere));
             model.BoundingBox = bounds;
             model.BoundingSphere = sphere;
 
@@ -148,7 +177,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// Built the way a procedural model is built - tangents generated, bounding sphere computed -
         /// so the mesh path treats it like any other mesh.
         /// </remarks>
-        private static Mesh BuildBoxMesh(GraphicsDevice device, Vector3 extent, out BoundingBox bounds, out BoundingSphere sphere)
+        private static Mesh BuildBoxMesh(GraphicsDevice device, Vector3 extent, State state, out BoundingBox bounds, out BoundingSphere sphere)
         {
             var vertices = new VertexPositionNormalTexture[8];
             for (int corner = 0; corner < 8; ++corner)
@@ -167,8 +196,9 @@ namespace Stride.Rendering.Voxels.Grid
                     new Vector2((corner & 1) != 0 ? 1 : 0, (corner & 2) != 0 ? 1 : 0));
             }
 
-            // Corner order matches the bit pattern above: bit 0 is +X, bit 1 +Y, bit 2 +Z.
-            int[] faces =
+            // Corner order matches the bit pattern above: bit 0 is +X, bit 1 +Y, bit 2 +Z. One
+            // winding; the material pass keeps the far faces.
+            int[] indices =
             [
                 0, 1, 2, 1, 3, 2, // -Z
                 4, 6, 5, 5, 6, 7, // +Z
@@ -177,8 +207,6 @@ namespace Stride.Rendering.Voxels.Grid
                 0, 2, 4, 2, 6, 4, // -X
                 1, 5, 3, 3, 5, 7, // +X
             ];
-
-            var indices = faces;
 
             bounds = new BoundingBox(Vector3.Zero, extent);
             unsafe
@@ -194,8 +222,8 @@ namespace Stride.Rendering.Voxels.Grid
             for (int i = 0; i < indicesShort.Length; ++i)
                 indicesShort[i] = (ushort)indices[i];
 
-            var vertexBuffer = GraphicsBuffer.New(device, complete.VertexBuffer, BufferFlags.VertexBuffer, GraphicsResourceUsage.Default);
-            var indexBuffer = GraphicsBuffer.Index.New(device, indicesShort);
+            var vertexBuffer = state.VertexBuffer = GraphicsBuffer.New(device, complete.VertexBuffer, BufferFlags.VertexBuffer, GraphicsResourceUsage.Default);
+            var indexBuffer = state.IndexBuffer = GraphicsBuffer.Index.New(device, indicesShort);
 
             return new Mesh
             {

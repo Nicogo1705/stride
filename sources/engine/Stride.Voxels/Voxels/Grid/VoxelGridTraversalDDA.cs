@@ -17,7 +17,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// </remarks>
     public interface IVoxelGridTraversal
     {
-        /// <summary>Where the samples come from. Composed into the traversal shader.</summary>
+        /// <summary>Where the samples come from. Its shader is mixed in beside the traversal's.</summary>
         IVoxelGridSource Source { get; set; }
 
         /// <summary>Edge length of one cell, in the grid's own space.</summary>

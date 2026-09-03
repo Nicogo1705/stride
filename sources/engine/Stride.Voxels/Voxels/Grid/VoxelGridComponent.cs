@@ -27,8 +27,9 @@ namespace Stride.Rendering.Voxels.Grid
     /// </para>
     /// <para>
     /// Give it a <see cref="Traversal"/> with a source, and set <see cref="Material"/> if the field's
-    /// own palette is not the wanted look - the surface feature runs first, so an ordinary diffuse
-    /// feature on that material overrides the palette the way it would override any base colour.
+    /// own palette is not the wanted look: a material of your own needs a
+    /// <see cref="MaterialVoxelSurfaceFeature"/> in its surface slot, and whatever its diffuse slot
+    /// holds is what colours the surface.
     /// </para>
     /// </remarks>
     [DataContract("VoxelGridComponent")]
@@ -44,6 +45,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// backed by a 3D texture is an asset like any other. A source backed by a buffer the game
         /// fills is not, and stays something code hands over at load.
         /// </remarks>
+        /// <userdoc>How rays find the surface, and where the samples come from.</userdoc>
         [DataMember(10)]
         public IVoxelGridTraversal Traversal { get; set; } = new VoxelGridTraversalDDA();
 
@@ -51,20 +53,29 @@ namespace Stride.Rendering.Voxels.Grid
         /// The material to draw with. Left null, one is built carrying nothing but the field's own
         /// colours, which is enough to see the grid but is not a material a game would ship.
         /// </summary>
+        /// <userdoc>The material to draw with. Leave empty for one that shows the field's own colours.</userdoc>
         [DataMember(15)]
         public Material Material { get; set; }
 
         /// <summary>
         /// Whether the grid casts and receives shadows, as a model does.
         /// </summary>
+        /// <userdoc>Whether the grid casts shadows, as a model does.</userdoc>
         [DataMember(20)]
         public bool CastShadows { get; set; } = true;
+
+        /// <summary>
+        /// Diagnostic view of the drawn surface, see <see cref="VoxelGridFieldKeys.Debug"/>. Zero
+        /// draws normally. Not saved with the scene.
+        /// </summary>
+        [DataMemberIgnore]
+        public float DebugView { get; set; }
 
         /// <summary>
         /// Tells the component the field's extent changed, so the box standing in for it is rebuilt.
         /// </summary>
         /// <remarks>
-        /// Not needed when samples change. The material reads the buffer as it draws, so digging a
+        /// Not needed when samples change. The material reads the field as it draws, so digging a
         /// hole shows up in the next frame with nothing rebuilt and no material recompiled - only a
         /// grid that grew or shrank moves the box.
         /// </remarks>

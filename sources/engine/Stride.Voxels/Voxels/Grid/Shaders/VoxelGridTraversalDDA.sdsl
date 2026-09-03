@@ -19,6 +19,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing across
     /// one walks through walls. When empty space becomes the cost, the answer is a coarse occupancy
     /// pyramid to skip whole bricks, not a change of algorithm.
+    ///
     /// TSurface is which surface the walk stops on, and it is a permutation rather than a parameter:
     /// 0 the cells themselves, a world of cubes; 1 the crossing on the trilinear field, where marching
     /// cubes puts its vertices; 2 the quads surface nets stitches between cell vertices. All three
@@ -348,26 +349,35 @@ namespace Stride.Rendering.Voxels.Grid
 
                 bool solidCube = !smooth && CellIsSolid(cell);
 
-                // Four points across the segment this cell gives the ray: testing only where it
-                // leaves misses a surface that enters and leaves within one cell, which is what a
-                // shallow silhouette does, and the ray then lands one cell too far - a staircase
-                // along every such edge. Flat rather than a loop, since the bisection below is one
-                // already and the parser takes no third level of nesting.
-                float t1 = lerp(t, tSegmentEnd, 0.25);
-                float t2 = lerp(t, tSegmentEnd, 0.50);
-                float t3 = lerp(t, tSegmentEnd, 0.75);
+                // Only a cell whose corners straddle the iso level can hold surface, and almost none
+                // do: eight reads decide it, and the thirty-two below are spent on those cells alone.
+                // An explicit branch, because && is not guaranteed to short-circuit in a shader.
+                bool crosses = false;
+                float insideAt = tSegmentEnd;
+                float outsideAt = t;
+                if (smooth && CellStraddles(cell))
+                {
+                    // Four points across the segment this cell gives the ray: testing only where it
+                    // leaves misses a surface that enters and leaves within one cell, which is what
+                    // a shallow silhouette does, and the ray then lands one cell too far - a
+                    // staircase along every such edge. Flat rather than a loop, since the bisection
+                    // below is one already and the parser takes no third level of nesting.
+                    float t1 = lerp(t, tSegmentEnd, 0.25);
+                    float t2 = lerp(t, tSegmentEnd, 0.50);
+                    float t3 = lerp(t, tSegmentEnd, 0.75);
 
-                bool in1 = smooth && SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
-                bool in2 = smooth && SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
-                bool in3 = smooth && SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
-                bool in4 = smooth && SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
+                    bool in1 = SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
+                    bool in2 = SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
+                    bool in3 = SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
+                    bool in4 = SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
 
-                bool crosses = smooth && CellStraddles(cell) && (in1 || in2 || in3 || in4);
+                    crosses = in1 || in2 || in3 || in4;
 
-                // The first point known to be inside, and the last one known to be outside: the
-                // crossing is between them.
-                float insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
-                float outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
+                    // The first point known to be inside, and the last one known to be outside: the
+                    // crossing is between them.
+                    insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                    outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
+                }
 
                 if (solidCube)
                 {
