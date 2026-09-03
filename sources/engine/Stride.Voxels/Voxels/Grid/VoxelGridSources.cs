@@ -31,24 +31,21 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         public Int3 SampleCount { get; set; }
 
-        private ObjectParameterKey<Texture> textureKey;
-        private ValueParameterKey<Int3> sampleCountKey;
 
         public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourceTexture3D");
 
         public void UpdateLayout(string compositionName)
         {
-            textureKey = VoxelGridSourceTexture3DKeys.VoxelGridTexture.ComposeWith(compositionName);
-            sampleCountKey = VoxelGridSourceTexture3DKeys.VoxelGridSampleCount.ComposeWith(compositionName);
+            // Nothing to lay out: the shader links its members to VoxelGridFieldKeys by name.
         }
 
         public void ApplyParameters(ParameterCollection parameters)
         {
-            parameters.Set(textureKey, Texture);
+            parameters.Set(VoxelGridFieldKeys.Texture, Texture);
             var count = SampleCount;
             if (count.X <= 0 && Texture != null)
                 count = new Int3(Texture.Width, Texture.Height, Texture.Depth);
-            parameters.Set(sampleCountKey, count);
+            parameters.Set(VoxelGridFieldKeys.SampleCount, count);
         }
     }
 
@@ -73,21 +70,18 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Samples per axis, one more than the cells per axis.</summary>
         public Int3 SampleCount { get; set; }
 
-        private ObjectParameterKey<GraphicsBuffer> dataKey;
-        private ValueParameterKey<Int3> sampleCountKey;
 
         public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourcePackedBuffer");
 
         public void UpdateLayout(string compositionName)
         {
-            dataKey = VoxelGridSourcePackedBufferKeys.VoxelGridData.ComposeWith(compositionName);
-            sampleCountKey = VoxelGridSourcePackedBufferKeys.VoxelGridSampleCount.ComposeWith(compositionName);
+            // Nothing to lay out: the shader links its members to VoxelGridFieldKeys by name.
         }
 
         public void ApplyParameters(ParameterCollection parameters)
         {
-            parameters.Set(dataKey, Data);
-            parameters.Set(sampleCountKey, SampleCount);
+            parameters.Set(VoxelGridFieldKeys.Data, Data);
+            parameters.Set(VoxelGridFieldKeys.SampleCount, SampleCount);
         }
     }
 }

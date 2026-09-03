@@ -20,6 +20,13 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Where the samples come from. Composed into the traversal shader.</summary>
         IVoxelGridSource Source { get; set; }
 
+        /// <summary>Edge length of one cell, in the grid's own space.</summary>
+        /// <remarks>
+        /// On the interface because it is the field's extent rather than a detail of how a ray finds
+        /// the surface: whatever draws or bounds the grid needs it, and every traversal has one.
+        /// </remarks>
+        float CellSize { get; }
+
         /// <summary>The shader implementing <c>IVoxelGridTraversal</c>, source already composed in.</summary>
         ShaderSource GetShaderSource();
 
@@ -118,37 +125,36 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         public int MaxSteps { get; set; } = 512;
 
-        private ValueParameterKey<float> cellSizeKey;
-        private ValueParameterKey<float> isoLevelKey;
-        private ValueParameterKey<float> surfaceKey;
-        private ValueParameterKey<float> sealKey;
-        private ValueParameterKey<int> maxStepsKey;
 
         public ShaderSource GetShaderSource()
         {
+            // A mixin of this traversal and its source, not a composition of one into the other.
+            //
+            // Both end up in one scope, which is the whole point: the source's texture is declared
+            // once and read once, so it binds the ordinary way. Composed, each side would get its own
+            // copy of every declaration - right for a tree of compute-colour nodes, wrong for a field
+            // that one resource holds and several places read.
             var mixin = new ShaderMixinSource();
             mixin.Mixins.Add(new ShaderClassSource("VoxelGridTraversalDDA"));
-            mixin.AddComposition("Source", Source.GetShaderSource());
+            if (Source.GetShaderSource() is ShaderClassSource sourceClass)
+                mixin.Mixins.Add(sourceClass);
             return mixin;
         }
 
         public void UpdateLayout(string compositionName)
         {
-            cellSizeKey = VoxelGridTraversalDDAKeys.VoxelGridCellSize.ComposeWith(compositionName);
-            isoLevelKey = VoxelGridTraversalDDAKeys.VoxelGridIsoLevel.ComposeWith(compositionName);
-            surfaceKey = VoxelGridTraversalDDAKeys.VoxelGridSurfaceMode.ComposeWith(compositionName);
-            sealKey = VoxelGridTraversalDDAKeys.VoxelGridSealBorder.ComposeWith(compositionName);
-            maxStepsKey = VoxelGridTraversalDDAKeys.VoxelGridMaxSteps.ComposeWith(compositionName);
-            Source.UpdateLayout("Source." + compositionName);
+            // Nothing to lay out here: the shaders link their members to VoxelGridFieldKeys by
+            // name, so the same keys serve whether this traversal is composed or mixed.
+            Source.UpdateLayout(compositionName);
         }
 
         public void ApplyParameters(ParameterCollection parameters)
         {
-            parameters.Set(cellSizeKey, CellSize);
-            parameters.Set(isoLevelKey, IsoLevel);
-            parameters.Set(surfaceKey, (float)Surface);
-            parameters.Set(sealKey, SealBorder ? 1f : 0f);
-            parameters.Set(maxStepsKey, MaxSteps);
+            parameters.Set(VoxelGridFieldKeys.CellSize, CellSize);
+            parameters.Set(VoxelGridFieldKeys.IsoLevel, IsoLevel);
+            parameters.Set(VoxelGridFieldKeys.SurfaceMode, (float)Surface);
+            parameters.Set(VoxelGridFieldKeys.SealBorder, SealBorder ? 1f : 0f);
+            parameters.Set(VoxelGridFieldKeys.MaxSteps, MaxSteps);
             Source.ApplyParameters(parameters);
         }
     }

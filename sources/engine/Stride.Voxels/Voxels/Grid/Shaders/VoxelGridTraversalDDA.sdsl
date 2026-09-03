@@ -19,19 +19,34 @@ namespace Stride.Rendering.Voxels.Grid
     /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing across
     /// one walks through walls. When empty space becomes the cost, the answer is a coarse occupancy
     /// pyramid to skip whole bricks, not a change of algorithm.
-    shader VoxelGridTraversalDDA : IVoxelGridTraversal
+    shader VoxelGridTraversalDDA : IVoxelGridTraversal, IVoxelGridSource
     {
-        compose IVoxelGridSource Source;
+        // The source is inherited, not composed: whichever packing is chosen is mixed in alongside
+        // this shader and overrides SampleCount, Density and Albedo.
+        //
+        // Composition is the wrong tool here, and the reason is what it does to resources. Each
+        // composition is its own scope with its own copy of every declaration, which is right for a
+        // tree of compute-colour nodes that each want their own parameters, and wrong for a field
+        // that one texture holds and several places read: the material declares the texture in its
+        // scope, the composed source reads a different variable of the same name in another, and the
+        // texture binds to nothing at all. Stride mixes rather than composes wherever parts share
+        // state - the shading model, the diffuse model, normal mapping are all mixins - and this
+        // shares state.
 
         /// Edge length of one cell, in grid local space.
-        float VoxelGridCellSize;
+        cbuffer PerMaterial
+        {
+            [Link("VoxelGridField.CellSize")]
+            stage float VoxelGridCellSize;
 
         /// Density at or above which a sample counts as solid.
-        float VoxelGridIsoLevel;
+            [Link("VoxelGridField.IsoLevel")]
+            stage float VoxelGridIsoLevel;
 
         /// 1 reads the samples on the outer faces of the grid as air, closing the volume with real
         /// surface. 0 leaves them alone, for a grid that continues into a neighbour.
-        float VoxelGridSealBorder;
+            [Link("VoxelGridField.SealBorder")]
+            stage float VoxelGridSealBorder;
 
         /// Which surface the walk stops on. 0: the cells themselves, a world of cubes. 1: the
         /// crossing on the trilinear field, which is where marching cubes puts its vertices. 2: the
@@ -40,11 +55,14 @@ namespace Stride.Rendering.Voxels.Grid
         /// All three walk the same cells; only what counts as a hit differs. Offering all three is
         /// what lets a collider be asked for the same surface, so the body that is drawn and the
         /// body that is solid are one body rather than two that follow each other.
-        float VoxelGridSurfaceMode;
+            [Link("VoxelGridField.SurfaceMode")]
+            stage float VoxelGridSurfaceMode;
 
         /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
         /// touches on the order of 768, so this bounds the worst case rather than the common one.
-        int VoxelGridMaxSteps;
+            [Link("VoxelGridField.MaxSteps")]
+            stage int VoxelGridMaxSteps;
+        }
 
         /// Bisection steps that place the crossing once the interval holding it is known. Each
         /// halves the error, so six put the surface within a sixty-fourth of a cell - well below
@@ -58,13 +76,13 @@ namespace Stride.Rendering.Voxels.Grid
         /// still appear, because a ray entering the volume already inside matter stops on the box
         /// itself, but that is a flat face with the box's normal and a decision taken per ray, which
         /// is why the join against the real surface comes out in steps a cell wide.
-        float Density(int3 coord)
+        float SealedDensity(int3 coord)
         {
-            int3 samples = Source.SampleCount();
+            int3 samples = SampleCount();
             if (VoxelGridSealBorder > 0.5 && (any(coord <= 0) || any(coord >= samples - int3(1, 1, 1))))
                 return 0.0;
 
-            return Source.Density(coord);
+            return Density(coord);
         }
 
         /// The field between samples, trilinear - the same reconstruction marching cubes and surface
@@ -75,14 +93,14 @@ namespace Stride.Rendering.Voxels.Grid
             int3 cell = (int3)floor(grid);
             float3 f = grid - (float3)cell;
 
-            float d000 = Density(cell + int3(0, 0, 0));
-            float d100 = Density(cell + int3(1, 0, 0));
-            float d010 = Density(cell + int3(0, 1, 0));
-            float d110 = Density(cell + int3(1, 1, 0));
-            float d001 = Density(cell + int3(0, 0, 1));
-            float d101 = Density(cell + int3(1, 0, 1));
-            float d011 = Density(cell + int3(0, 1, 1));
-            float d111 = Density(cell + int3(1, 1, 1));
+            float d000 = SealedDensity(cell + int3(0, 0, 0));
+            float d100 = SealedDensity(cell + int3(1, 0, 0));
+            float d010 = SealedDensity(cell + int3(0, 1, 0));
+            float d110 = SealedDensity(cell + int3(1, 1, 0));
+            float d001 = SealedDensity(cell + int3(0, 0, 1));
+            float d101 = SealedDensity(cell + int3(1, 0, 1));
+            float d011 = SealedDensity(cell + int3(0, 1, 1));
+            float d111 = SealedDensity(cell + int3(1, 1, 1));
 
             float dx00 = lerp(d000, d100, f.x);
             float dx10 = lerp(d010, d110, f.x);
@@ -102,14 +120,14 @@ namespace Stride.Rendering.Voxels.Grid
             int3 cell = (int3)floor(grid);
             float3 f = grid - (float3)cell;
 
-            float3 a000 = Source.Albedo(cell + int3(0, 0, 0));
-            float3 a100 = Source.Albedo(cell + int3(1, 0, 0));
-            float3 a010 = Source.Albedo(cell + int3(0, 1, 0));
-            float3 a110 = Source.Albedo(cell + int3(1, 1, 0));
-            float3 a001 = Source.Albedo(cell + int3(0, 0, 1));
-            float3 a101 = Source.Albedo(cell + int3(1, 0, 1));
-            float3 a011 = Source.Albedo(cell + int3(0, 1, 1));
-            float3 a111 = Source.Albedo(cell + int3(1, 1, 1));
+            float3 a000 = Albedo(cell + int3(0, 0, 0));
+            float3 a100 = Albedo(cell + int3(1, 0, 0));
+            float3 a010 = Albedo(cell + int3(0, 1, 0));
+            float3 a110 = Albedo(cell + int3(1, 1, 0));
+            float3 a001 = Albedo(cell + int3(0, 0, 1));
+            float3 a101 = Albedo(cell + int3(1, 0, 1));
+            float3 a011 = Albedo(cell + int3(0, 1, 1));
+            float3 a111 = Albedo(cell + int3(1, 1, 1));
 
             float3 ax00 = lerp(a000, a100, f.x);
             float3 ax10 = lerp(a010, a110, f.x);
@@ -136,10 +154,10 @@ namespace Stride.Rendering.Voxels.Grid
         bool CellIsSolid(int3 cell)
         {
             float sum =
-                Density(cell + int3(0, 0, 0)) + Density(cell + int3(1, 0, 0)) +
-                Density(cell + int3(1, 0, 1)) + Density(cell + int3(0, 0, 1)) +
-                Density(cell + int3(0, 1, 0)) + Density(cell + int3(1, 1, 0)) +
-                Density(cell + int3(1, 1, 1)) + Density(cell + int3(0, 1, 1));
+                SealedDensity(cell + int3(0, 0, 0)) + SealedDensity(cell + int3(1, 0, 0)) +
+                SealedDensity(cell + int3(1, 0, 1)) + SealedDensity(cell + int3(0, 0, 1)) +
+                SealedDensity(cell + int3(0, 1, 0)) + SealedDensity(cell + int3(1, 1, 0)) +
+                SealedDensity(cell + int3(1, 1, 1)) + SealedDensity(cell + int3(0, 1, 1));
             return sum * 0.125 >= VoxelGridIsoLevel;
         }
 
@@ -149,21 +167,21 @@ namespace Stride.Rendering.Voxels.Grid
         {
             float iso = VoxelGridIsoLevel;
             int inside = 0;
-            inside += Density(cell + int3(0, 0, 0)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(1, 0, 0)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(0, 1, 0)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(1, 1, 0)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(0, 0, 1)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(1, 0, 1)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(0, 1, 1)) >= iso ? 1 : 0;
-            inside += Density(cell + int3(1, 1, 1)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(0, 0, 0)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(1, 0, 0)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(0, 1, 0)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(1, 1, 0)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(0, 0, 1)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(1, 0, 1)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(0, 1, 1)) >= iso ? 1 : 0;
+            inside += SealedDensity(cell + int3(1, 1, 1)) >= iso ? 1 : 0;
             return inside > 0 && inside < 8;
         }
 
         override float3 Probe(float3 localPosition)
         {
-            int3 cell = clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), Source.SampleCount() - int3(2, 2, 2));
-            return float3(Source.SampleCount().x / 128.0, Source.Density(cell), VoxelGridIsoLevel);
+            int3 cell = clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), SampleCount() - int3(2, 2, 2));
+            return float3(SampleCount().x / 128.0, SealedDensity(cell), VoxelGridIsoLevel);
         }
 
         /// One edge's contribution to the mean of the crossings: the crossing in xyz, and 1 in w
@@ -175,8 +193,8 @@ namespace Stride.Rendering.Voxels.Grid
         float4 EdgeCrossing(int3 a, int3 b)
         {
             float iso = VoxelGridIsoLevel;
-            float da = Density(a);
-            float db = Density(b);
+            float da = SealedDensity(a);
+            float db = SealedDensity(b);
 
             float delta = db - da;
             float t = abs(delta) > 1e-6 ? saturate((iso - da) / delta) : 0.5;
@@ -221,14 +239,14 @@ namespace Stride.Rendering.Voxels.Grid
         /// one that reports anything.
         float3 CellNormal(int3 c)
         {
-            float d000 = Density(c + int3(0, 0, 0));
-            float d100 = Density(c + int3(1, 0, 0));
-            float d010 = Density(c + int3(0, 1, 0));
-            float d001 = Density(c + int3(0, 0, 1));
-            float d110 = Density(c + int3(1, 1, 0));
-            float d101 = Density(c + int3(1, 0, 1));
-            float d011 = Density(c + int3(0, 1, 1));
-            float d111 = Density(c + int3(1, 1, 1));
+            float d000 = SealedDensity(c + int3(0, 0, 0));
+            float d100 = SealedDensity(c + int3(1, 0, 0));
+            float d010 = SealedDensity(c + int3(0, 1, 0));
+            float d001 = SealedDensity(c + int3(0, 0, 1));
+            float d110 = SealedDensity(c + int3(1, 1, 0));
+            float d101 = SealedDensity(c + int3(1, 0, 1));
+            float d011 = SealedDensity(c + int3(0, 1, 1));
+            float d111 = SealedDensity(c + int3(1, 1, 1));
 
             return float3(
                 (d100 + d110 + d101 + d111) - (d000 + d010 + d001 + d011),
@@ -287,7 +305,7 @@ namespace Stride.Rendering.Voxels.Grid
             hitNormal = float3(0, 1, 0);
             hitAlbedo = float3(1, 1, 1);
 
-            int3 cells = Source.SampleCount() - int3(1, 1, 1);
+            int3 cells = SampleCount() - int3(1, 1, 1);
             float cellSize = VoxelGridCellSize;
             float3 boundsMax = (float3)cells * cellSize;
 
@@ -317,9 +335,15 @@ namespace Stride.Rendering.Voxels.Grid
             // result is a wrongly lit band that slides about as the camera moves.
             int axis = nearest.x >= nearest.y && nearest.x >= nearest.z ? 0 : (nearest.y >= nearest.z ? 1 : 2);
 
-            // Entering already inside matter - the volume cut by its own boundary - makes the box
+            // Starting already inside matter - the volume cut by its own boundary - makes the box
             // face the surface, and there is nothing to refine.
-            if (running && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
+            //
+            // Only when the ray starts inside the box. Applied to a ray that comes from outside it
+            // turns the whole boundary into surface, and the grid is then wrapped in a solid shell
+            // the colour of whatever lights it - correct from within the volume, a grey cube from
+            // without.
+            bool startsInside = tEnter <= 0;
+            if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
             {
                 hit = true;
                 running = false;
@@ -343,7 +367,15 @@ namespace Stride.Rendering.Voxels.Grid
 
             // Neither break nor return: an early return inside a loop miscompiles on some targets,
             // so the walk ends by clearing its condition instead.
-            for (int i = 0; i < VoxelGridMaxSteps && running; i++)
+            // Clamped, not trusted.
+            //
+            // An unbound constant buffer member does not read as zero, it reads as whatever was left
+            // in that memory. A step count of two billion is a loop that never ends, and a pixel
+            // shader that never ends takes the graphics device past its timeout and hangs it - so a
+            // parameter that failed to bind stops being a blank screen and becomes a driver reset.
+            // Nothing about a ray crossing this grid needs more steps than its diagonal in cells.
+            int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            for (int i = 0; i < steps && running; i++)
             {
                 float tLeave = min(min(tMax.x, tMax.y), tMax.z);
                 float tSegmentEnd = min(tLeave, tExit);
@@ -442,7 +474,7 @@ namespace Stride.Rendering.Voxels.Grid
                 // takes the blend, so the material boundary is as smooth as the surface carrying it.
                 hitAlbedo = smooth
                     ? SampleAlbedo(position)
-                    : Source.Albedo(clamp((int3)floor(position / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0))));
+                    : Albedo(clamp((int3)floor(position / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0))));
 
                 float3 faceNormal = float3(
                     axis == 0 ? -stepDirection.x : 0,

@@ -1,0 +1,171 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Resolves a voxel grid's surface inside a material, so that a voxel body is a body the renderer
+    /// already knows how to draw.
+    ///
+    /// The alternative was a pass of its own, and a pass of its own is exactly what makes a voxel
+    /// look like a guest in the scene: it draws after the meshes and before the effects, so it has
+    /// no material, receives no light the others receive, casts nothing into a shadow map, and
+    /// composites against the depth buffer only as carefully as its author remembered to. Every one
+    /// of those is a thing to reimplement, and each reimplementation drifts from what a mesh does.
+    ///
+    /// Here the entity carries an ordinary model - a box the size of the grid - and this runs at the
+    /// front of that model's material. It replaces the box's surface with the grid's: the point, the
+    /// normal, and the depth the rasteriser will keep. Everything after it in the material, and
+    /// everything after the material, is the mesh path unchanged. Lights, shadows, fog, screen space
+    /// effects and the depth test against ordinary geometry are not ported; they are simply not
+    /// bypassed.
+    ///
+    /// The box is drawn back faces first, so the fragment this runs on is the far side of the volume
+    /// and the ray through it is right whether the camera is outside the grid or standing inside it.
+    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, IVoxelGridTraversal
+    {
+        // Inherited, not composed - see VoxelGridTraversalDDA for why. This is what lets the field's
+        // texture be declared once, in one scope, and bind the ordinary way a material texture binds.
+
+        /// How far along the ray the surface is still looked for, in grid local units.
+        cbuffer PerMaterial
+        {
+            [Link("VoxelGridField.MaxDistance")]
+            stage float VoxelGridMaxDistance;
+
+            /// See VoxelGridFieldKeys.Debug.
+            [Link("VoxelGridField.Debug")]
+            stage float VoxelGridDebug;
+        }
+
+        /// DIAGNOSTIC: 0 shades normally, 1 shows the normal, 2 shows the distance.
+
+        override void Compute()
+        {
+            // The ray, in the grid's own space. Taking it from the eye through this fragment rather
+            // than from the fragment inwards keeps one expression correct for both cases: outside
+            // the grid the eye is behind the entry face, inside it the eye is already in the volume,
+            // and the traversal clips to the box either way.
+            // The fragment's own position, taken from the object space one the rasteriser
+            // interpolated rather than from PositionWS transformed back. The grid's space is the
+            // model's space, so that value already is the point on the box the ray passed through -
+            // and PositionWS is not this shader's to rely on: whatever populates it is not part of
+            // the mixins here, and reading it gave every pixel the same point, so the whole screen
+            // traced one ray. From inside the volume that ray still lands on the field and the grid
+            // looks right, which is why it seemed to be about distance.
+            float3 originLocal = mul(float4(Eye.xyz, 1), WorldInverse).xyz;
+            float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
+            float3 towards = targetLocal - originLocal;
+
+            float travel = length(towards);
+            float3 directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
+
+            // Zero means no limit, as the property that feeds this says it does. Passing it straight
+            // through instead rejects everything further than nothing from the eye, so the surface
+            // shows only where it touches the camera and vanishes as you back away - which reads as
+            // a culling problem rather than as a distance of zero.
+            float limit = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 1e9;
+
+            float hitDistance;
+            float3 hitNormal;
+            float3 hitAlbedo;
+            bool found = Trace(originLocal, directionLocal, limit, hitDistance, hitNormal, hitAlbedo);
+
+            // The diagnostic views, on the box's own depth and with no discard, so the box is seen
+            // whatever the ray did. See VoxelGridFieldKeys.Debug for what each paints.
+            if (VoxelGridDebug > 0.5 && VoxelGridDebug < 3.5)
+            {
+                float3 shown = float3(found ? 0 : 1, found ? 1 : 0, 0);
+                float3 probe = Probe(float3(8, 0.5, 8));
+                if (VoxelGridDebug > 1.5)
+                    shown = float3(probe.y, probe.x, 0);
+                if (VoxelGridDebug > 2.5)
+                    shown = float3(frac(hitDistance / 4), saturate(hitDistance / 40), 0);
+
+                streams.matColorBase = float4(shown, 1);
+                streams.matDiffuse = streams.matColorBase;
+                streams.Depth = streams.ShadingPosition.z;
+                return;
+            }
+
+            if (!found)
+            {
+                // No surface along this ray. Discarding rather than shading nothing is what lets the
+                // box be invisible where the field is empty, and lets whatever is behind the grid be
+                // seen through it.
+                discard;
+            }
+
+            float4 hitWS = mul(float4(originLocal + directionLocal * hitDistance, 1), World);
+            streams.PositionWS = hitWS;
+
+            // The depth the surface is actually at, not the depth of the box face that stood in for
+            // it. Without this the grid would sort against other geometry as a box, and a mesh
+            // standing inside the volume would be hidden by air.
+            float4 hitClip = mul(hitWS, ViewProjection);
+            streams.Depth = hitClip.z / hitClip.w;
+            streams.ShadingPosition.z = streams.Depth;
+
+            // Not called normalWS: a local of the same name as a stream confuses symbol lookup, and
+            // the error names a type mismatch between two types it then prints identically.
+            float3 surfaceNormal = normalize(mul(float4(hitNormal, 0), World).xyz);
+
+            // Handed over reversed on a back face, so that it comes out right.
+            //
+            // The lighting stage flips normalWS wherever IsFrontFace is false, so a two-sided mesh is
+            // lit from the side it is seen from. Here the fragment is a face of the proxy box and
+            // says nothing about the surface: with the far faces kept, so that the volume is drawn
+            // from inside as well, every fragment is a back face, and the flip turns a correct normal
+            // into one lit from below - the grid and a mesh beside it disagreeing about where the sun
+            // is. Compensating with the same flag keeps this right whichever faces are kept.
+            if (!streams.IsFrontFace)
+                surfaceNormal = -surfaceNormal;
+
+            // A whole tangent frame, not just the normal. Shading asks for the normal through
+            // UpdateNormalFromTangentSpace, so a frame whose third row is the traced normal makes
+            // the default tangent-space normal land exactly on it - and leaves a normal map the user
+            // put on this material composing the way it would on a mesh.
+            float3 aside = abs(surfaceNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
+            float3 tangent = normalize(cross(aside, surfaceNormal));
+            float3 bitangent = cross(surfaceNormal, tangent);
+
+            streams.normalWS = surfaceNormal;
+            streams.meshNormalWS = surfaceNormal;
+            streams.tangentToWorld = float3x3(tangent, bitangent, surfaceNormal);
+
+            // The object space attributes as well, because they are what the mesh path rebuilds the
+            // frame from. Whatever recomputes the normal or the tangent frame after this point starts
+            // from meshNormal and meshTangent, and left alone those are the box's: a surface lit
+            // from the side its proxy happens to face, which flips the moment the other faces are
+            // the ones kept.
+            streams.meshNormal = hitNormal;
+            streams.meshTangent = float4(normalize(cross(abs(hitNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0), hitNormal)), 1);
+
+            streams.viewWS = normalize(Eye.xyz - hitWS.xyz);
+
+            // Diagnostics on the surface's own depth, past the point where it is known: 4 paints
+            // the albedo the field handed back, 5 the normal it was shaded with, 6 shades in full
+            // but from a constant albedo, so that lighting can be judged apart from the palette.
+            if (VoxelGridDebug > 3.5 && VoxelGridDebug < 5.5)
+            {
+                float3 shown = VoxelGridDebug > 4.5 ? surfaceNormal * 0.5 + 0.5 : hitAlbedo;
+                streams.matColorBase = float4(shown, 1);
+                streams.matDiffuse = streams.matColorBase;
+                return;
+            }
+            if (VoxelGridDebug > 5.5)
+                hitAlbedo = float3(1, 0, 1);
+
+            // The field's own colour, as the base the rest of the material works from. A diffuse
+            // feature added after this one overrides it, which is the ordering any material feature
+            // has and is how a user replaces the field's palette with a map of their own.
+            // Both, because the order the material's features run in is not this shader's to know.
+            //
+            // If the diffuse feature runs after this one it overwrites matDiffuse, and the value it
+            // writes is what ComputeColorVoxelAlbedo returns - which is matColorBase, set here. If
+            // it runs before, it has already written matDiffuse from a matColorBase that was still
+            // zero, and the write here replaces it. Either way the field's colour is what shades,
+            // and neither ordering has to be assumed.
+            streams.matColorBase = float4(hitAlbedo, 1);
+            streams.matDiffuse = streams.matColorBase;
+        }
+    };
+}

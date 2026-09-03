@@ -1,10 +1,12 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using Stride.Core.Mathematics;
 using Stride.Shaders;
 
 namespace Stride.Rendering.Voxels.Grid
 {
+
     /// <summary>
     /// Where a voxel grid gets its samples, and how they are packed.
     /// </summary>
@@ -24,6 +26,15 @@ namespace Stride.Rendering.Voxels.Grid
     /// </remarks>
     public interface IVoxelGridSource
     {
+
+        /// <summary>Samples along each axis.</summary>
+        /// <remarks>
+        /// On the interface because it is the field's extent rather than a detail of how the samples
+        /// are packed: whatever bounds, draws or collides with the grid needs it, and every packing
+        /// has one. Both implementations already carried it.
+        /// </remarks>
+        Int3 SampleCount { get; }
+
         /// <summary>The shader implementing <c>IVoxelGridSource</c>, ready to be composed.</summary>
         ShaderSource GetShaderSource();
 

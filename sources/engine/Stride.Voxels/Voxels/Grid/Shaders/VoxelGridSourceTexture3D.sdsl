@@ -11,8 +11,24 @@ namespace Stride.Rendering.Voxels.Grid
     {
         // Not 'stage': a stage variable is hoisted out of the composition, so a per-instance key
         // composed with the source's path would no longer match it and would silently bind nothing.
-        Texture3D<float4> VoxelGridTexture;
-        int3 VoxelGridSampleCount;
+        // Linked to fixed keys, whatever this shader is composed or mixed into.
+        //
+        // A member left unlinked takes the path it was reached by into its parameter name - through
+        // a material that is layers[N].materialPixelStage, with an N nothing outside the generator
+        // knows - and a value set under any other name binds nothing, silently. [Link] is how the
+        // engine's own material textures reach a shader composed arbitrarily deep, and it is what
+        // lets one set of keys serve the image effect and the material alike.
+        rgroup PerMaterial
+        {
+            [Link("VoxelGridField.Texture")]
+            stage Texture3D<float4> VoxelGridTexture;
+        }
+
+        cbuffer PerMaterial
+        {
+            [Link("VoxelGridField.SampleCount")]
+            stage int3 VoxelGridSampleCount;
+        }
 
         override int3 SampleCount()
         {
