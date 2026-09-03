@@ -89,7 +89,6 @@ namespace Stride.Rendering.Voxels.Grid
             if (renderView == null)
                 return;
 
-            Traversal.UpdateLayout("Traversal");
             Traversal.ApplyParameters(shader.Parameters);
             shader.Parameters.Set(VoxelGridRenderShaderKeys.Traversal, Traversal.GetShaderSource());
 

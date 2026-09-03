@@ -36,12 +36,6 @@ namespace Stride.Rendering.Voxels.Grid
     [Display("Voxel Grid Surface")]
     public class MaterialVoxelSurfaceFeature : MaterialFeature, IMaterialSurfaceFeature
     {
-        /// <summary>
-        /// The traversal is mixed into this feature's shader, not composed into it, so its members
-        /// keep the names they were declared with and its parameters take no path.
-        /// </summary>
-        private const string NoComposition = "";
-
         /// <summary>How the ray finds the surface, and where the samples come from.</summary>
         [DataMemberIgnore]
         public IVoxelGridTraversal Traversal { get; set; }
@@ -66,57 +60,36 @@ namespace Stride.Rendering.Voxels.Grid
             if (Traversal?.Source == null)
                 return;
 
-            // The traversal and its source are mixed in beside the surface shader rather than
-            // composed into it, so all three share one scope. That is what lets the field's texture
-            // be declared once and read once, and bind the way any material texture binds; composed,
-            // each scope would hold its own copy of the declaration and the texture would bind to a
-            // variable nothing reads.
+            // Mixed, not composed: the surface shader, the traversal and its source share one scope,
+            // so the field's resource is declared once and bound the way any material texture is.
             var mixin = new ShaderMixinSource();
             mixin.Mixins.Add(new ShaderClassSource("MaterialSurfaceVoxelGrid"));
             if (Traversal.GetShaderSource() is ShaderMixinSource traversal)
                 foreach (var part in traversal.Mixins)
                     mixin.Mixins.Add(part);
 
-
-            // Set here, at generation time, and not afterwards on the material's own parameters.
-            //
-            // The generator gives every member of a surface feature a path of its own - the compiled
-            // effect asks for VoxelGridTraversalDDA.VoxelGridCellSize.layers[1].materialPixelStage,
-            // not the bare name - and that index is not something this feature can know. Setting the
-            // bare key later therefore binds nothing at all, silently: the shader runs against a
-            // field of zero dimensions and finds no surface anywhere. Set on the context, the path
-            // is applied for us.
-            //
-            // Nothing is lost by only doing it once. What changes when a game digs is the contents
-            // of the texture, not which texture is bound nor how big the grid is.
             context.AddShaderSource(MaterialShaderStage.Pixel, mixin);
 
-            // The pixel shader has to run in the depth-only passes too - the Z prepass and the shadow
-            // maps - and by default it does not: those passes rasterise the mesh with the vertex
-            // stage alone, which for this material means the box. The prepass then holds the depth
-            // of the box's faces, the real surface behind them fails the depth test in the main
-            // pass, and nothing shows but a hole the shape of the box that hides whatever stands in
-            // it. The shadow map likewise casts the shadow of a box. This is the switch alpha cutoff
-            // uses for the same reason: what the fragment keeps is decided in the pixel stage.
+            // The depth-only passes - Z prepass and shadow maps - rasterise the mesh with the vertex
+            // stage alone unless told otherwise, and for this material the mesh is the proxy box: the
+            // prepass would hold the box's depth and the real surface behind it would fail the depth
+            // test, and the shadow would be a cube's. The same switch alpha cutoff uses.
             context.Parameters.Set(MaterialKeys.UsePixelShaderWithDepthPass, true);
             ApplyParameters(context.Parameters);
         }
 
         /// <summary>
-        /// Writes the field's parameters into the material pass, at the composition path the
-        /// generated shader put the traversal under.
+        /// Writes the field's parameters under the fixed names the shaders link to.
         /// </summary>
         /// <remarks>
-        /// Separate from <see cref="GenerateShader"/> and called every frame, because the samples,
-        /// the grid's size and its transform change while the shader does not - a game that digs a
-        /// hole must not recompile a material to show it.
+        /// Called at generation and then every frame on the material pass, which is the collection
+        /// the mesh render feature copies from; a value that is not there is not bound.
         /// </remarks>
         public void ApplyParameters(ParameterCollection parameters)
         {
             if (Traversal?.Source == null)
                 return;
 
-            Traversal.UpdateLayout(NoComposition);
             Traversal.ApplyParameters(parameters);
             parameters.Set(VoxelGridFieldKeys.MaxDistance, MaxDistance);
             parameters.Set(VoxelGridFieldKeys.Debug, Debug);

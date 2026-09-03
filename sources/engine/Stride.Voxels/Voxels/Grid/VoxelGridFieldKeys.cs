@@ -47,9 +47,6 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>1 to read the grid's outer samples as air.</summary>
         public static readonly ValueParameterKey<float> SealBorder = ParameterKeys.NewValue<float>();
 
-        /// <summary>0 cubes, 1 marching cubes, 2 surface nets.</summary>
-        public static readonly ValueParameterKey<float> SurfaceMode = ParameterKeys.NewValue<float>();
-
         /// <summary>Ceiling on the cells one ray may visit.</summary>
         public static readonly ValueParameterKey<int> MaxSteps = ParameterKeys.NewValue<int>();
 
@@ -57,16 +54,10 @@ namespace Stride.Rendering.Voxels.Grid
         public static readonly ValueParameterKey<float> MaxDistance = ParameterKeys.NewValue<float>();
 
         /// <summary>
-        /// Diagnostic view of the material surface: 0 shades normally; 1 paints the box green where
-        /// the ray met the field and red where it did not; 2 paints the density read at a point deep
-        /// inside the field, which says whether the texture is bound at all; 3 paints the distance.
-        /// The first three sit on the box's own depth. 4 paints the albedo the field handed back and
-        /// 5 the normal, both at the surface's real depth; 6 shades in full from a constant albedo.
+        /// Diagnostic view of the material surface. 0 shades normally; 1 paints the proxy box green
+        /// where the ray met the field and red where it did not, on the box's own depth; 2 paints the
+        /// traced normal at the surface's depth. Set from STRIDE_VOXEL_DEBUG when that is defined.
         /// </summary>
-        /// <remarks>
-        /// A switch rather than a rebuild, because every one of these questions was asked more than
-        /// once in bringing this path up, and each answer cost a compile of the engine.
-        /// </remarks>
         public static readonly ValueParameterKey<float> Debug = ParameterKeys.NewValue<float>();
     }
 }

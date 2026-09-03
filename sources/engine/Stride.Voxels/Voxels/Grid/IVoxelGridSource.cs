@@ -6,7 +6,6 @@ using Stride.Shaders;
 
 namespace Stride.Rendering.Voxels.Grid
 {
-
     /// <summary>
     /// Where a voxel grid gets its samples, and how they are packed.
     /// </summary>
@@ -26,7 +25,6 @@ namespace Stride.Rendering.Voxels.Grid
     /// </remarks>
     public interface IVoxelGridSource
     {
-
         /// <summary>Samples along each axis.</summary>
         /// <remarks>
         /// On the interface because it is the field's extent rather than a detail of how the samples
@@ -35,16 +33,10 @@ namespace Stride.Rendering.Voxels.Grid
         /// </remarks>
         Int3 SampleCount { get; }
 
-        /// <summary>The shader implementing <c>IVoxelGridSource</c>, ready to be composed.</summary>
+        /// <summary>The shader implementing <c>IVoxelGridSource</c>, to be mixed in beside a traversal.</summary>
         ShaderSource GetShaderSource();
 
-        /// <summary>
-        /// Recomputes the parameter keys for this source at the given composition path. Call before
-        /// <see cref="ApplyParameters"/> whenever the path changes.
-        /// </summary>
-        void UpdateLayout(string compositionName);
-
-        /// <summary>Writes this source's parameters into a collection.</summary>
+        /// <summary>Writes this source's parameters, under <see cref="VoxelGridFieldKeys"/>, into a collection.</summary>
         void ApplyParameters(ParameterCollection parameters);
     }
 }

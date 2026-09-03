@@ -18,16 +18,18 @@ namespace Stride.Rendering.Voxels.Grid
     /// effects and the depth test against ordinary geometry are not ported; they are simply not
     /// bypassed.
     ///
-    /// The box is drawn back faces first, so the fragment this runs on is the far side of the volume
-    /// and the ray through it is right whether the camera is outside the grid or standing inside it.
+    /// The fragment this runs on is a face of the proxy box - the far one, so the volume is drawn
+    /// from inside as well as from outside - and the ray through it is the same ray whichever face
+    /// carries it.
     shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, IVoxelGridTraversal
     {
-        // Inherited, not composed - see VoxelGridTraversalDDA for why. This is what lets the field's
-        // texture be declared once, in one scope, and bind the ordinary way a material texture binds.
+        // The traversal and its source are inherited, not composed, so all three share one scope
+        // and the field's resource is declared once. See VoxelGridTraversalDDA.
 
-        /// How far along the ray the surface is still looked for, in grid local units.
         cbuffer PerMaterial
         {
+            /// How far along the ray the surface is looked for, in grid local units. The processor
+            /// sets it to the grid's diagonal when nothing else was asked for.
             [Link("VoxelGridField.MaxDistance")]
             stage float VoxelGridMaxDistance;
 
@@ -36,51 +38,25 @@ namespace Stride.Rendering.Voxels.Grid
             stage float VoxelGridDebug;
         }
 
-        /// DIAGNOSTIC: 0 shades normally, 1 shows the normal, 2 shows the distance.
-
-        /// The configured ray limit, which the processor sets to the grid's diagonal when nothing
-        /// else was asked for - a distance that reaches from one side of the volume to the other.
-        ///
-        /// Not computed here from the sample count: int3 arithmetic on an inherited method's result
-        /// is a construct this shader compiler refuses ("Unsupported type for GetElementType"), and
-        /// the value is known on the CPU anyway. The fallback only matters if nothing was set at all.
-        float VoxelGridMaxDistanceOrDiagonal()
-        {
-            return VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
-        }
-
         override void Compute()
         {
-            // The ray, in the grid's own space. Taking it from the eye through this fragment rather
-            // than from the fragment inwards keeps one expression correct for both cases: outside
-            // the grid the eye is behind the entry face, inside it the eye is already in the volume,
-            // and the traversal clips to the box either way.
-            // The fragment's own position, taken from the object space one the rasteriser
-            // interpolated rather than from PositionWS transformed back. The grid's space is the
-            // model's space, so that value already is the point on the box the ray passed through -
-            // and PositionWS is not this shader's to rely on: whatever populates it is not part of
-            // the mixins here, and reading it gave every pixel the same point, so the whole screen
-            // traced one ray. From inside the volume that ray still lands on the field and the grid
-            // looks right, which is why it seemed to be about distance.
+            // The fragment, in the grid's own space. The ray reaches it from the eye under a
+            // perspective projection, and along the view axis under an orthographic one - shadow
+            // maps are orthographic, and a ray built from the eye there is wrong by an amount that
+            // grows as the fragment nears it: the highest thing in the field cast no shadow. A
+            // projection is orthographic when w does not depend on z.
             float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
+            float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
             float3 originLocal;
             float3 directionLocal;
 
-            // Perspective or orthographic, and the two want different rays.
-            //
-            // Under a perspective projection every ray leaves the eye, so the eye is the origin and
-            // the fragment gives the direction. Under an orthographic one the rays are parallel and
-            // the eye is not a point they leave from: build the ray from it anyway and the direction
-            // is wrong by an amount that grows as the fragment nears the eye. Shadow maps are drawn
-            // orthographically, and this is why the highest thing in the field cast no shadow while
-            // everything lower did. A projection is orthographic when w does not depend on z.
             bool orthographic = abs(Projection._34) < 1e-6 && abs(Projection._44 - 1.0) < 1e-6;
             if (orthographic)
             {
                 float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
                 directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
-                // Far enough back along the ray to be outside the volume; the traversal clips to it.
-                originLocal = targetLocal - directionLocal * VoxelGridMaxDistanceOrDiagonal();
+                // Started far enough back to be outside the volume; the traversal clips to it.
+                originLocal = targetLocal - directionLocal * reach;
             }
             else
             {
@@ -90,29 +66,17 @@ namespace Stride.Rendering.Voxels.Grid
                 directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
             }
 
-            // Zero means no limit, as the property that feeds this says it does. Passing it straight
-            // through instead rejects everything further than nothing from the eye, so the surface
-            // shows only where it touches the camera and vanishes as you back away - which reads as
-            // a culling problem rather than as a distance of zero.
-            float limit = orthographic ? 2.0 * VoxelGridMaxDistanceOrDiagonal() : (VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 1e9);
-
             float hitDistance;
             float3 hitNormal;
             float3 hitAlbedo;
-            bool found = Trace(originLocal, directionLocal, limit, hitDistance, hitNormal, hitAlbedo);
+            bool found = Trace(originLocal, directionLocal, orthographic ? 2.0 * reach : reach, hitDistance, hitNormal, hitAlbedo);
 
-            // The diagnostic views, on the box's own depth and with no discard, so the box is seen
-            // whatever the ray did. See VoxelGridFieldKeys.Debug for what each paints.
-            if (VoxelGridDebug > 0.5 && VoxelGridDebug < 3.5)
+            // Diagnostic 1: the box itself, green where the ray met the field and red where it did
+            // not, on the box's own depth and without discarding - so the box is seen whatever the
+            // ray did, which is the one thing a blank screen cannot say.
+            if (VoxelGridDebug > 0.5 && VoxelGridDebug < 1.5)
             {
-                float3 shown = float3(found ? 0 : 1, found ? 1 : 0, 0);
-                float3 probe = Probe(float3(8, 0.5, 8));
-                if (VoxelGridDebug > 1.5)
-                    shown = float3(probe.y, probe.x, 0);
-                if (VoxelGridDebug > 2.5)
-                    shown = float3(frac(hitDistance / 4), saturate(hitDistance / 40), 0);
-
-                streams.matColorBase = float4(shown, 1);
+                streams.matColorBase = float4(found ? 0 : 1, found ? 1 : 0, 0, 1);
                 streams.matDiffuse = streams.matColorBase;
                 streams.Depth = streams.ShadingPosition.z;
                 return;
@@ -129,32 +93,22 @@ namespace Stride.Rendering.Voxels.Grid
             float4 hitWS = mul(float4(originLocal + directionLocal * hitDistance, 1), World);
             streams.PositionWS = hitWS;
 
-            // The depth the surface is actually at, not the depth of the box face that stood in for
-            // it. Without this the grid would sort against other geometry as a box, and a mesh
-            // standing inside the volume would be hidden by air.
+            // The depth the surface is actually at, not the box face's: the grid then sorts against
+            // other geometry as itself, and a mesh standing in the volume is cut where it enters.
             float4 hitClip = mul(hitWS, ViewProjection);
             streams.Depth = hitClip.z / hitClip.w;
-            streams.ShadingPosition.z = streams.Depth;
 
-            // Not called normalWS: a local of the same name as a stream confuses symbol lookup, and
-            // the error names a type mismatch between two types it then prints identically.
+            // A local not named normalWS - a local named like a stream confuses the compiler.
             float3 surfaceNormal = normalize(mul(float4(hitNormal, 0), World).xyz);
 
-            // Handed over reversed on a back face, so that it comes out right.
-            //
-            // The lighting stage flips normalWS wherever IsFrontFace is false, so a two-sided mesh is
-            // lit from the side it is seen from. Here the fragment is a face of the proxy box and
-            // says nothing about the surface: with the far faces kept, so that the volume is drawn
-            // from inside as well, every fragment is a back face, and the flip turns a correct normal
-            // into one lit from below - the grid and a mesh beside it disagreeing about where the sun
-            // is. Compensating with the same flag keeps this right whichever faces are kept.
+            // The lighting stage flips normalWS on back faces so a two-sided mesh is lit from the
+            // side it is seen from. Every fragment here is a back face of the proxy box and says
+            // nothing about the surface, so the flag is compensated in advance.
             if (!streams.IsFrontFace)
                 surfaceNormal = -surfaceNormal;
 
-            // A whole tangent frame, not just the normal. Shading asks for the normal through
-            // UpdateNormalFromTangentSpace, so a frame whose third row is the traced normal makes
-            // the default tangent-space normal land exactly on it - and leaves a normal map the user
-            // put on this material composing the way it would on a mesh.
+            // A whole tangent frame whose third row is the traced normal, so the default
+            // tangent-space normal lands on it and a normal map a user adds composes as on a mesh.
             float3 aside = abs(surfaceNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
             float3 tangent = normalize(cross(aside, surfaceNormal));
             float3 bitangent = cross(surfaceNormal, tangent);
@@ -162,40 +116,19 @@ namespace Stride.Rendering.Voxels.Grid
             streams.normalWS = surfaceNormal;
             streams.meshNormalWS = surfaceNormal;
             streams.tangentToWorld = float3x3(tangent, bitangent, surfaceNormal);
-
-            // The object space attributes as well, because they are what the mesh path rebuilds the
-            // frame from. Whatever recomputes the normal or the tangent frame after this point starts
-            // from meshNormal and meshTangent, and left alone those are the box's: a surface lit
-            // from the side its proxy happens to face, which flips the moment the other faces are
-            // the ones kept.
-            streams.meshNormal = hitNormal;
-            streams.meshTangent = float4(normalize(cross(abs(hitNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0), hitNormal)), 1);
-
             streams.viewWS = normalize(Eye.xyz - hitWS.xyz);
 
-            // Diagnostics on the surface's own depth, past the point where it is known: 4 paints
-            // the albedo the field handed back, 5 the normal it was shaded with, 6 shades in full
-            // but from a constant albedo, so that lighting can be judged apart from the palette.
-            if (VoxelGridDebug > 3.5 && VoxelGridDebug < 5.5)
+            // Diagnostic 2: the traced normal, at the surface's own depth.
+            if (VoxelGridDebug > 1.5)
             {
-                float3 shown = VoxelGridDebug > 4.5 ? surfaceNormal * 0.5 + 0.5 : hitAlbedo;
-                streams.matColorBase = float4(shown, 1);
+                streams.matColorBase = float4(surfaceNormal * 0.5 + 0.5, 1);
                 streams.matDiffuse = streams.matColorBase;
                 return;
             }
-            if (VoxelGridDebug > 5.5)
-                hitAlbedo = float3(1, 0, 1);
 
-            // The field's own colour, as the base the rest of the material works from. A diffuse
-            // feature added after this one overrides it, which is the ordering any material feature
-            // has and is how a user replaces the field's palette with a map of their own.
-            // Both, because the order the material's features run in is not this shader's to know.
-            //
-            // If the diffuse feature runs after this one it overwrites matDiffuse, and the value it
-            // writes is what ComputeColorVoxelAlbedo returns - which is matColorBase, set here. If
-            // it runs before, it has already written matDiffuse from a matColorBase that was still
-            // zero, and the write here replaces it. Either way the field's colour is what shades,
-            // and neither ordering has to be assumed.
+            // The field's colour, in both slots: the diffuse feature reads matColorBase through
+            // ComputeColorVoxelAlbedo when it runs after this, and is overridden here when it ran
+            // before, so the result does not depend on the order the features run in.
             streams.matColorBase = float4(hitAlbedo, 1);
             streams.matDiffuse = streams.matColorBase;
         }

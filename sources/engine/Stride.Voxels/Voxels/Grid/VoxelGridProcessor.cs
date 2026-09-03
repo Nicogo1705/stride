@@ -25,6 +25,9 @@ namespace Stride.Rendering.Voxels.Grid
             public Int3 SampleCount;
             public float CellSize;
             public int ExtentRevision = -1;
+
+            /// <summary>What the traversal's shader looked like when the material was built.</summary>
+            public string ShaderSignature;
         }
 
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component) => new();
@@ -58,12 +61,8 @@ namespace Stride.Rendering.Voxels.Grid
                 state.Model.Enabled = true;
                 state.Model.IsShadowCaster = component.CastShadows;
 
-                // On the material's own pass, every frame, under the fixed names the shaders link
-                // to. This is the collection the mesh render feature reads; what was set on the
-                // generator's parameters at build time is not guaranteed to have been carried over,
-                // and a value that is not here is not bound.
+                // The pass parameters are what the mesh render feature copies from, every frame.
                 state.Surface?.ApplyParameters(state.Material.Passes[0].Parameters);
-
             }
         }
 
@@ -72,16 +71,16 @@ namespace Stride.Rendering.Voxels.Grid
             var samples = component.Traversal.Source.SampleCount;
             var cellSize = component.Traversal.CellSize;
 
+            // The traversal's shader is a permutation: change the surface form and it is a different
+            // shader, so the default material is built again. A material the user supplied is theirs
+            // to regenerate.
+            var signature = component.Traversal.GetShaderSource()?.ToString();
             var wanted = component.Material;
-            if (state.Material == null || (wanted != null && state.Material != wanted))
+            var rebuild = state.Material == null
+                          || (wanted != null && state.Material != wanted)
+                          || (wanted == null && state.ShaderSignature != signature);
+            if (rebuild)
             {
-                // Held, not looked up afterwards. A material built here keeps no descriptor - the
-                // one handed to Material.New is consumed and dropped - so asking the finished
-                // material what features it was made from silently answers nothing, the parameters
-                // are never applied, and the shader traces a field whose dimensions are zero. It
-                // then reports a hit at no distance at all, writes depth at the eye across the whole
-                // box, and every other thing in the scene fails the depth test behind it. A grey
-                // screen, from a null reference nobody dereferenced.
                 if (wanted != null)
                 {
                     state.Material = wanted;
@@ -89,21 +88,18 @@ namespace Stride.Rendering.Voxels.Grid
                 }
                 else
                 {
+                    // Held from construction: Material.New does not keep the descriptor it was given,
+                    // so the feature cannot be looked up on the finished material.
                     state.Material = BuildDefaultMaterial(device, component, out var built);
                     state.Surface = built;
                 }
 
-
-
+                state.ShaderSignature = signature;
                 state.Model = null;
 
-                // The far faces are the ones kept, not the near ones.
-                //
-                // The ray from the eye through a fragment is the same ray whichever face carries the
-                // fragment, so either set of faces serves - but only the far set is still there when
-                // the camera stands inside the volume, which for a voxel world is most of the time.
-                // Set on the pass rather than by winding the mesh inside out, so a material the user
-                // supplies behaves the same as the one built here.
+                // The far faces are kept, so the volume is drawn from inside as well as from outside
+                // for one walk per pixel. The ray through a far face is the same ray as through the
+                // near one; only the far one is still there when the camera stands in the volume.
                 foreach (var pass in state.Material.Passes)
                     pass.CullMode = CullMode.Front;
             }
@@ -140,30 +136,17 @@ namespace Stride.Rendering.Voxels.Grid
 
             state.Model.Model = model;
 
-            // A ray that crosses the volume corner to corner has gone as far as it can, so the
-            // diagonal is the honest ceiling. Left unset the feature would ask for no limit, and
-            // "no limit" reaches the traversal as a number large enough to lose precision in its
-            // own arithmetic - the surface is then found only where it nearly touches the camera,
-            // and the grid appears to exist only while you stand inside it.
+            // A ray that crosses the volume corner to corner has gone as far as it can.
             if (state.Surface != null && state.Surface.MaxDistance <= 0)
                 state.Surface.MaxDistance = extent.Length();
-
         }
 
         /// <summary>
-        /// The volume's bounds, as geometry for a ray to be found through.
+        /// The volume's bounds, as twelve triangles for a ray to be found through.
         /// </summary>
         /// <remarks>
-        /// <para>
-        /// Built the way Stride builds a procedural model, rather than by hand. A mesh assembled with
-        /// a bare position-normal-texture layout has no tangent, no generated bounding sphere and no
-        /// second texture coordinate, and the mesh render feature simply does not draw it - no error,
-        /// no warning, nothing on screen. That is indistinguishable from a face wound the wrong way
-        /// or from a ray that finds nothing, and all three were suspected in turn before the vertex
-        /// layout was.
-        /// </para>
-        /// <para>
-        /// </para>
+        /// Built the way a procedural model is built - tangents generated, bounding sphere computed -
+        /// so the mesh path treats it like any other mesh.
         /// </remarks>
         private static Mesh BuildBoxMesh(GraphicsDevice device, Vector3 extent, out BoundingBox bounds, out BoundingSphere sphere)
         {
@@ -195,9 +178,6 @@ namespace Stride.Rendering.Voxels.Grid
                 1, 5, 3, 3, 5, 7, // +X
             ];
 
-            // One winding. Which faces survive is the material pass's cull mode, set where the
-            // material is built: the far ones, so the volume is drawn from inside as well as from
-            // outside at the cost of one walk per pixel rather than two.
             var indices = faces;
 
             bounds = new BoundingBox(Vector3.Zero, extent);
@@ -250,12 +230,8 @@ namespace Stride.Rendering.Voxels.Grid
                 {
                     Surface = surface,
 
-                    // The diffuse slot asks the field for its colour, rather than being handed a
-                    // constant. A material needs a diffuse feature at all - without one it generates
-                    // no valid shading - and whatever is in that slot runs after the surface feature
-                    // and wins, so a constant there is a constant everywhere and the palette never
-                    // survives. Asking is also how a user replaces it: put a texture in this slot
-                    // instead and the field's colours are simply not consulted.
+                    // The diffuse slot reads the field's colour. A material needs a diffuse feature
+                    // to shade at all; a user replaces the palette by putting a texture here instead.
                     Diffuse = new MaterialDiffuseMapFeature(new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelAlbedo" }),
                     DiffuseModel = new MaterialDiffuseLambertModelFeature(),
                     Specular = new MaterialMetalnessMapFeature(new ComputeFloat(0f)),

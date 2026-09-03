@@ -19,47 +19,36 @@ namespace Stride.Rendering.Voxels.Grid
     /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing across
     /// one walks through walls. When empty space becomes the cost, the answer is a coarse occupancy
     /// pyramid to skip whole bricks, not a change of algorithm.
-    shader VoxelGridTraversalDDA : IVoxelGridTraversal, IVoxelGridSource
+    /// TSurface is which surface the walk stops on, and it is a permutation rather than a parameter:
+    /// 0 the cells themselves, a world of cubes; 1 the crossing on the trilinear field, where marching
+    /// cubes puts its vertices; 2 the quads surface nets stitches between cell vertices. All three
+    /// walk the same cells and only what counts as a hit differs, so a collider can be asked for the
+    /// same surface and the body drawn and the body collided against are one body. Compiling only
+    /// the form asked for keeps the other two - surface nets alone is several hundred reads - out of
+    /// the shader entirely.
+    shader VoxelGridTraversalDDA<int TSurface> : IVoxelGridTraversal, IVoxelGridSource
     {
-        // The source is inherited, not composed: whichever packing is chosen is mixed in alongside
-        // this shader and overrides SampleCount, Density and Albedo.
-        //
-        // Composition is the wrong tool here, and the reason is what it does to resources. Each
-        // composition is its own scope with its own copy of every declaration, which is right for a
-        // tree of compute-colour nodes that each want their own parameters, and wrong for a field
-        // that one texture holds and several places read: the material declares the texture in its
-        // scope, the composed source reads a different variable of the same name in another, and the
-        // texture binds to nothing at all. Stride mixes rather than composes wherever parts share
-        // state - the shading model, the diffuse model, normal mapping are all mixins - and this
-        // shares state.
+        // The source is inherited rather than composed, so that it shares this scope: a composition
+        // is a scope of its own with its own copy of every declaration, and a resource declared in
+        // one is not the one a material binds.
 
-        /// Edge length of one cell, in grid local space.
         cbuffer PerMaterial
         {
+            /// Edge length of one cell, in grid local space.
             [Link("VoxelGridField.CellSize")]
             stage float VoxelGridCellSize;
 
-        /// Density at or above which a sample counts as solid.
+            /// Density at or above which a sample counts as solid.
             [Link("VoxelGridField.IsoLevel")]
             stage float VoxelGridIsoLevel;
 
-        /// 1 reads the samples on the outer faces of the grid as air, closing the volume with real
-        /// surface. 0 leaves them alone, for a grid that continues into a neighbour.
+            /// 1 reads the samples on the outer faces of the grid as air, closing the volume with
+            /// real surface. 0 leaves them alone, for a grid that continues into a neighbour.
             [Link("VoxelGridField.SealBorder")]
             stage float VoxelGridSealBorder;
 
-        /// Which surface the walk stops on. 0: the cells themselves, a world of cubes. 1: the
-        /// crossing on the trilinear field, which is where marching cubes puts its vertices. 2: the
-        /// plane through the cell's surface-nets vertex, which is what surface nets meshes.
-        ///
-        /// All three walk the same cells; only what counts as a hit differs. Offering all three is
-        /// what lets a collider be asked for the same surface, so the body that is drawn and the
-        /// body that is solid are one body rather than two that follow each other.
-            [Link("VoxelGridField.SurfaceMode")]
-            stage float VoxelGridSurfaceMode;
-
-        /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
-        /// touches on the order of 768, so this bounds the worst case rather than the common one.
+            /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to
+            /// corner touches on the order of 768, so this bounds the worst case, not the common one.
             [Link("VoxelGridField.MaxSteps")]
             stage int VoxelGridMaxSteps;
         }
@@ -69,13 +58,8 @@ namespace Stride.Rendering.Voxels.Grid
         /// what a pixel resolves.
         static const int RefineSteps = 6;
 
-        /// Density of one sample, with the border read as air when the grid is sealed.
-        ///
-        /// A surface exists only where the field crosses the iso level, and a grid whose edge is
-        /// solid never crosses there - so its sides and its underside are not surface at all. They
-        /// still appear, because a ray entering the volume already inside matter stops on the box
-        /// itself, but that is a flat face with the box's normal and a decision taken per ray, which
-        /// is why the join against the real surface comes out in steps a cell wide.
+        /// Density of one sample, with the border read as air when the grid is sealed - so the
+        /// volume closes on real surface rather than on the flat faces of its own box.
         float SealedDensity(int3 coord)
         {
             int3 samples = SampleCount();
@@ -185,11 +169,8 @@ namespace Stride.Rendering.Voxels.Grid
         }
 
         /// One edge's contribution to the mean of the crossings: the crossing in xyz, and 1 in w
-        /// when the surface passes through that edge at all.
-        ///
-        /// A value in and a value out, with no inout parameter and no early return. Those are what
-        /// the shader compiler would not finish on - not an error, a compile that never returns, so
-        /// the game hangs waiting for a task rather than reporting anything.
+        /// when the surface passes through that edge at all. A value in and a value out - inout
+        /// parameters and early returns are constructs this shader compiler does not finish on.
         float4 EdgeCrossing(int3 a, int3 b)
         {
             float iso = VoxelGridIsoLevel;
@@ -198,8 +179,6 @@ namespace Stride.Rendering.Voxels.Grid
 
             float delta = db - da;
             float t = abs(delta) > 1e-6 ? saturate((iso - da) / delta) : 0.5;
-            // Not named 'point': that is a reserved word in the shader language, and the parse
-            // failure it causes is reported against the line after it.
             float3 crossing = lerp((float3)a, (float3)b, t) * VoxelGridCellSize;
 
             bool crosses = (da >= iso) != (db >= iso);
@@ -230,13 +209,8 @@ namespace Stride.Rendering.Voxels.Grid
             return sum.w > 0 ? float4(sum.xyz / sum.w, 1) : float4(0, 0, 0, 0);
         }
 
-        /// Which way the field rises across a cell, from its eight corners.
-        ///
-        /// Eight reads, against the forty-eight a central difference on the reconstructed field
-        /// costs. That matters more than it looks: every read goes through the source composition,
-        /// and the shader compiler inlines those - a normal taken the expensive way, for several
-        /// cells, inside a walk of hundreds of steps, is a compile that never finishes rather than
-        /// one that reports anything.
+        /// Which way the field rises across a cell, from its eight corners: eight reads, against the
+        /// forty-eight a central difference on the reconstructed field costs.
         float3 CellNormal(int3 c)
         {
             float d000 = SealedDensity(c + int3(0, 0, 0));
@@ -322,9 +296,10 @@ namespace Stride.Rendering.Voxels.Grid
             float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
             float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
 
-            bool cubes = VoxelGridSurfaceMode < 0.5;
-            bool marching = VoxelGridSurfaceMode >= 0.5 && VoxelGridSurfaceMode < 1.5;
-            bool nets = VoxelGridSurfaceMode >= 1.5;
+            // Compile-time, so each of the three surfaces is its own shader and the branches of the
+            // other two fold away.
+            bool cubes = TSurface == 0;
+            bool nets = TSurface == 2;
             bool smooth = !cubes;
             bool running = tEnter <= tExit;
             bool hit = false;
@@ -335,13 +310,9 @@ namespace Stride.Rendering.Voxels.Grid
             // result is a wrongly lit band that slides about as the camera moves.
             int axis = nearest.x >= nearest.y && nearest.x >= nearest.z ? 0 : (nearest.y >= nearest.z ? 1 : 2);
 
-            // Starting already inside matter - the volume cut by its own boundary - makes the box
-            // face the surface, and there is nothing to refine.
-            //
-            // Only when the ray starts inside the box. Applied to a ray that comes from outside it
-            // turns the whole boundary into surface, and the grid is then wrapped in a solid shell
-            // the colour of whatever lights it - correct from within the volume, a grey cube from
-            // without.
+            // A ray that starts inside matter - the camera in the volume, in solid - has the box face
+            // as its surface and nothing to refine. Only for rays that start inside the box: applied
+            // to one arriving from outside it turns the whole boundary into surface.
             bool startsInside = tEnter <= 0;
             if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
             {
@@ -365,34 +336,23 @@ namespace Stride.Rendering.Voxels.Grid
             // smooths it straight back into the marching-cubes surface.
             int3 netsCell = int3(0, 0, 0);
 
-            // Neither break nor return: an early return inside a loop miscompiles on some targets,
-            // so the walk ends by clearing its condition instead.
-            // Clamped, not trusted.
-            //
-            // An unbound constant buffer member does not read as zero, it reads as whatever was left
-            // in that memory. A step count of two billion is a loop that never ends, and a pixel
-            // shader that never ends takes the graphics device past its timeout and hangs it - so a
-            // parameter that failed to bind stops being a blank screen and becomes a driver reset.
-            // Nothing about a ray crossing this grid needs more steps than its diagonal in cells.
+            // The walk ends by clearing its condition, never by break or return, which miscompile
+            // inside a loop on some targets. The step count is clamped, not trusted: an unbound
+            // constant buffer member reads as leftover memory, and a loop that never ends takes the
+            // graphics device down with it.
             int steps = clamp(VoxelGridMaxSteps, 0, 4096);
             for (int i = 0; i < steps && running; i++)
             {
                 float tLeave = min(min(tMax.x, tMax.y), tMax.z);
                 float tSegmentEnd = min(tLeave, tExit);
 
-                // Flat rather than nested: an else attached to an if whose body is itself an if
-                // parses as belonging to the inner one, and the shader is then rejected.
                 bool solidCube = !smooth && CellIsSolid(cell);
 
-                // Four points across the segment this cell gives the ray. Testing only where it
-                // leaves misses a surface that enters and leaves within one cell, which is what
-                // happens wherever one surface passes in front of another at a shallow angle - the
-                // ray then carries on to a cell further back, one step lower, and that is the
-                // staircase along such an edge.
-                //
-                // Written flat rather than as a loop on purpose: the bisection below is already a
-                // loop, and three levels of nesting inside a shader method is more than the parser
-                // will take.
+                // Four points across the segment this cell gives the ray: testing only where it
+                // leaves misses a surface that enters and leaves within one cell, which is what a
+                // shallow silhouette does, and the ray then lands one cell too far - a staircase
+                // along every such edge. Flat rather than a loop, since the bisection below is one
+                // already and the parser takes no third level of nesting.
                 float t1 = lerp(t, tSegmentEnd, 0.25);
                 float t2 = lerp(t, tSegmentEnd, 0.50);
                 float t3 = lerp(t, tSegmentEnd, 0.75);
@@ -483,18 +443,10 @@ namespace Stride.Rendering.Voxels.Grid
 
                 if (nets)
                 {
-                    // Every quad surface nets stitches that can cover a point in this cell, not
-                    // just the three the cell owns. A quad is spanned by the vertices of the four
-                    // cells around a grid edge, so the one covering a pixel usually belongs to a
-                    // neighbour: testing only the owned three left most pixels on the fallback
-                    // below, which is a different surface, and the two interleaved as shingles.
-                    // The same reach the collider needed, for the same reason.
-                    //
-                    // Nineteen cell vertices - every offset with at least one zero component - and
-                    // twelve quads. At twelve edge crossings and two density reads each that is 456
-                    // reads, all inlined through the source composition, and it compiles without
-                    // trouble. What made the compiler run away before was doing this work at every
-                    // step of the walk; once per pixel, the count alone is not the problem.
+                    // Every quad surface nets stitches that can cover a point in this cell, not just
+                    // the three the cell owns: a quad spans the vertices of the four cells round a
+                    // grid edge, so the one covering a pixel usually belongs to a neighbour. Nineteen
+                    // cell vertices, twelve quads, once per pixel - the same reach the collider has.
                     int3 c = netsCell;
 
                     float4 vP00 = CellVertex(c + int3( 1,  0,  0));

@@ -31,13 +31,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         public Int3 SampleCount { get; set; }
 
-
         public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourceTexture3D");
-
-        public void UpdateLayout(string compositionName)
-        {
-            // Nothing to lay out: the shader links its members to VoxelGridFieldKeys by name.
-        }
 
         public void ApplyParameters(ParameterCollection parameters)
         {
@@ -70,13 +64,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Samples per axis, one more than the cells per axis.</summary>
         public Int3 SampleCount { get; set; }
 
-
         public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourcePackedBuffer");
-
-        public void UpdateLayout(string compositionName)
-        {
-            // Nothing to lay out: the shader links its members to VoxelGridFieldKeys by name.
-        }
 
         public void ApplyParameters(ParameterCollection parameters)
         {

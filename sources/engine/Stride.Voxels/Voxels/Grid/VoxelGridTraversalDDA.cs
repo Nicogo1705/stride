@@ -27,16 +27,14 @@ namespace Stride.Rendering.Voxels.Grid
         /// </remarks>
         float CellSize { get; }
 
-        /// <summary>The shader implementing <c>IVoxelGridTraversal</c>, source already composed in.</summary>
+        /// <summary>
+        /// The shader implementing <c>IVoxelGridTraversal</c> together with its source, as mixins to
+        /// add beside whatever consumes them. It changes with anything that is a permutation rather
+        /// than a parameter - the surface form is one - so a consumer compares it frame to frame.
+        /// </summary>
         ShaderSource GetShaderSource();
 
-        /// <summary>
-        /// Recomputes the parameter keys for this traversal and its source at the given composition
-        /// path. Call before <see cref="ApplyParameters"/> whenever the path changes.
-        /// </summary>
-        void UpdateLayout(string compositionName);
-
-        /// <summary>Writes this traversal's parameters, and its source's, into a collection.</summary>
+        /// <summary>Writes this traversal's parameters, and its source's, under <see cref="VoxelGridFieldKeys"/>.</summary>
         void ApplyParameters(ParameterCollection parameters);
     }
 
@@ -112,47 +110,29 @@ namespace Stride.Rendering.Voxels.Grid
         /// </remarks>
         public VoxelSurfaceForm Surface { get; set; } = VoxelSurfaceForm.MarchingCubes;
 
-        /// <summary>Kept for callers that only ever wanted cubes off or on.</summary>
-        public bool Smooth
-        {
-            get => Surface != VoxelSurfaceForm.Cubes;
-            set => Surface = value ? VoxelSurfaceForm.MarchingCubes : VoxelSurfaceForm.Cubes;
-        }
-
         /// <summary>
         /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
         /// touches on the order of 768, so this bounds the worst case rather than the common one.
         /// </summary>
         public int MaxSteps { get; set; } = 512;
 
-
         public ShaderSource GetShaderSource()
         {
-            // A mixin of this traversal and its source, not a composition of one into the other.
-            //
-            // Both end up in one scope, which is the whole point: the source's texture is declared
-            // once and read once, so it binds the ordinary way. Composed, each side would get its own
-            // copy of every declaration - right for a tree of compute-colour nodes, wrong for a field
-            // that one resource holds and several places read.
+            // Mixed beside its source rather than composing it, so both share one scope and the
+            // field's resource is declared once. The surface form is a generic argument, not a
+            // parameter: only the branch asked for is compiled, and the other two - surface nets
+            // alone is several hundred reads - never reach the shader at all.
             var mixin = new ShaderMixinSource();
-            mixin.Mixins.Add(new ShaderClassSource("VoxelGridTraversalDDA"));
+            mixin.Mixins.Add(new ShaderClassSource("VoxelGridTraversalDDA", (int)Surface));
             if (Source.GetShaderSource() is ShaderClassSource sourceClass)
                 mixin.Mixins.Add(sourceClass);
             return mixin;
-        }
-
-        public void UpdateLayout(string compositionName)
-        {
-            // Nothing to lay out here: the shaders link their members to VoxelGridFieldKeys by
-            // name, so the same keys serve whether this traversal is composed or mixed.
-            Source.UpdateLayout(compositionName);
         }
 
         public void ApplyParameters(ParameterCollection parameters)
         {
             parameters.Set(VoxelGridFieldKeys.CellSize, CellSize);
             parameters.Set(VoxelGridFieldKeys.IsoLevel, IsoLevel);
-            parameters.Set(VoxelGridFieldKeys.SurfaceMode, (float)Surface);
             parameters.Set(VoxelGridFieldKeys.SealBorder, SealBorder ? 1f : 0f);
             parameters.Set(VoxelGridFieldKeys.MaxSteps, MaxSteps);
             Source.ApplyParameters(parameters);
