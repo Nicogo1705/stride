@@ -44,12 +44,13 @@ The existing rasterizing voxelizer becomes one producer among others.
 The consumer side — mip chain, cone marchers, `LightVoxel` integration — is unchanged.
 This is the enabling step for everything below and the only one that is strictly required.
 
-**Started.** `Voxels/Grid` now holds the seam and the first consumer: `IVoxelGridSource` (SDSL and
+**Done for fields.** `Voxels/Grid` holds the seam and its consumers: `IVoxelGridSource` (SDSL and
 C#) describes a packing once, `VoxelGridSourceTexture3D` and `VoxelGridSourcePackedBuffer` are two
-examples of one, and `VoxelGridRenderer` draws a grid straight from it. What remains for this step is
-the clipmap fill itself - a compute pass writing occupancy and radiance into the brick pool from the
-same source - so that the tracing half of the library can run on data that never went through the
-rasterizer.
+examples of one, `VoxelGridResolveRenderer` draws a grid straight from it, and `VoxelGridInjector`
+is the fill path: a compute pass (`VoxelGridInjectShader`) that writes a field's surface voxels,
+colour and emission into the clipmap's fragment buffer beside what the rasterizer wrote, so the
+arrangement, the mips and the cones never know which producer a voxel came from. What remains is
+the same path for data that is not a field - a direct radiance upload - which is a packer away.
 
 ### 2. DDA traversal alongside cone tracing
 
@@ -57,10 +58,11 @@ Add exact grid traversal (DDA, cell by cell) as a marcher, next to the existing 
 marchers. Where a cone gives a soft, cheap, approximate answer, a DDA ray gives an exact
 one: sharp shadows, primary visibility, precise occlusion.
 
-**Done for primary visibility.** `IVoxelGridTraversal` is the seam, `VoxelGridTraversalDDA` walks the
-grid cell by cell, and `VoxelGridRenderShader` traces one ray per pixel and writes depth, so
-rasterized content composites against voxels with an ordinary depth test. Cone tracing for GI is
-unchanged and untouched.
+**Done for primary visibility and shadows.** `IVoxelGridTraversal` is the seam, `VoxelGridTraversalDDA`
+walks the grid cell by cell over a min/max occupancy pyramid, `VoxelGridResolveShader` traces one
+ray per pixel and writes depth, so rasterized content composites against voxels with an ordinary
+depth test, and `Occlude` answers the shadow-map casters with a cheaper walk that stops at the
+first solid cell. Cone tracing for GI is unchanged and untouched.
 
 **This is deliberately not SDF.** Sphere tracing needs a distance that is correct
 *everywhere*, not just near the surface; a marching-cubes density field only guarantees

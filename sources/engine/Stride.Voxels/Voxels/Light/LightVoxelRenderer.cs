@@ -1,9 +1,10 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
 using System.Collections.Generic;
 using Stride.Core.Collections;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
@@ -261,6 +262,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
             /// and after a resize, as one frame without indirect light.
             /// </para>
             /// </remarks>
+            private static bool warnedNoResolver;
+
             private VoxelGIResolveState PrepareScreenSpaceResolve(RenderDrawContext context, LightVoxel lightVoxel, VoxelViewContext viewContext)
             {
                 // A voxel view is voxelizing the scene into the clipmaps, not shading a screen:
@@ -271,7 +274,15 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
                 var state = context.RenderContext.VisibilityGroup?.Tags.Get(VoxelGIResolver.Current);
                 if (state?.Parameters == null)
+                {
+                    // Asked for and not available: the compositor has no ForwardRendererVoxels, or
+                    // no depth-only stage for it to read. Said once, since the light would
+                    // otherwise march inline forever with nothing to show why.
+                    if (!warnedNoResolver)
+                        GlobalLogger.GetLogger("LightVoxelRenderer").Warning("A voxel light asks for a screen-space divisor but the compositor has no resolver to trace into (ForwardRendererVoxels with a depth-only stage); its cones are traced per pixel instead.");
+                    warnedNoResolver = true;
                     return null;
+                }
 
                 state.Divisor = lightVoxel.ScreenSpaceDivisor;
                 state.Requested = true;
