@@ -5,7 +5,7 @@ namespace Stride.Rendering.Voxels
     /// <summary>
     /// Voxelization, projects to axis of largest area and writes fragments to buffer
     /// </summary>
-    shader VoxelizeToFragments : Math, Transformation, ShaderBase, Texturing, NormalStream, PositionStream4, VoxelPositionStream, MaterialPixelStream, MaterialPixelShadingStream, VoxelizationPassInfo
+    shader VoxelizeToFragments : Math, Transformation, ShaderBase, Texturing, NormalStream, PositionStream4, VoxelPositionStream, MaterialPixelStream, MaterialPixelShadingStream, VoxelizationPassInfo, ShadowMapCasterPassInfo
     {
         compose VoxelStorageShader Storage;
         override stage void PSMain()
@@ -16,6 +16,10 @@ namespace Stride.Rendering.Voxels
             // such a material may answer that this fragment is nothing at all.
             streams.IsVoxelizationPass = 1;
             streams.VoxelizationSkip = 0;
+            // The vertex stage writes this one to zero, but the geometry shader between does not
+            // carry it, so a material reading it here saw whatever interpolant sat in its slot -
+            // and a shadow-only material ran its caster branch in bands and specks of the volume.
+            streams.IsShadowMapCasterPass = 0;
             if (Storage.MightStoreFragments())
             {
                 base.PSMain();

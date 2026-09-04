@@ -26,7 +26,9 @@ namespace Stride.Rendering.Voxels.Grid
             // One exit, no early return: a return from inside a material's Compute comes out of
             // the SPIR-V to HLSL step as a one-iteration loop round everything after it, and FXC,
             // asked to unroll that round the walk's own loop, gives up with an internal error.
-            if (streams.IsShadowMapCasterPass > 0.5)
+            // A caster pass, and not the voxelizer's - the two flags are set by different passes
+            // and only the caster one may be stale where a geometry shader dropped it.
+            if (streams.IsShadowMapCasterPass > 0.5 && streams.IsVoxelizationPass < 0.5)
             {
                 // The fragment, in the grid's own space. Shadow maps are orthographic for a
                 // directional light and perspective for the others; the ray reaches the fragment
