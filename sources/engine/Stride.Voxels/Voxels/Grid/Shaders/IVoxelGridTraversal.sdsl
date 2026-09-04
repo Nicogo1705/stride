@@ -38,6 +38,29 @@ namespace Stride.Rendering.Voxels.Grid
             return false;
         }
 
+        /// The material at a point of the surface, blended from the palette entries of the eight
+        /// samples round it with the same weights the field itself is reconstructed with - so a
+        /// boundary between two materials is as smooth as the surface that carries it. Three
+        /// values returned rather than one method with out parameters: the HLSL compiler falls
+        /// over ("argument pulled into unrelated predicate") inlining those under a branch.
+        /// The colour, in rgb.
+        float4 SurfaceColor(float3 localPosition)
+        {
+            return float4(1, 1, 1, 1);
+        }
+
+        /// What the surface emits, in rgb, with its intensity in w.
+        float4 SurfaceEmissive(float3 localPosition)
+        {
+            return float4(0, 0, 0, 0);
+        }
+
+        /// Glossiness in x, metalness in y.
+        float4 SurfaceProperties(float3 localPosition)
+        {
+            return float4(0, 0, 0, 0);
+        }
+
         /// Diagnostic: what the composed source reports at a point, as
         /// (samples per axis / 128, density, iso level). A pass that finds nothing looks the same
         /// whether the source is unbound, the dimensions are zero or the field is empty.

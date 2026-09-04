@@ -35,6 +35,12 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         ShaderSource GetShaderSource();
 
+        /// <summary>
+        /// The materials the samples point at. Owned by whoever owns the material list - the grid
+        /// component builds one from its list - and shared by every traversal over the same field.
+        /// </summary>
+        VoxelGridPalette Palette { get; set; }
+
         /// <summary>Writes this traversal's parameters, and its source's, under <see cref="VoxelGridFieldKeys"/>.</summary>
         void ApplyParameters(ParameterCollection parameters);
     }
@@ -128,6 +134,10 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberIgnore]
         public VoxelGridOccupancy Occupancy { get; set; }
 
+        /// <inheritdoc />
+        [DataMemberIgnore]
+        public VoxelGridPalette Palette { get; set; }
+
         public ShaderSource GetShaderSource()
         {
             // Mixed beside its source rather than composing it, so both share one scope and the
@@ -149,6 +159,7 @@ namespace Stride.Rendering.Voxels.Grid
             parameters.Set(VoxelGridFieldKeys.MaxSteps, MaxSteps);
             parameters.Set(VoxelGridFieldKeys.Occupancy, Occupancy?.Texture);
             parameters.Set(VoxelGridFieldKeys.OccupancyLevels, Occupancy?.Levels ?? 0);
+            parameters.Set(VoxelGridFieldKeys.Palette, Palette?.Buffer);
             Source.ApplyParameters(parameters);
         }
     }

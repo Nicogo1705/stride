@@ -32,11 +32,14 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Samples per axis.</summary>
         public static readonly ValueParameterKey<Int3> SampleCount = ParameterKeys.NewValue<Int3>();
 
-        /// <summary>The field as a 3D texture: density in red, albedo in the rest.</summary>
+        /// <summary>The field as a 3D texture: density in red, material id in green.</summary>
         public static readonly ObjectParameterKey<Texture> Texture = ParameterKeys.NewObject<Texture>();
 
         /// <summary>The field as a structured buffer of packed samples.</summary>
         public static readonly ObjectParameterKey<Buffer> Data = ParameterKeys.NewObject<Buffer>();
+
+        /// <summary>The materials, three float4 per id, see <see cref="VoxelGridPalette"/>.</summary>
+        public static readonly ObjectParameterKey<Buffer> Palette = ParameterKeys.NewObject<Buffer>();
 
         /// <summary>The min/max pyramid over the field, see <see cref="VoxelGridOccupancy"/>.</summary>
         public static readonly ObjectParameterKey<Texture> Occupancy = ParameterKeys.NewObject<Texture>();

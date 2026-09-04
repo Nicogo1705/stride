@@ -30,11 +30,11 @@ namespace Stride.Rendering.Voxels.Grid
             return 0.0;
         }
 
-        /// Albedo of one sample. Only read at a surface, so an implementation with no material data
-        /// can leave this at white.
-        float3 Albedo(int3 coord)
+        /// Material of one sample: an index into the grid's palette, a byte. Only read at a
+        /// surface, so an implementation with no material data can leave every sample on entry 0.
+        int MaterialId(int3 coord)
         {
-            return float3(1, 1, 1);
+            return 0;
         }
     };
 }

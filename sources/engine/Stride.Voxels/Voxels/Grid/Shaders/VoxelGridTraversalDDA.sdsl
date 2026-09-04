@@ -67,6 +67,11 @@ namespace Stride.Rendering.Voxels.Grid
             /// The pyramid: least density in red, greatest in green, see VoxelGridOccupancy.
             [Link("VoxelGridField.Occupancy")]
             stage Texture3D<float2> VoxelGridOccupancy;
+
+            /// The materials, three float4 per id: colour; emissive with intensity in w;
+            /// glossiness and metalness. See VoxelGridPalette.
+            [Link("VoxelGridField.Palette")]
+            stage StructuredBuffer<float4> VoxelGridPalette;
         }
 
         /// Bisection steps that place the crossing once the interval holding it is known. Each
@@ -76,13 +81,17 @@ namespace Stride.Rendering.Voxels.Grid
 
         /// Density of one sample, with the border read as air when the grid is sealed - so the
         /// volume closes on real surface rather than on the flat faces of its own box.
+        ///
+        /// A select rather than an early return: an early return in a function inlined into the
+        /// walk comes out of the SPIR-V to HLSL step as a one-iteration loop, and FXC, unrolling
+        /// dozens of them inside a real loop, gives up with an internal error. A load past the
+        /// edge of the field is defined and comes back zero, so the read can be unconditional.
         float SealedDensity(int3 coord)
         {
             int3 samples = SampleCount();
-            if (VoxelGridSealBorder > 0.5 && (any(coord <= 0) || any(coord >= samples - int3(1, 1, 1))))
-                return 0.0;
-
-            return Density(coord);
+            bool onBorder = any(coord <= 0) || any(coord >= samples - int3(1, 1, 1));
+            float density = Density(coord);
+            return (VoxelGridSealBorder > 0.5 && onBorder) ? 0.0 : density;
         }
 
         /// The field between samples, trilinear - the same reconstruction marching cubes and surface
@@ -109,31 +118,69 @@ namespace Stride.Rendering.Voxels.Grid
             return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
         }
 
-        /// The albedo between samples, on the same trilinear weights as the field.
+        /// One float4 of one palette entry: 0 the colour, 1 the emissive with its intensity in w,
+        /// 2 glossiness and metalness in x and y.
+        float4 PaletteEntry(int3 coord, int part)
+        {
+            return VoxelGridPalette[clamp(MaterialId(coord), 0, 255) * 3 + part];
+        }
+
+        /// One part of the material between samples, on the same trilinear weights as the field.
         ///
-        /// Reading it from the cell the hit landed in instead makes the colour change on cell
+        /// Reading it from the cell the hit landed in instead makes the material change on cell
         /// boundaries, which draws a staircase along every material boundary - on a surface that is
         /// otherwise perfectly smooth, so it reads as a geometry fault rather than what it is.
-        float3 SampleAlbedo(float3 localPosition)
+        float4 SamplePalette(float3 localPosition, int part)
         {
             float3 grid = localPosition / VoxelGridCellSize;
             int3 cell = (int3)floor(grid);
             float3 f = grid - (float3)cell;
 
-            float3 a000 = Albedo(cell + int3(0, 0, 0));
-            float3 a100 = Albedo(cell + int3(1, 0, 0));
-            float3 a010 = Albedo(cell + int3(0, 1, 0));
-            float3 a110 = Albedo(cell + int3(1, 1, 0));
-            float3 a001 = Albedo(cell + int3(0, 0, 1));
-            float3 a101 = Albedo(cell + int3(1, 0, 1));
-            float3 a011 = Albedo(cell + int3(0, 1, 1));
-            float3 a111 = Albedo(cell + int3(1, 1, 1));
+            float4 a000 = PaletteEntry(cell + int3(0, 0, 0), part);
+            float4 a100 = PaletteEntry(cell + int3(1, 0, 0), part);
+            float4 a010 = PaletteEntry(cell + int3(0, 1, 0), part);
+            float4 a110 = PaletteEntry(cell + int3(1, 1, 0), part);
+            float4 a001 = PaletteEntry(cell + int3(0, 0, 1), part);
+            float4 a101 = PaletteEntry(cell + int3(1, 0, 1), part);
+            float4 a011 = PaletteEntry(cell + int3(0, 1, 1), part);
+            float4 a111 = PaletteEntry(cell + int3(1, 1, 1), part);
 
-            float3 ax00 = lerp(a000, a100, f.x);
-            float3 ax10 = lerp(a010, a110, f.x);
-            float3 ax01 = lerp(a001, a101, f.x);
-            float3 ax11 = lerp(a011, a111, f.x);
+            float4 ax00 = lerp(a000, a100, f.x);
+            float4 ax10 = lerp(a010, a110, f.x);
+            float4 ax01 = lerp(a001, a101, f.x);
+            float4 ax11 = lerp(a011, a111, f.x);
             return lerp(lerp(ax00, ax10, f.y), lerp(ax01, ax11, f.y), f.z);
+        }
+
+        /// The cell a point is in, for the cube form, which takes one material per cell.
+        int3 CellOf(float3 localPosition)
+        {
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            return clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+        }
+
+        /// One part of the material at a point. Cubes take the cell's own material, which is the
+        /// point of cubes; a smooth surface takes the blend, so a material boundary is as smooth as
+        /// the surface carrying it.
+        float4 SurfacePart(float3 localPosition, int part)
+        {
+            bool cubes = TSurface == 0;
+            return cubes ? PaletteEntry(CellOf(localPosition), part) : SamplePalette(localPosition, part);
+        }
+
+        override float4 SurfaceColor(float3 localPosition)
+        {
+            return SurfacePart(localPosition, 0);
+        }
+
+        override float4 SurfaceEmissive(float3 localPosition)
+        {
+            return SurfacePart(localPosition, 1);
+        }
+
+        override float4 SurfaceProperties(float3 localPosition)
+        {
+            return SurfacePart(localPosition, 2);
         }
 
         /// Central differences on the reconstructed field, half a cell apart. Taken at the hit rather
@@ -281,12 +328,12 @@ namespace Stride.Rendering.Voxels.Grid
         /// Where a ray meets the quad four cell vertices span, as two triangles.
         float4 MeetQuad(float4 v0, float4 v1, float4 v2, float4 v3, float3 origin, float3 direction)
         {
-            if (v0.w <= 0 || v1.w <= 0 || v2.w <= 0 || v3.w <= 0)
-                return float4(0, 1, 0, 0);
-
+            // No early return, for the reason SealedDensity gives; a quad with a corner missing
+            // is tested and then discarded.
+            bool complete = v0.w > 0 && v1.w > 0 && v2.w > 0 && v3.w > 0;
             float4 first = MeetTriangle(v0.xyz, v1.xyz, v2.xyz, origin, direction);
             float4 second = MeetTriangle(v0.xyz, v2.xyz, v3.xyz, origin, direction);
-            return Nearer(first, second);
+            return complete ? Nearer(first, second) : float4(0, 1, 0, 0);
         }
 
         /// The walk of Trace with the hit left coarse: a shadow map wants a depth within a fraction
@@ -590,11 +637,7 @@ namespace Stride.Rendering.Voxels.Grid
             {
                 float3 position = origin + safeDirection * tHit;
                 hitDistance = tHit;
-                // Cubes take the cell's own colour, which is the point of cubes; a smooth surface
-                // takes the blend, so the material boundary is as smooth as the surface carrying it.
-                hitAlbedo = smooth
-                    ? SampleAlbedo(position)
-                    : Albedo(clamp((int3)floor(position / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0))));
+                hitAlbedo = smooth ? SamplePalette(position, 0).rgb : PaletteEntry(CellOf(position), 0).rgb;
 
                 // The face just crossed, facing back along the ray.
                 float3 faceNormal = float3(

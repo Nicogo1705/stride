@@ -10,12 +10,12 @@ using GraphicsBuffer = Stride.Graphics.Buffer;
 namespace Stride.Rendering.Voxels.Grid
 {
     /// <summary>
-    /// A grid held in a 3D texture: density in red, albedo in green, blue and alpha.
+    /// A grid held in an R8G8 3D texture: density in red, material id in green.
     /// </summary>
     /// <remarks>
     /// The form a generator writing straight from a compute shader tends to produce, and the one
-    /// that costs least to sample. A single channel texture works too - the albedo comes back black,
-    /// which a renderer can ignore in favour of a flat colour.
+    /// that costs least to sample. A single channel texture works too - every sample then points at
+    /// the first material of the palette.
     /// </remarks>
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
     [Display("3D texture")]
@@ -49,9 +49,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// </summary>
     /// <remarks>
     /// The packing a voxel game commonly keeps its chunks in, where uploading is a widen from 16 to
-    /// 32 bits and nothing else. Material becomes a colour through a hash, which reads well enough
-    /// to see the world; a game with real materials overrides <c>Albedo</c> in a source of its own
-    /// rather than bending its data to fit one imposed here.
+    /// 32 bits and nothing else. The material byte is the palette index as it stands.
     /// </remarks>
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
     [Display("Packed buffer")]

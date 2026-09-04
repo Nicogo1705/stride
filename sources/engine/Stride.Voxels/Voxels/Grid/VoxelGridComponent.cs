@@ -1,11 +1,11 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System.Collections.Generic;
 using Stride.Core;
 using Stride.Engine;
 using Stride.Engine.Design;
 using Stride.Rendering.Materials;
-using Stride.Rendering.Materials.ComputeColors;
 
 namespace Stride.Rendering.Voxels.Grid
 {
@@ -66,17 +66,18 @@ namespace Stride.Rendering.Voxels.Grid
         public bool CastShadows { get; set; } = true;
 
         /// <summary>
-        /// What the surface emits, for the default material. Null emits nothing.
+        /// The materials the samples point at, by id: a sample whose material byte is 3 is drawn
+        /// with the fourth material here. Up to 256, authored like any other material.
         /// </summary>
         /// <remarks>
-        /// A compute colour rather than a colour, because what is worth emitting varies across a
-        /// field: a shader here reads the surface's own streams - the albedo the traversal found,
-        /// its position - and decides. A lit voxel world with no analytic light at all is a field
-        /// whose emissive parts light the rest through a voxel GI volume.
+        /// What the field's shaders take from each is its colour, glossiness, metalness and
+        /// emission, read off the material's constant parameters; a material fed a texture in one
+        /// of those slots falls back to a default there, since a byte per sample carries nothing a
+        /// texture could be looked up with.
         /// </remarks>
-        /// <userdoc>What the surface emits, when the material is the default one. Leave empty to emit nothing.</userdoc>
+        /// <userdoc>The materials the samples point at, by id. A sample's material byte is an index into this list.</userdoc>
         [DataMember(25)]
-        public IComputeColor Emissive { get; set; }
+        public List<Material> Materials { get; } = [];
 
         /// <summary>
         /// Diagnostic view of the drawn surface, see <see cref="VoxelGridFieldKeys.Debug"/>. Zero

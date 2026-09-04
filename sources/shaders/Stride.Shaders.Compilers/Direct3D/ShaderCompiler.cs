@@ -1,9 +1,10 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 #if STRIDE_PLATFORM_DESKTOP
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Runtime.CompilerServices;
@@ -203,6 +204,19 @@ namespace Stride.Shaders.Compiler.Direct3D
                     if (!bytecodeResult.HasErrors)
                     {
                         bytecodeResult.Error($"D3D shader compilation failed for stage '{stage}' entry '{entryPoint}' profile '{shaderModel}' (HRESULT 0x{(uint)result.Value:X8}) with no diagnostic from D3DCompiler.");
+                    }
+
+                    // The HLSL FXC refused, on disk: its messages point at line numbers of a source
+                    // nothing else keeps, and an internal error points at nothing at all.
+                    try
+                    {
+                        var dumpPath = Path.Combine(Path.GetTempPath(), $"stride-fxc-fail-{Guid.NewGuid():N}-{stage}.hlsl");
+                        File.WriteAllText(dumpPath, shaderSource);
+                        bytecodeResult.Info($"HLSL source dumped to {dumpPath}");
+                    }
+                    catch (Exception)
+                    {
+                        // A dump that cannot be written is no worse than no dump.
                     }
                 }
 

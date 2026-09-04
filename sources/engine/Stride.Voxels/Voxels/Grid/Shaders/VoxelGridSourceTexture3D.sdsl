@@ -2,11 +2,11 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// A grid held in a 3D texture: density in red, albedo in green, blue and alpha.
+    /// A grid held in a 3D texture: density in red, material id in green, as an R8G8 texture.
     ///
     /// The form a generator writing straight from a compute shader tends to produce, and the one
-    /// that costs least to sample. A single channel texture works too - the albedo simply comes
-    /// back black, which a renderer can ignore in favour of a flat colour.
+    /// that costs least to sample. A single channel texture works too - every sample then points
+    /// at palette entry 0.
     shader VoxelGridSourceTexture3D : IVoxelGridSource
     {
         // Linked to fixed keys, whatever this shader is mixed into. An unlinked member takes the path
@@ -16,7 +16,7 @@ namespace Stride.Rendering.Voxels.Grid
         rgroup PerMaterial
         {
             [Link("VoxelGridField.Texture")]
-            stage Texture3D<float4> VoxelGridTexture;
+            stage Texture3D<float2> VoxelGridTexture;
         }
 
         cbuffer PerMaterial
@@ -35,9 +35,10 @@ namespace Stride.Rendering.Voxels.Grid
             return VoxelGridTexture.Load(int4(coord, 0)).r;
         }
 
-        override float3 Albedo(int3 coord)
+        override int MaterialId(int3 coord)
         {
-            return VoxelGridTexture.Load(int4(coord, 0)).gba;
+            // A byte stored as a normalized channel comes back as id / 255.
+            return (int)round(VoxelGridTexture.Load(int4(coord, 0)).g * 255.0);
         }
     };
 }

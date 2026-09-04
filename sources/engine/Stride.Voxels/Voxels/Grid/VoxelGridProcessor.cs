@@ -32,8 +32,8 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The traversal's shader as it was when the material was built.</summary>
             public ShaderSource Shader;
 
-            /// <summary>The emissive the default material was built with.</summary>
-            public IComputeColor Emissive;
+            /// <summary>The materials the samples point at, built from the component's list.</summary>
+            public VoxelGridPalette Palette;
 
             /// <summary>The box's buffers, released when it is rebuilt or the component goes.</summary>
             public GraphicsBuffer VertexBuffer;
@@ -46,14 +46,22 @@ namespace Stride.Rendering.Voxels.Grid
                 VertexBuffer = null;
                 IndexBuffer = null;
             }
+
+            public void ReleasePalette()
+            {
+                Palette?.Dispose();
+                Palette = null;
+            }
         }
 
         private IGraphicsDeviceService graphicsDeviceService;
+        private IGame game;
 
         protected override void OnSystemAdd()
         {
             base.OnSystemAdd();
             graphicsDeviceService = Services.GetService<IGraphicsDeviceService>();
+            game = Services.GetService<IGame>();
         }
 
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component) => new();
@@ -64,6 +72,7 @@ namespace Stride.Rendering.Voxels.Grid
                 entity.RemoveChild(carrier);
             state.Model = null;
             state.ReleaseBuffers();
+            state.ReleasePalette();
         }
 
         public override void Update(GameTime time)
@@ -84,6 +93,7 @@ namespace Stride.Rendering.Voxels.Grid
                     continue;
                 }
 
+                EnsurePalette(device, component, state);
                 EnsureModel(device, component, state);
                 state.Model.Enabled = true;
                 state.Model.IsShadowCaster = component.CastShadows;
@@ -95,6 +105,18 @@ namespace Stride.Rendering.Voxels.Grid
                     state.Surface.ApplyParameters(state.Material.Passes[0].Parameters);
                 }
             }
+        }
+
+        /// <summary>
+        /// Keeps the palette in step with the component's material list, and on the traversal, which
+        /// is what the shaders read it through.
+        /// </summary>
+        private void EnsurePalette(GraphicsDevice device, VoxelGridComponent component, State state)
+        {
+            state.Palette ??= new VoxelGridPalette(device);
+            if (state.Palette.NeedsUpdate(component.Materials))
+                state.Palette.Update(game.GraphicsContext.CommandList, component.Materials);
+            component.Traversal.Palette = state.Palette;
         }
 
         private static void EnsureModel(GraphicsDevice device, VoxelGridComponent component, State state)
@@ -109,7 +131,7 @@ namespace Stride.Rendering.Voxels.Grid
             var wanted = component.Material;
             var rebuild = state.Material == null
                           || (wanted != null && state.Material != wanted)
-                          || (wanted == null && (!Equals(state.Shader, shader) || !ReferenceEquals(state.Emissive, component.Emissive)));
+                          || (wanted == null && !Equals(state.Shader, shader));
             if (rebuild)
             {
                 if (wanted != null)
@@ -126,7 +148,6 @@ namespace Stride.Rendering.Voxels.Grid
                 }
 
                 state.Shader = shader;
-                state.Emissive = component.Emissive;
                 state.Model = null;
 
                 // The far faces are kept, so the volume is drawn from inside as well as from outside
@@ -245,7 +266,11 @@ namespace Stride.Rendering.Voxels.Grid
         }
 
         /// <summary>
-        /// Enough material to see the field by, carrying its own colours and nothing else.
+        /// The material that lets the palette through: the surface feature writes colour, glossiness,
+        /// specular and emission straight onto the material streams from the palette, and each map
+        /// feature here hands its stream back unchanged. The features are not decoration: the
+        /// generator adds lighting only to a material that has a diffuse feature, and emission only
+        /// to one that has an emissive feature.
         /// </summary>
         /// <remarks>
         /// The environment function is the polynomial approximation rather than the lookup table: the
@@ -261,21 +286,19 @@ namespace Stride.Rendering.Voxels.Grid
                 Attributes =
                 {
                     Surface = surface,
-
-                    // The diffuse slot reads the field's colour. A material needs a diffuse feature
-                    // to shade at all; a user replaces the palette by putting a texture here instead.
-                    Diffuse = new MaterialDiffuseMapFeature(new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelAlbedo" }),
+                    Diffuse = new MaterialDiffuseMapFeature(new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelDiffuse" }),
                     DiffuseModel = new MaterialDiffuseLambertModelFeature(),
-                    Specular = new MaterialMetalnessMapFeature(new ComputeFloat(0f)),
+                    Specular = new MaterialSpecularMapFeature { SpecularMap = new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelSpecular" } },
                     SpecularModel = new MaterialSpecularMicrofacetModelFeature
                     {
                         Environment = new MaterialSpecularMicrofacetEnvironmentGGXPolynomial(),
                     },
-                    MicroSurface = new MaterialGlossinessMapFeature(new ComputeFloat(0.35f)),
-
-                    // Whatever the component says the surface emits. The slot runs after the
-                    // surface feature, so a shader put here reads the traced albedo and position.
-                    Emissive = component.Emissive is null ? null : new MaterialEmissiveMapFeature(component.Emissive),
+                    MicroSurface = new MaterialGlossinessMapFeature(new ComputeShaderClassScalar { MixinReference = "ComputeColorVoxelGlossiness" }),
+                    Emissive = new MaterialEmissiveMapFeature(new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelEmissive" })
+                    {
+                        Intensity = new ComputeShaderClassScalar { MixinReference = "ComputeColorVoxelEmissiveIntensity" },
+                        UseAlpha = false,
+                    },
                 },
             };
 
