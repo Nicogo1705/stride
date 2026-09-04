@@ -1,0 +1,10 @@
+// Mixed into the root by the pass: the stage override every class in the program should see.
+namespace Stride.Shaders.Tests;
+
+shader StagePassMarker : StagePassInfo
+{
+    override stage float IsCaster()
+    {
+        return 1;
+    }
+};

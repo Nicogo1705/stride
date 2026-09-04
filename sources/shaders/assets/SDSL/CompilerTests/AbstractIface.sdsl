@@ -1,0 +1,7 @@
+// An interface with an abstract method, the way IVoxelGridTraversal would declare one.
+namespace Stride.Shaders.Tests;
+
+shader AbstractIface
+{
+    abstract float Value();
+};

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -745,6 +745,144 @@ new ShaderMacro("class", "shader"),
                 Console.WriteLine(hlsl);
             }
         }
+    }
+
+    // Regression: an interface method declared `abstract`, with the slot typed by the interface and
+    // filled with an implementation, threw KeyNotFoundException in the mixer.
+    [Fact]
+    public void AbstractInterfaceMethodResolvesToTheComposedImplementation()
+    {
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        foreach (var name in new[] { "ComposeSharedBase", "AbstractIface", "AbstractImpl", "AbstractRoot" })
+            shaderMixer.ShaderLoader.LoadExternalBuffer(name, [], out _, out _, out _);
+
+        var shaderSource = new ShaderMixinSource
+        {
+            Mixins = { new ShaderClassSource("AbstractRoot") },
+            Compositions = { ["helper"] = new ShaderClassSource("AbstractImpl") },
+        };
+
+        var log = new Stride.Core.Diagnostics.LoggerResult();
+        Assert.True(shaderMixer.MergeSDSL(shaderSource, new ShaderMixer.Options(true), log, out var bytecode, out _, out _, out _),
+            string.Join(Environment.NewLine, log.Messages.Select(m => m.Text)));
+
+        var disassembly = Spv.Dis(SpirvBytecode.CreateFromSpan(bytecode), DisassemblerFlags.Name | DisassemblerFlags.Id | DisassemblerFlags.InstructionIndex, true);
+        Assert.Contains("OpImageWrite", disassembly);
+    }
+
+    // Regression: a `stage` method overridden by a class mixed at the root, and called from a
+    // class inside a composition, did not compile - the composition kept the base definition.
+    [Fact]
+    public void StageOverrideAtRootIsSeenInsideAComposition()
+    {
+        SpirvCrossSupport.SkipUnlessAvailable();
+
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        foreach (var name in new[] { "ComposeSharedBase", "StagePassInfo", "StagePassMarker", "StagePassHelper", "StagePassRoot" })
+            shaderMixer.ShaderLoader.LoadExternalBuffer(name, [], out _, out _, out _);
+
+        var shaderSource = new ShaderMixinSource
+        {
+            Mixins = { new ShaderClassSource("StagePassRoot"), new ShaderClassSource("StagePassMarker") },
+            Compositions = { ["helper"] = new ShaderClassSource("StagePassHelper") },
+        };
+
+        var log = new Stride.Core.Diagnostics.LoggerResult();
+        Assert.True(shaderMixer.MergeSDSL(shaderSource, new ShaderMixer.Options(true), log, out var bytecode, out _, out _, out _),
+            string.Join(Environment.NewLine, log.Messages.Select(m => m.Text)));
+
+        // The override answers 1; the base answered 0. With the override in force the constant
+        // 0 has no reason to survive in the body.
+        var translator = new SpirvTranslator(bytecode.ToArray().AsMemory().Cast<byte, uint>());
+        var entryPoint = translator.GetEntryPoints().First(x => x.ExecutionModel == ExecutionModel.GLCompute);
+        var hlsl = translator.Translate(Backend.Hlsl, entryPoint);
+        Assert.DoesNotContain("float4(0.0f, 0.0f, 0.0f, 1.0f)", hlsl);
+        Assert.Contains("1.0f", hlsl);
+    }
+
+    // Regression: int3 arithmetic on the result of an inherited method was refused with
+    // "Unsupported type for GetElementType".
+    [Fact]
+    public void IntegerVectorArithmeticOnAnInheritedMethodResult()
+    {
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        foreach (var name in new[] { "ComposeSharedBase", "Int3Base", "Int3Derived" })
+            shaderMixer.ShaderLoader.LoadExternalBuffer(name, [], out _, out _, out _);
+
+        var log = new Stride.Core.Diagnostics.LoggerResult();
+        Assert.True(shaderMixer.MergeSDSL(new ShaderClassSource("Int3Derived"), new ShaderMixer.Options(true), log, out var bytecode, out _, out _, out _),
+            string.Join(Environment.NewLine, log.Messages.Select(m => m.Text)));
+
+        var disassembly = Spv.Dis(SpirvBytecode.CreateFromSpan(bytecode), DisassemblerFlags.Name | DisassemblerFlags.Id | DisassemblerFlags.InstructionIndex, true);
+        Assert.Contains("OpImageWrite", disassembly);
+    }
+
+    [Fact]
+    public void AbstractInterfaceMethodResolvesWhenImplementationIsMixedBesideTheCaller()
+    {
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        foreach (var name in new[] { "ComposeSharedBase", "AbstractIface", "AbstractImpl", "AbstractCaller", "AbstractRoot2" })
+            shaderMixer.ShaderLoader.LoadExternalBuffer(name, [], out _, out _, out _);
+
+        var shaderSource = new ShaderMixinSource
+        {
+            Mixins = { new ShaderClassSource("AbstractRoot2") },
+            Compositions = { ["layer"] = new ShaderMixinSource { Mixins = { new ShaderClassSource("AbstractImpl"), new ShaderClassSource("AbstractCaller") } } },
+        };
+
+        var log = new Stride.Core.Diagnostics.LoggerResult();
+        Assert.True(shaderMixer.MergeSDSL(shaderSource, new ShaderMixer.Options(true), log, out var bytecode, out _, out _, out _),
+            string.Join(Environment.NewLine, log.Messages.Select(m => m.Text)));
+
+        var disassembly = Spv.Dis(SpirvBytecode.CreateFromSpan(bytecode), DisassemblerFlags.Name | DisassemblerFlags.Id | DisassemblerFlags.InstructionIndex, true);
+        Assert.Contains("OpImageWrite", disassembly);
+    }
+
+    [Fact]
+    public void StageOverrideAtRootIsSeenTwoCompositionsDown()
+    {
+        SpirvCrossSupport.SkipUnlessAvailable();
+
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        foreach (var name in new[] { "ComposeSharedBase", "StagePassInfo", "StagePassMarker", "StagePassHelper", "StagePassOuter", "StagePassRoot2" })
+            shaderMixer.ShaderLoader.LoadExternalBuffer(name, [], out _, out _, out _);
+
+        var shaderSource = new ShaderMixinSource
+        {
+            Mixins = { new ShaderClassSource("StagePassRoot2"), new ShaderClassSource("StagePassMarker") },
+            Compositions = { ["outer"] = new ShaderMixinSource { Mixins = { new ShaderClassSource("StagePassOuter") }, Compositions = { ["inner"] = new ShaderClassSource("StagePassHelper") } } },
+        };
+
+        var log = new Stride.Core.Diagnostics.LoggerResult();
+        Assert.True(shaderMixer.MergeSDSL(shaderSource, new ShaderMixer.Options(true), log, out var bytecode, out _, out _, out _),
+            string.Join(Environment.NewLine, log.Messages.Select(m => m.Text)));
+
+        var translator = new SpirvTranslator(bytecode.ToArray().AsMemory().Cast<byte, uint>());
+        var entryPoint = translator.GetEntryPoints().First(x => x.ExecutionModel == ExecutionModel.GLCompute);
+        var hlsl = translator.Translate(Backend.Hlsl, entryPoint);
+        Assert.DoesNotContain("float4(0.0f, 0.0f, 0.0f, 1.0f)", hlsl);
+        Assert.Contains("1.0f", hlsl);
+    }
+
+    [Fact]
+    public void IntegerVectorArithmeticInTheTraversalsForms()
+    {
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        foreach (var name in new[] { "ComposeSharedBase", "Int3Base", "Int3Derived2" })
+            shaderMixer.ShaderLoader.LoadExternalBuffer(name, [], out _, out _, out _);
+
+        var log = new Stride.Core.Diagnostics.LoggerResult();
+        Assert.True(shaderMixer.MergeSDSL(new ShaderClassSource("Int3Derived2"), new ShaderMixer.Options(true), log, out var bytecode, out _, out _, out _),
+            string.Join(Environment.NewLine, log.Messages.Select(m => m.Text)));
+
+        var disassembly = Spv.Dis(SpirvBytecode.CreateFromSpan(bytecode), DisassemblerFlags.Name | DisassemblerFlags.Id | DisassemblerFlags.InstructionIndex, true);
+        Assert.Contains("OpImageWrite", disassembly);
     }
 
     // Regression: a composition whose shader derives from the same base as the shader it is

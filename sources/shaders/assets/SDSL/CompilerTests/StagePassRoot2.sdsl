@@ -1,0 +1,15 @@
+// The root does not inherit the pass info itself; only the marker mixed beside it and the
+// helper two compositions down do.
+namespace Stride.Shaders.Tests;
+
+shader StagePassRoot2 : ComposeSharedBase
+{
+    RWTexture3D<float4> WriteTex;
+
+    compose StagePassOuter outer;
+
+    override void Compute()
+    {
+        WriteTex[streams.DispatchThreadId] = outer.Value();
+    }
+};

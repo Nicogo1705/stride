@@ -1,0 +1,11 @@
+// A class that inherits the interface and calls its abstract method, expecting the
+// implementation to be mixed in beside it under the same composition slot.
+namespace Stride.Shaders.Tests;
+
+shader AbstractCaller : AbstractIface
+{
+    float4 Run()
+    {
+        return float4(Value(), 0, 0, 1);
+    }
+};

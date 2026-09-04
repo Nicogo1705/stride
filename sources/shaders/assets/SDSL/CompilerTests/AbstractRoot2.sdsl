@@ -1,0 +1,14 @@
+// The slot is filled with a mixin source of two classes: the implementation and the caller.
+namespace Stride.Shaders.Tests;
+
+shader AbstractRoot2 : ComposeSharedBase
+{
+    RWTexture3D<float4> WriteTex;
+
+    compose AbstractCaller layer;
+
+    override void Compute()
+    {
+        WriteTex[streams.DispatchThreadId] = layer.Run();
+    }
+};

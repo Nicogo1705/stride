@@ -1,0 +1,15 @@
+// Regression: int3 arithmetic on the result of an inherited method was refused with
+// "Unsupported type for GetElementType".
+namespace Stride.Shaders.Tests;
+
+shader Int3Derived : ComposeSharedBase, Int3Base
+{
+    RWTexture3D<float4> WriteTex;
+
+    override void Compute()
+    {
+        int3 cell = CellOf(float3(1.5, 2.5, 3.5)) + int3(1, 0, 0);
+        int3 next = cell * 2 - int3(0, 1, 0);
+        WriteTex[streams.DispatchThreadId] = float4((float3)next, 1);
+    }
+};

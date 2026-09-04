@@ -1,0 +1,12 @@
+// One more level: the helper sits in a composition of a composition.
+namespace Stride.Shaders.Tests;
+
+shader StagePassOuter
+{
+    compose StagePassHelper inner;
+
+    float4 Value()
+    {
+        return inner.Value();
+    }
+};

@@ -1,0 +1,15 @@
+// Regression: a stage method overridden at the root and called from inside a composition
+// never compiled - the override was not resolved across the composition boundary.
+namespace Stride.Shaders.Tests;
+
+shader StagePassRoot : ComposeSharedBase, StagePassInfo
+{
+    RWTexture3D<float4> WriteTex;
+
+    compose StagePassHelper helper;
+
+    override void Compute()
+    {
+        WriteTex[streams.DispatchThreadId] = helper.Value();
+    }
+};

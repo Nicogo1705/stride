@@ -1,0 +1,15 @@
+// Regression: a composition slot typed by an interface whose method is abstract threw a
+// KeyNotFoundException in the mixer instead of resolving to the composed implementation.
+namespace Stride.Shaders.Tests;
+
+shader AbstractRoot : ComposeSharedBase
+{
+    RWTexture3D<float4> WriteTex;
+
+    compose AbstractIface helper;
+
+    override void Compute()
+    {
+        WriteTex[streams.DispatchThreadId] = float4(helper.Value(), 0, 0, 1);
+    }
+};

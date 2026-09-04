@@ -1,0 +1,10 @@
+// Composed under a slot; asks the stage question from inside the composition.
+namespace Stride.Shaders.Tests;
+
+shader StagePassHelper : StagePassInfo
+{
+    float4 Value()
+    {
+        return float4(IsCaster(), 0, 0, 1);
+    }
+};

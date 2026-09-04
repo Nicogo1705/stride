@@ -1,0 +1,10 @@
+// A stage method with a default answer, like a "which pass am I in" query a pass can override.
+namespace Stride.Shaders.Tests;
+
+shader StagePassInfo
+{
+    stage float IsCaster()
+    {
+        return 0;
+    }
+};

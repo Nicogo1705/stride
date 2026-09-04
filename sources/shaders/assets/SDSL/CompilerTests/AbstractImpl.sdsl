@@ -1,0 +1,10 @@
+// The implementation composed into the root.
+namespace Stride.Shaders.Tests;
+
+shader AbstractImpl : AbstractIface
+{
+    override float Value()
+    {
+        return 2;
+    }
+};

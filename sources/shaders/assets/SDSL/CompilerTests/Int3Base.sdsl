@@ -1,0 +1,10 @@
+// A method returning an integer vector, inherited by the shader that does arithmetic on it.
+namespace Stride.Shaders.Tests;
+
+shader Int3Base
+{
+    int3 CellOf(float3 position)
+    {
+        return (int3)floor(position);
+    }
+};

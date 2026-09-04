@@ -1,0 +1,29 @@
+// Integer-vector arithmetic in the forms the voxel traversal uses.
+namespace Stride.Shaders.Tests;
+
+shader Int3Derived2 : ComposeSharedBase, Int3Base
+{
+    RWTexture3D<float4> WriteTex;
+
+    cbuffer PerMaterial
+    {
+        stage float3 Extent;
+        stage float CellSize;
+    }
+
+    stage int3 Limit()
+    {
+        return (int3)round(Extent / CellSize);
+    }
+
+    override void Compute()
+    {
+        int3 cells = (int3)round(Extent / CellSize);
+        int3 last = cells - 1;
+        int3 clamped = max(CellOf(float3(1.5, 2.5, 3.5)), 0);
+        int3 bounded = min(clamped, last);
+        int3 fromStage = Limit() - int3(1, 1, 1);
+        int3 total = bounded + fromStage;
+        WriteTex[streams.DispatchThreadId] = float4((float3)total, 1);
+    }
+};

@@ -28,7 +28,7 @@ namespace Stride.Rendering.Voxels
                 ReadTex.Load(int4(posR + uint3(1, 1, 1), 0))
             );
 
-            WriteTex[pos + WriteOffset] = fragmentSum;
+            WriteTex[pos + (uint3)WriteOffset] = fragmentSum;
         }
     };
 }
