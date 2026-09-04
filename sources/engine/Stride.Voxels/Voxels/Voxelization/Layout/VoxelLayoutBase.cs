@@ -64,6 +64,9 @@ namespace Stride.Rendering.Voxels
 
         protected IVoxelStorageTexture storageTex;
 
+        /// <summary>The texture the attribute's rings are arranged into, once there is one.</summary>
+        public IVoxelStorageTexture StorageTexture => storageTex;
+
         virtual public int PrepareLocalStorage(VoxelStorageContext context, IVoxelStorage storage)
         {
             return StorageMethod.PrepareLocalStorage(context, storage, 4, LayoutCount);

@@ -85,6 +85,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
             private ValueParameterKey<float> intensityKey;
             private ValueParameterKey<float> specularIntensityKey;
             private ValueParameterKey<float> specularRoughnessCutoffKey;
+            private ValueParameterKey<float> specularOffsetKey;
             private ValueParameterKey<float> giResolveEnabledKey;
             private ValueParameterKey<Vector4> giResolveSizesKey;
             private ObjectParameterKey<Texture> giResolveTextureKey;
@@ -152,6 +153,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 intensityKey = LightVoxelShaderKeys.Intensity.ComposeWith(compositionName);
                 specularIntensityKey = LightVoxelShaderKeys.SpecularIntensity.ComposeWith(compositionName);
                 specularRoughnessCutoffKey = LightVoxelShaderKeys.SpecularRoughnessCutoff.ComposeWith(compositionName);
+                specularOffsetKey = LightVoxelShaderKeys.SpecularOffset.ComposeWith(compositionName);
                 giResolveEnabledKey = LightVoxelShaderKeys.GIResolveEnabled.ComposeWith(compositionName);
                 giResolveSizesKey = LightVoxelShaderKeys.GIResolveSizes.ComposeWith(compositionName);
                 giResolveTextureKey = LightVoxelShaderKeys.GIResolveTexture.ComposeWith(compositionName);
@@ -228,6 +230,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 parameters.Set(intensityKey, intensity);
                 parameters.Set(specularIntensityKey, specularIntensity);
                 parameters.Set(specularRoughnessCutoffKey, lightVoxel.SpecularRoughnessCutoff);
+                parameters.Set(specularOffsetKey, lightVoxel.SpecularOffset);
 
                 var resolved = PrepareScreenSpaceResolve(context, lightVoxel, viewContext);
 

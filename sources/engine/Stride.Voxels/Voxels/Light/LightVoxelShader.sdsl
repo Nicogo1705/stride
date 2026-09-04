@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using Stride.Rendering.Lights;
 namespace Stride.Rendering.Voxels.VoxelGI
@@ -13,6 +13,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
             float Intensity;
             float SpecularIntensity;
             float SpecularRoughnessCutoff;
+            float SpecularOffset;
 
             // Zero marches the diffuse cones here, per shaded pixel, as it always did. Otherwise
             // VoxelGIResolveShader traced them into a smaller buffer and this reads that instead;
@@ -145,7 +146,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 float specularFade = SpecularIntensity * saturate((SpecularRoughnessCutoff - roughness) * 8.0 + 1.0);
                 if (specularFade > 0.0)
                 {
-                    float3 startPos = worldPos + streams.normalWS.xyz * specularMarcher.StepSizeRadius(1.0);
+                    float3 startPos = worldPos + streams.normalWS.xyz * specularMarcher.StepSizeRadius(SpecularOffset);
 
                     // alphaRoughness, not roughness: the aperture of a GGX lobe follows alpha, and
                     // alpha is roughness squared - which is also the curve this needed. Linear in

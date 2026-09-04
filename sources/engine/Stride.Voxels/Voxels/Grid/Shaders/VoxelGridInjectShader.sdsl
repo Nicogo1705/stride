@@ -15,10 +15,14 @@ namespace Stride.Rendering.Voxels.Grid
     /// combined by atomic max. Everything after the buffer - opacify, arrangement, mipmaps - then
     /// runs unchanged.
     ///
-    /// What is written is what the field emits, since the voxelizer writes shaded radiance and the
-    /// field has no lights of its own here; the sun's bounce off a field lit only this way is not
-    /// carried. A field that emits, in a world lit by what emits, is carried exactly.
-    shader VoxelGridInjectShader : ComputeShaderBase, DataPacking
+    /// What is written is what the field emits, plus a bounce: the material's colour times the
+    /// light the previous frame's GI held a little way out along the normal, read off the next
+    /// coarser ring. The voxelizer writes shaded radiance, so a mesh's shell carries its own lit
+    /// colour and a cone that grazes it reads roughly the surface it left; a shell that carried
+    /// emission alone was black wherever the material did not glow, and every self-contact of a
+    /// cone with its own surface - which happens at fixed angles as the cone climbs the mips -
+    /// came back as a dark ring. The sun's light off the field is still not carried.
+    shader VoxelGridInjectShader : ComputeShaderBase, DataPacking, Texturing
     {
         compose IVoxelGridTraversal Traversal;
 
@@ -44,6 +48,61 @@ namespace Stride.Rendering.Voxels.Grid
 
         /// World to ring: texPos = world * w + xyz, as the storer has it.
         float4 ClipOffsetScale;
+
+        /// The rings as they stood at the end of the previous frame, for the bounce.
+        stage Texture3D VoxelGridPreviousClipMaps;
+
+        /// The ring the bounce is read from, its world-to-ring transform, and the ring count of
+        /// the atlas (one column per ring, one row per direction). BounceScale is the stored
+        /// value's brightness scale times the field's bounce strength; zero turns the bounce off.
+        int BounceRing;
+        float4 BounceOffsetScale;
+        int ClipMapCount;
+        float BounceScale;
+
+        /// One direction row of the bounce ring, at a position inside that ring.
+        float3 SampleRow(float3 ringPos, int row)
+        {
+            float3 uvw = float3((ringPos.x + (float)BounceRing) / (float)ClipMapCount,
+                                (ringPos.y + (float)row) / (float)DirectionCount,
+                                ringPos.z);
+            return VoxelGridPreviousClipMaps.SampleLevel(LinearSampler, uvw, 0).rgb;
+        }
+
+        /// The previous frame's light a little way out along the normal from a surface point.
+        float3 PreviousLight(float3 worldPos, float3 normal)
+        {
+            float bounceVoxel = 1.0 / (BounceOffsetScale.w * (float)ClipResolution.x);
+            // Three of the coarser ring's voxels out: closer, the probe lands in the blurred
+            // shell of the surface itself, reads its own radiance back, and the loop runs away.
+            float3 probe = worldPos + normal * bounceVoxel * 3.0;
+            float3 ringPos = probe * BounceOffsetScale.w + BounceOffsetScale.xyz;
+            float margin = 1.0 / (float)ClipResolution.x;
+            bool inside = all(ringPos >= margin) && all(ringPos <= 1.0 - margin);
+
+            // Six directions keep a row per sign; three keep a row per axis; one keeps one. No
+            // indexing of a vector by a loop counter: spelled out per axis. One exit, as
+            // everywhere the shader compiler is involved.
+            float3 sum = float3(0, 0, 0);
+            if (!inside)
+            {
+            }
+            else if (DirectionCount == 1)
+            {
+                sum = SampleRow(ringPos, 0);
+            }
+            else
+            {
+                float3 weights = abs(normal);
+                if (weights.x > 0.01)
+                    sum += SampleRow(ringPos, DirectionCount == 6 ? (normal.x < 0 ? 1 : 0) : 0) * weights.x;
+                if (weights.y > 0.01)
+                    sum += SampleRow(ringPos, DirectionCount == 6 ? (normal.y < 0 ? 3 : 2) : 1) * weights.y;
+                if (weights.z > 0.01)
+                    sum += SampleRow(ringPos, DirectionCount == 6 ? (normal.z < 0 ? 5 : 4) : 2) * weights.z;
+            }
+            return sum * BounceScale;
+        }
 
         override void Compute()
         {
@@ -82,6 +141,8 @@ namespace Stride.Rendering.Voxels.Grid
                     float3 normal = normalize(mul(float4(localNormal, 0), VoxelGridWorld).xyz);
                     int id = clamp(Traversal.SurfaceMaterialId(localPos, int2(0, 0), 0), 0, 255);
                     float3 radiance = VoxelGridInjectTable[id * 2 + 1].rgb;
+                    if (BounceScale > 0)
+                        radiance += VoxelGridInjectTable[id * 2].rgb * PreviousLight(worldPos, normal);
 
                     uint index = (uint)ClipSlot * (uint)(ClipResolution.x * ClipResolution.y * ClipResolution.z)
                                  + (uint)voxel.x + (uint)voxel.y * (uint)ClipResolution.x + (uint)voxel.z * (uint)(ClipResolution.x * ClipResolution.y);

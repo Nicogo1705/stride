@@ -63,6 +63,16 @@ namespace Stride.Rendering.Voxels.VoxelGI
         public float SpecularRoughnessCutoff { get; set; } = 1.0f;
 
         /// <summary>
+        /// How far along the normal, in voxels, the specular cone starts from the shaded point.
+        /// One voxel (the default) starts it at the edge of the surface's own voxel shell, which a
+        /// filtered fetch still half reads; a cone that grazes its own shell at fixed angles as it
+        /// climbs the mips draws rings on a curved surface, and starting further out clears them.
+        /// </summary>
+        [DataMember(56)]
+        [DataMemberRange(0.5, 4.0, 0.1, 0.5, 2)]
+        public float SpecularOffset { get; set; } = 1.0f;
+
+        /// <summary>
         /// Trace the diffuse cones into a buffer this many times smaller than the screen along each
         /// axis, instead of once per shaded pixel: 1 marches inline, 2 traces a quarter of the
         /// cones, 4 a sixteenth.

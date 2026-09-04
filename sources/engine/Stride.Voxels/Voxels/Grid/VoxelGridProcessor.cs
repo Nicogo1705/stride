@@ -232,6 +232,7 @@ namespace Stride.Rendering.Voxels.Grid
                         World = component.Entity.Transform.WorldMatrix,
                         Extent = state.Extent,
                         Table = state.Table.Buffer,
+                        Bounce = component.InjectBounce,
                     });
                 }
 

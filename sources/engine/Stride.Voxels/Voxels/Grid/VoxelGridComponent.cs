@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Engine;
 using Stride.Engine.Design;
 using Stride.Rendering.Materials;
@@ -93,6 +94,17 @@ namespace Stride.Rendering.Voxels.Grid
         /// <userdoc>Let a voxel GI volume read the field's samples directly, rather than voxelizing the field like a mesh. Carries emission and occlusion; not direct light.</userdoc>
         [DataMember(19)]
         public bool InjectIntoGI { get; set; } = true;
+
+        /// <summary>
+        /// With <see cref="InjectIntoGI"/>, how much of the previous frame's indirect light the
+        /// field's colour sends back into the GI; 0 injects emission alone. The GI reads this back
+        /// next frame, so with the volume's own bounce the product must stay under one or the
+        /// field lights itself up without end.
+        /// </summary>
+        /// <userdoc>How much indirect light the field bounces back into the GI when injected. 0 carries only what it emits.</userdoc>
+        [DataMember(20)]
+        [DataMemberRange(0.0, 4.0, 0.05, 0.25, 2)]
+        public float InjectBounce { get; set; } = 0.5f;
 
         /// <summary>Whether the field writes the shadow maps. It receives shadows either way.</summary>
         /// <userdoc>Whether the field casts shadows.</userdoc>

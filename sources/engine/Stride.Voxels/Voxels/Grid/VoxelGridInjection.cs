@@ -24,6 +24,9 @@ namespace Stride.Rendering.Voxels.Grid
         public Vector3 Extent;
         /// <summary>The material table: colour and emission per id.</summary>
         public GraphicsBuffer Table;
+
+        /// <summary>How much of the previous frame's light the field's colour bounces back; zero for emission only.</summary>
+        public float Bounce;
     }
 
     /// <summary>
@@ -167,6 +170,17 @@ namespace Stride.Rendering.Voxels.Grid
                         parameters.Set(VoxelGridInjectShaderKeys.BufferOffset, emission.BufferOffset);
                         parameters.Set(VoxelGridInjectShaderKeys.DirectionCount, layout.DirectionCount);
                         parameters.Set(VoxelGridInjectShaderKeys.ClipOffsetScale, storer.PerMapOffsetScale[ring]);
+
+                        // The bounce reads the previous frame's rings, one coarser than this one
+                        // where there is one - a blurrier answer, which is what an irradiance is.
+                        var previous = layout.StorageTexture as VoxelStorageTextureClipmap;
+                        var bounceRing = Math.Min(ring + 1, storer.ClipMapCount - 1);
+                        var bounce = previous?.ClipMaps != null && entry.Bounce > 0 ? layout.maxBrightness * entry.Bounce : 0f;
+                        parameters.Set(VoxelGridInjectShaderKeys.VoxelGridPreviousClipMaps, previous?.ClipMaps);
+                        parameters.Set(VoxelGridInjectShaderKeys.BounceRing, bounceRing);
+                        parameters.Set(VoxelGridInjectShaderKeys.BounceOffsetScale, previous != null ? previous.PerMapOffsetScaleCurrent[bounceRing] : Vector4.Zero);
+                        parameters.Set(VoxelGridInjectShaderKeys.ClipMapCount, storer.ClipMapCount);
+                        parameters.Set(VoxelGridInjectShaderKeys.BounceScale, bounce);
 
                         shader.ThreadNumbers = new Int3(8, 8, 8);
                         shader.ThreadGroupCounts = new Int3((resolution.X + 7) / 8, (resolution.Y + 7) / 8, (resolution.Z + 7) / 8);
