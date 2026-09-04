@@ -11,8 +11,12 @@ namespace Stride.Rendering.Voxels.Grid
     /// diffuse, its normal map on the tangent frame built here, its emission, and then the lights
     /// and shadows of the renderer. Which is the point: a voxel drawn with a material is that
     /// material, not a copy of its numbers.
-    shader MaterialSurfaceVoxelGridResolve : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, MaterialPixelStream
+    shader MaterialSurfaceVoxelGridResolve : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, VoxelizationPassInfo
     {
+        // The traversal and its source are mixed in beside this, not composed, so the field's
+        // resource is declared once: the voxelizer's view has nothing resolved for it, and there
+        // the surface is walked here.
+
         rgroup PerMaterial
         {
             /// The surface's normal, with 1 in w where the pass found a surface at all.
@@ -41,6 +45,10 @@ namespace Stride.Rendering.Voxels.Grid
             /// See VoxelGridFieldKeys.Debug.
             [Link("VoxelGridField.Debug")]
             stage float VoxelGridDebug;
+
+            /// How far along the ray the surface is looked for when the surface is walked here.
+            [Link("VoxelGridField.MaxDistance")]
+            stage float VoxelGridMaxDistance;
         }
 
         override void Compute()
@@ -53,6 +61,34 @@ namespace Stride.Rendering.Voxels.Grid
             bool resolved = normalResolved.w > 0.5;
             int material = (int)round(idGrid.r * 255.0);
             int grid = (int)round(idGrid.g * 255.0);
+
+            if (streams.IsVoxelizationPass > 0.5)
+            {
+                // The voxelizer's view: nothing was resolved for it, so the field is walked from
+                // here, along the view axis - its projections are orthographic - and the pixel is
+                // this material's if the heaviest id at the hit is. No dither: a voxel takes one
+                // material, and noise in the volume would be noise in the light.
+                float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
+                float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
+                float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
+                float3 directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
+                float3 originLocal = targetLocal - directionLocal * reach;
+
+                float hitDistance;
+                float3 hitNormal;
+                bool found = Trace(originLocal, directionLocal, 2.0 * reach, hitDistance, hitNormal);
+                float3 hitLocal = originLocal + directionLocal * hitDistance;
+                int walked = found ? SurfaceMaterialId(hitLocal, pixel.xy, 0) : -2;
+
+                resolved = found;
+                material = walked;
+                grid = VoxelGridIndex;
+                positionDepth = float4(mul(float4(hitLocal, 1), World).xyz, 0);
+                normalResolved = float4(normalize(mul(float4(hitNormal, 0), World).xyz), found ? 1 : 0);
+                float4 hitClip = mul(float4(positionDepth.xyz, 1), ViewProjection);
+                positionDepth.w = hitClip.z / hitClip.w;
+            }
+
             bool mine = resolved && grid == VoxelGridIndex && (VoxelGridMaterialId < 0 || material == VoxelGridMaterialId);
 
             // One exit: a return from inside Compute reaches FXC as a loop to unroll, and it does

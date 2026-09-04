@@ -5,13 +5,15 @@ namespace Stride.Rendering.Voxels
     /// <summary>
     /// Voxelization, projects to axis of largest area and writes fragments to buffer
     /// </summary>
-    shader VoxelizeToFragments : Math, Transformation, ShaderBase, Texturing, NormalStream, PositionStream4, VoxelPositionStream, MaterialPixelStream, MaterialPixelShadingStream
+    shader VoxelizeToFragments : Math, Transformation, ShaderBase, Texturing, NormalStream, PositionStream4, VoxelPositionStream, MaterialPixelStream, MaterialPixelShadingStream, VoxelizationPassInfo
     {
         compose VoxelStorageShader Storage;
         override stage void PSMain()
         {
             Storage.PrepareFragments();
             streams.IsFrontFace = true;
+            // Said before the material chain runs, for a material whose surface is not its mesh.
+            streams.IsVoxelizationPass = 1;
             if (Storage.MightStoreFragments())
             {
                 base.PSMain();

@@ -57,6 +57,9 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The traversal's shader as it was when the shadow material was built.</summary>
             public ShaderSource Shader;
 
+            /// <summary>The traversal's shader as it was when the materials were wrapped.</summary>
+            public ShaderSource MaterialsShader;
+
             /// <summary>The box's buffers, released when it is rebuilt or the component goes.</summary>
             public GraphicsBuffer VertexBuffer;
             public GraphicsBuffer IndexBuffer;
@@ -147,12 +150,15 @@ namespace Stride.Rendering.Voxels.Grid
                     state.ShadowSurface.ApplyParameters(state.Shadow.Wrapped.Passes[0].Parameters);
                 }
 
-                // The resolve targets, bound again when the renderer remade them, and the
-                // diagnostic view, every frame.
+                // The resolve targets, bound again when the renderer remade them; the field's
+                // parameters, for the voxelizer's view, where the layer walks the field itself;
+                // and the diagnostic view. Every frame.
                 foreach (var draw in state.Materials)
                 {
                     foreach (var pass in draw.Wrapped.Passes)
                     {
+                        component.Traversal.ApplyParameters(pass.Parameters);
+                        pass.Parameters.Set(VoxelGridFieldKeys.MaxDistance, state.Extent.Length());
                         pass.Parameters.Set(VoxelGridFieldKeys.Debug, component.DebugView);
                         if (renderer != null && state.TargetsVersion != renderer.TargetsVersion)
                         {
@@ -327,11 +333,15 @@ namespace Stride.Rendering.Voxels.Grid
                 wanted.Add((state.Fallback, -1));
             }
 
-            var same = wanted.Count == state.Materials.Count;
+            // Rebuilt when the list changes, and when the traversal's shader does: the layer mixes
+            // the traversal in for the voxelizer's view.
+            var shader = component.Traversal.GetShaderSource();
+            var same = wanted.Count == state.Materials.Count && Equals(state.MaterialsShader, shader);
             for (int i = 0; same && i < wanted.Count; i++)
                 same = ReferenceEquals(state.Materials[i].Source, wanted[i].material);
             if (same)
                 return;
+            state.MaterialsShader = shader;
 
             foreach (var draw in state.Materials)
                 Detach(component.Entity, draw);
@@ -339,7 +349,7 @@ namespace Stride.Rendering.Voxels.Grid
 
             foreach (var (material, id) in wanted)
             {
-                var wrapped = Wrap(material, id, state.GridIndex);
+                var wrapped = Wrap(material, id, state.GridIndex, shader);
                 var draw = Attach(component.Entity, $"VoxelGridMaterial{id}", state, material, wrapped);
                 draw.Model.IsShadowCaster = false;
                 state.Materials.Add(draw);
@@ -358,16 +368,24 @@ namespace Stride.Rendering.Voxels.Grid
         /// run before them. The parameters are copied, so the material the user holds is untouched
         /// and each wrapped copy carries its own id.
         /// </remarks>
-        private static Material Wrap(Material source, int id, int gridIndex)
+        private static Material Wrap(Material source, int id, int gridIndex, ShaderSource traversal)
         {
             var wrapped = new Material();
             foreach (var sourcePass in source.Passes)
             {
                 var parameters = new ParameterCollection(sourcePass.Parameters);
 
+                // The resolve layer, with the traversal and its source mixed in beside it for the
+                // voxelizer's view, where the layer walks the field itself.
+                var resolve = new ShaderMixinSource();
+                resolve.Mixins.Add(new ShaderClassSource("MaterialSurfaceVoxelGridResolve"));
+                if (traversal is ShaderMixinSource traversalMixin)
+                    foreach (var part in traversalMixin.Mixins)
+                        resolve.Mixins.Add(part);
+
                 var layers = new ShaderMixinSource();
                 layers.Mixins.Add(new ShaderClassSource("MaterialSurfaceArray"));
-                layers.AddCompositionToArray("layers", new ShaderClassSource("MaterialSurfaceVoxelGridResolve"));
+                layers.AddCompositionToArray("layers", resolve);
 
                 var original = parameters.Get(MaterialKeys.PixelStageSurfaceShaders);
                 if (original is ShaderMixinSource mixin && mixin.Compositions.TryGetValue("layers", out var array) && array is ShaderArraySource arraySource)
@@ -381,6 +399,22 @@ namespace Stride.Rendering.Voxels.Grid
                 }
 
                 parameters.Set(MaterialKeys.PixelStageSurfaceShaders, layers);
+
+                // The vertex half defines the pass streams the layer reads, in every pass.
+                var vertexLayers = new ShaderMixinSource();
+                vertexLayers.Mixins.Add(new ShaderClassSource("MaterialSurfaceArray"));
+                var originalVertex = parameters.Get(MaterialKeys.VertexStageSurfaceShaders);
+                if (originalVertex is ShaderMixinSource vertexMixin && vertexMixin.Compositions.TryGetValue("layers", out var vertexArray) && vertexArray is ShaderArraySource vertexSource)
+                {
+                    foreach (var layer in vertexSource.Values)
+                        vertexLayers.AddCompositionToArray("layers", layer);
+                }
+                else if (originalVertex != null)
+                {
+                    vertexLayers.AddCompositionToArray("layers", originalVertex);
+                }
+                vertexLayers.AddCompositionToArray("layers", new ShaderClassSource("MaterialSurfaceVoxelGridVertex"));
+                parameters.Set(MaterialKeys.VertexStageSurfaceShaders, vertexLayers);
                 // The depth-only passes rasterise with the vertex stage alone unless told otherwise,
                 // and for this material the mesh is the proxy box.
                 parameters.Set(MaterialKeys.UsePixelShaderWithDepthPass, true);

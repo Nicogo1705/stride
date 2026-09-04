@@ -1,0 +1,22 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels
+{
+    /// <summary>
+    /// Lets a material shader ask whether it is being run to voxelize the scene.
+    /// </summary>
+    /// <remarks>
+    /// The voxelizer rasterises every model through its own view, one per dominant axis, and runs
+    /// the material chain on the fragments to know what each voxel is made of. A material whose
+    /// surface is not where its mesh is - a voxel field drawn through a proxy box, resolved once
+    /// for the camera - has nothing resolved for that view and must find its surface itself.
+    ///
+    /// A stream, as ShadowMapCasterPassInfo is: whoever asks writes it to 0 in the vertex stage,
+    /// so that it is defined in every pass, and VoxelizeToFragments writes 1 before the material
+    /// chain runs.
+    /// </remarks>
+    shader VoxelizationPassInfo
+    {
+        stage stream float IsVoxelizationPass;
+    };
+}
