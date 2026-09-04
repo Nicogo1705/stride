@@ -15,6 +15,37 @@ namespace Stride.Rendering.Voxels.Grid
     /// nothing, which is exactly what an interface should hide.
     shader IVoxelGridTraversal
     {
+        /// Picks the level of detail the next walks are made at, clamped to what the source holds.
+        void SetLod(int lod)
+        {
+        }
+
+        /// The level whose cells are no larger than a size, in grid local units: what a reader of
+        /// the field at that granularity - a GI ring, a shadow texel - should walk.
+        void SetLodForSize(float size)
+        {
+        }
+
+        /// The level a ray at a distance wants, when a pixel covers that many local units per unit
+        /// of distance: the finest whose cell is not smaller than the pixel. Fractional, for a
+        /// cross-fade between the two levels around it.
+        float LodAt(float distance, float unitsPerDistance)
+        {
+            return 0;
+        }
+
+        /// How many coarser levels the walk can be made at.
+        int LodLevels()
+        {
+            return 0;
+        }
+
+        /// The cell size at the level in force.
+        float CellSizeAtLod()
+        {
+            return 0;
+        }
+
         /// Traces a ray expressed in the grid local space, where the grid spans
         /// [0, cells * cellSize] on each axis. Returns whether anything was hit; hitDistance is
         /// measured along a normalized direction, and hitNormal points away from the surface.

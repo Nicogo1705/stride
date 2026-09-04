@@ -124,6 +124,10 @@ namespace Stride.Rendering.Voxels.Grid
                 length(mul(float4(0, 0, 1, 0), VoxelGridWorldInverse).xyz));
             float localVoxel = worldVoxel * max(axisScales.x, max(axisScales.y, axisScales.z));
 
+            // The field at the ring's own granularity: a coarse ring reads a coarse level, so its
+            // shell is the surface its voxels can hold rather than eight probes of a fine one.
+            Traversal.SetLodForSize(localVoxel);
+
             // One exit, as everywhere the shader compiler is involved.
             if (inRing && inField && Traversal.BrickState(localPos, localVoxel) == 1)
             {

@@ -73,6 +73,19 @@ namespace Stride.Rendering.Voxels.VoxelGI
         public float SpecularOffset { get; set; } = 1.0f;
 
         /// <summary>
+        /// What a cone sees where it leaves the volume, or runs out of steps, without having met
+        /// anything: the sky. Credited by the fraction of the cone still open, so a surface under
+        /// an overhang gets little of it and an open field gets it all. Black by default.
+        /// </summary>
+        [DataMember(57)]
+        public Color3 SkyColor { get; set; } = new Color3(0, 0, 0);
+
+        /// <summary>Multiplier on <see cref="SkyColor"/>.</summary>
+        [DataMember(58)]
+        [DataMemberRange(0.0, 10.0, 0.05, 0.5, 2)]
+        public float SkyIntensity { get; set; } = 1.0f;
+
+        /// <summary>
         /// Trace the diffuse cones into a buffer this many times smaller than the screen along each
         /// axis, instead of once per shaded pixel: 1 marches inline, 2 traces a quarter of the
         /// cones, 4 a sixteenth.

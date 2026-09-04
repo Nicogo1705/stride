@@ -106,6 +106,20 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberRange(0.0, 4.0, 0.05, 0.25, 2)]
         public float InjectBounce { get; set; } = 0.5f;
 
+        /// <summary>
+        /// Whether the camera walks a coarser level of the field where a pixel covers more than
+        /// one cell. Needs a source with coarser levels, such as a 3D texture with mips.
+        /// </summary>
+        /// <userdoc>Walk a coarser level of the field far from the camera, where its source holds one.</userdoc>
+        [DataMember(21)]
+        public bool LevelOfDetail { get; set; } = true;
+
+        /// <summary>Bias on the level of detail, in levels: positive is coarser, negative finer.</summary>
+        /// <userdoc>Level-of-detail bias in levels. Positive is coarser.</userdoc>
+        [DataMember(22)]
+        [DataMemberRange(-2.0, 4.0, 0.1, 0.5, 1)]
+        public float LodBias { get; set; } = 0f;
+
         /// <summary>Whether the field writes the shadow maps. It receives shadows either way.</summary>
         /// <userdoc>Whether the field casts shadows.</userdoc>
         [DataMember(20)]

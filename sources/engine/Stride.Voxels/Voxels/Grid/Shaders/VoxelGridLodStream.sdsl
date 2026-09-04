@@ -1,0 +1,13 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// The level of detail a field is read at, carried as a shader-static so every reader in a stage
+    /// shares it. Level N reads a field 2^N times coarser, with cells 2^N times larger. A vertex
+    /// stage that draws a field writes it to zero; whoever starts a walk sets it through
+    /// IVoxelGridTraversal.SetLod.
+    shader VoxelGridLodStream
+    {
+        static int VoxelGridLod = 0;
+    };
+}

@@ -81,6 +81,41 @@ namespace Stride.Rendering.Voxels.Grid
         /// walk comes out of the SPIR-V to HLSL step as a one-iteration loop, and FXC, unrolling
         /// dozens of them inside a real loop, gives up with an internal error. A load past the
         /// edge of the field is defined and comes back zero, so the read can be unconditional.
+        /// The cell size at the level in force: the field's, doubled per level.
+        float CellSize()
+        {
+            return VoxelGridCellSize * (float)(1 << clamp(VoxelGridLod, 0, 15));
+        }
+
+        override float CellSizeAtLod()
+        {
+            return CellSize();
+        }
+
+        override int LodLevels()
+        {
+            return IVoxelGridSource.LodLevels();
+        }
+
+        override void SetLod(int lod)
+        {
+            VoxelGridLod = clamp(lod, 0, IVoxelGridSource.LodLevels());
+        }
+
+        override void SetLodForSize(float size)
+        {
+            // The coarsest level whose cell still fits in the size, so a reader at that
+            // granularity sees the surface that its own voxels can hold, and no finer.
+            float cells = max(size / max(VoxelGridCellSize, 1e-6), 1.0);
+            SetLod((int)floor(log2(cells)));
+        }
+
+        override float LodAt(float distance, float unitsPerDistance)
+        {
+            float footprint = max(distance, 0.0) * unitsPerDistance / max(VoxelGridCellSize, 1e-6);
+            return clamp(log2(max(footprint, 1.0)), 0.0, (float)IVoxelGridSource.LodLevels());
+        }
+
         float SealedDensity(int3 coord)
         {
             int3 samples = SampleCount();
@@ -93,7 +128,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// nets interpolate along their edges, so the traced surface and a meshed one agree.
         float SampleField(float3 localPosition)
         {
-            float3 grid = localPosition / VoxelGridCellSize;
+            float3 grid = localPosition / CellSize();
             int3 cell = (int3)floor(grid);
             float3 f = grid - (float3)cell;
 
@@ -148,7 +183,7 @@ namespace Stride.Rendering.Voxels.Grid
             float dx = lerp(lerp(near.y - near.x, near.w - near.z, f.y), lerp(far.y - far.x, far.w - far.z, f.y), f.z);
             float dy = lerp(lerp(near.z - near.x, near.w - near.y, f.x), lerp(far.z - far.x, far.w - far.y, f.x), f.z);
             float dz = lerp(lerp(far.x - near.x, far.y - near.y, f.x), lerp(far.z - near.z, far.w - near.w, f.x), f.y);
-            return float3(dx, dy, dz) / VoxelGridCellSize;
+            return float3(dx, dy, dz) / CellSize();
         }
 
         /// Whether the corners straddle the iso level: some at or above it, some below.
@@ -168,7 +203,7 @@ namespace Stride.Rendering.Voxels.Grid
         override float3 SurfaceNormal(float3 localPosition)
         {
             int3 cell = CellOf(localPosition);
-            float3 f = saturate(localPosition / VoxelGridCellSize - (float3)cell);
+            float3 f = saturate(localPosition / CellSize() - (float3)cell);
             float3 gradient = TrilinearGradient(CornersNear(cell), CornersFar(cell), f);
             return dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : float3(0, 1, 0);
         }
@@ -176,7 +211,7 @@ namespace Stride.Rendering.Voxels.Grid
         override int SurfaceProbe(float3 localPosition, float halfSize, out float3 normal)
         {
             int3 cell = CellOf(localPosition);
-            float3 f = localPosition / VoxelGridCellSize - (float3)cell;
+            float3 f = localPosition / CellSize() - (float3)cell;
             float4 near = CornersNear(cell);
             float4 far = CornersFar(cell);
 
@@ -186,7 +221,7 @@ namespace Stride.Rendering.Voxels.Grid
             // The eight points a half-voxel out from the centre. When they all fall in this cell -
             // the usual case, a GI voxel being smaller than a field cell - the eight loads above
             // answer for all of them; otherwise each is sampled where it lands.
-            float hf = halfSize / VoxelGridCellSize;
+            float hf = halfSize / CellSize();
             bool within = all(f - hf >= 0) && all(f + hf <= 1);
             float iso = VoxelGridIsoLevel;
             int solid = 0;
@@ -195,7 +230,7 @@ namespace Stride.Rendering.Voxels.Grid
                 float3 offset = float3((corner & 1) != 0 ? hf : -hf, (corner & 2) != 0 ? hf : -hf, (corner & 4) != 0 ? hf : -hf);
                 float density = within
                     ? Trilinear(near, far, f + offset)
-                    : SampleField(localPosition + offset * VoxelGridCellSize);
+                    : SampleField(localPosition + offset * CellSize());
                 solid += density >= iso ? 1 : 0;
             }
 
@@ -204,13 +239,13 @@ namespace Stride.Rendering.Voxels.Grid
 
         override int BrickState(float3 localPosition, float radius)
         {
-            int levels = clamp(VoxelGridOccupancyLevels, 0, 16);
+            int levels = clamp(VoxelGridOccupancyLevels - VoxelGridLod, 0, 16);
             int state = 1;
             if (levels > 0)
             {
                 // The level whose bricks span the radius twice over, so the point and everything
                 // within the radius sit in one brick when the point is far enough from its faces.
-                float cellsNeeded = (2.0 * radius) / VoxelGridCellSize + 2.0;
+                float cellsNeeded = (2.0 * radius) / CellSize() + 2.0;
                 int level = 1;
                 while (level < levels && (float)(1 << level) < cellsNeeded)
                     level++;
@@ -218,10 +253,10 @@ namespace Stride.Rendering.Voxels.Grid
                 int size = 1 << level;
                 int3 cell = CellOf(localPosition);
                 int3 brick = cell / size;
-                float2 minMax = VoxelGridOccupancy.Load(int4(brick, level - 1)).rg;
+                float2 minMax = VoxelGridOccupancy.Load(int4(brick, level - 1 + VoxelGridLod)).rg;
 
-                float3 brickMin = (float3)(brick * size) * VoxelGridCellSize;
-                float3 brickMax = brickMin + (float)size * VoxelGridCellSize;
+                float3 brickMin = (float3)(brick * size) * CellSize();
+                float3 brickMax = brickMin + (float)size * CellSize();
                 bool inside = all(localPosition - brickMin > radius) && all(brickMax - localPosition > radius);
 
                 if (minMax.y < VoxelGridIsoLevel)
@@ -236,7 +271,7 @@ namespace Stride.Rendering.Voxels.Grid
         int3 CellOf(float3 localPosition)
         {
             int3 cells = SampleCount() - int3(1, 1, 1);
-            return clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+            return clamp((int3)floor(localPosition / CellSize()), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
         }
 
         /// The material of the point: cubes take the cell's own, which is the point of cubes; a
@@ -249,7 +284,7 @@ namespace Stride.Rendering.Voxels.Grid
             int3 cell = CellOf(localPosition);
             bool cubes = TSurface == 0;
 
-            float3 grid = localPosition / VoxelGridCellSize;
+            float3 grid = localPosition / CellSize();
             float3 f = saturate(grid - (float3)cell);
 
             int ids[8];
@@ -331,7 +366,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         override float3 Probe(float3 localPosition)
         {
-            int3 cell = clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), SampleCount() - int3(2, 2, 2));
+            int3 cell = clamp((int3)floor(localPosition / CellSize()), int3(0, 0, 0), SampleCount() - int3(2, 2, 2));
             return float3(SampleCount().x / 128.0, SealedDensity(cell), VoxelGridIsoLevel);
         }
 
@@ -346,7 +381,7 @@ namespace Stride.Rendering.Voxels.Grid
 
             float delta = db - da;
             float t = abs(delta) > 1e-6 ? saturate((iso - da) / delta) : 0.5;
-            float3 crossing = lerp((float3)a, (float3)b, t) * VoxelGridCellSize;
+            float3 crossing = lerp((float3)a, (float3)b, t) * CellSize();
 
             bool crosses = (da >= iso) != (db >= iso);
             return crosses ? float4(crossing, 1) : float4(0, 0, 0, 0);
@@ -453,7 +488,7 @@ namespace Stride.Rendering.Voxels.Grid
             hitDistance = 0;
 
             int3 cells = SampleCount() - int3(1, 1, 1);
-            float cellSize = VoxelGridCellSize;
+            float cellSize = CellSize();
             float3 boundsMax = (float3)cells * cellSize;
 
             float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
@@ -480,7 +515,7 @@ namespace Stride.Rendering.Voxels.Grid
                 tHit = tEnter;
             }
 
-            int levels = clamp(VoxelGridOccupancyLevels, 0, 16);
+            int levels = clamp(VoxelGridOccupancyLevels - VoxelGridLod, 0, 16);
             int level = levels;
             float t = tEnter;
             float nudge = cellSize * 1e-3;
@@ -502,7 +537,7 @@ namespace Stride.Rendering.Voxels.Grid
 
                 bool empty = false;
                 if (level > 0)
-                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1)).g < VoxelGridIsoLevel;
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + VoxelGridLod)).g < VoxelGridIsoLevel;
 
                 if (level > 0 && !empty)
                 {
@@ -573,7 +608,7 @@ namespace Stride.Rendering.Voxels.Grid
             hitNormal = float3(0, 1, 0);
 
             int3 cells = SampleCount() - int3(1, 1, 1);
-            float cellSize = VoxelGridCellSize;
+            float cellSize = CellSize();
             float3 boundsMax = (float3)cells * cellSize;
 
             // A zero component would make the slab test compute 0 * infinity, which is a NaN rather
@@ -619,7 +654,7 @@ namespace Stride.Rendering.Voxels.Grid
             // is left through its far face in one step, and the next look is a level coarser; any
             // other brick is looked at again a level finer; at level zero the brick is a cell and
             // the surface is settled there. With no pyramid at all the walk stays at the cell.
-            int levels = clamp(VoxelGridOccupancyLevels, 0, 16);
+            int levels = clamp(VoxelGridOccupancyLevels - VoxelGridLod, 0, 16);
             int level = levels;
             float t = tEnter;
 
@@ -662,7 +697,7 @@ namespace Stride.Rendering.Voxels.Grid
                 // it holds surface or solid.
                 bool empty = false;
                 if (level > 0)
-                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1)).g < VoxelGridIsoLevel;
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + VoxelGridLod)).g < VoxelGridIsoLevel;
 
                 if (level > 0 && !empty)
                 {

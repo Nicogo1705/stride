@@ -10,7 +10,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// draw. Walking once here, and letting every material's draw read the answer for the pixels
     /// that are its own, is what keeps the count of materials from multiplying the cost of the
     /// walk. Depth is written too, so several grids resolve against one another.
-    shader VoxelGridResolveShader : ImageEffectShader
+    shader VoxelGridResolveShader : ImageEffectShader, VoxelGridDither
     {
         compose IVoxelGridTraversal Traversal;
 
@@ -27,6 +27,11 @@ namespace Stride.Rendering.Voxels.Grid
 
         /// Which grid this is, so a material of one grid does not claim a pixel of another.
         int VoxelGridIndex;
+
+        /// Level of detail: how many grid units a pixel covers per unit of distance along the ray,
+        /// and a bias in levels (positive is coarser). Zero units turns it off.
+        float VoxelGridLodPixel;
+        float VoxelGridLodBias;
 
         stage override float4 Shading()
         {
@@ -46,8 +51,50 @@ namespace Stride.Rendering.Voxels.Grid
 
             float hitDistance;
             float3 localNormal;
-            // The reach is in the grid's own units, as the direction was made unit length in them.
-            if (!Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal))
+            bool found;
+            int levels = Traversal.LodLevels();
+            if (levels > 0 && VoxelGridLodPixel > 0)
+            {
+                // Coarse first: the coarsest level finds roughly where the surface is, cheaply, and
+                // the distance decides which level this pixel deserves. That level is then walked
+                // from a little before the coarse hit, so the fine walk is short. The level is
+                // fractional and dithered, so the band where two levels meet is a pattern the
+                // antialiasing folds away rather than a line.
+                Traversal.SetLod(levels);
+                found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
+                if (found)
+                {
+                    float wanted = Traversal.LodAt(hitDistance * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+                    int lod = clamp((int)floor(wanted + DitherThreshold((int2)streams.ShadingPosition.xy, VoxelGridDither)), 0, levels);
+                    if (lod < levels)
+                    {
+                        float coarseCell = Traversal.CellSizeAtLod();
+                        Traversal.SetLod(lod);
+                        float back = max(hitDistance - 2.0 * coarseCell, 0.0);
+                        float3 nearOrigin = localOrigin + localDirection * back;
+                        float nearDistance;
+                        float3 nearNormal;
+                        if (Traversal.Trace(nearOrigin, localDirection, VoxelGridMaxDistance - back, nearDistance, nearNormal))
+                        {
+                            hitDistance = back + nearDistance;
+                            localNormal = nearNormal;
+                        }
+                        else
+                        {
+                            // The finer surface is not where the coarse one was: keep the coarse
+                            // answer rather than punch a hole, and read the material at its level.
+                            Traversal.SetLod(levels);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Traversal.SetLod(0);
+                // The reach is in the grid's own units, as the direction was made unit length in them.
+                found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
+            }
+            if (!found)
             {
                 discard;
             }

@@ -81,6 +81,7 @@ namespace Stride.Rendering.Voxels.Grid
 
                 float hitDistance;
                 float3 hitNormal;
+                SetLod(0);
                 bool found = Trace(originLocal, directionLocal, 2.0 * reach, hitDistance, hitNormal);
                 float3 hitLocal = originLocal + directionLocal * hitDistance;
                 int walked = found ? SurfaceMaterialId(hitLocal, pixel.xy, 0) : -2;

@@ -23,22 +23,33 @@ namespace Stride.Rendering.Voxels.Grid
         {
             [Link("VoxelGridField.SampleCount")]
             stage int3 VoxelGridSampleCount;
+
+            /// Mip levels beyond the first. Each halves the samples per axis, as a texture mip
+            /// does; a level's sample j stands over the finest level's sample j * 2^level, so the
+            /// surfaces of two levels sit on one another.
+            [Link("VoxelGridField.LodLevels")]
+            stage int VoxelGridLodLevels;
+        }
+
+        override int LodLevels()
+        {
+            return max(VoxelGridLodLevels, 0);
         }
 
         override int3 SampleCount()
         {
-            return VoxelGridSampleCount;
+            return max(VoxelGridSampleCount >> VoxelGridLod, int3(2, 2, 2));
         }
 
         override float Density(int3 coord)
         {
-            return VoxelGridTexture.Load(int4(coord, 0)).r;
+            return VoxelGridTexture.Load(int4(coord, VoxelGridLod)).r;
         }
 
         override int MaterialId(int3 coord)
         {
             // A byte stored as a normalized channel comes back as id / 255.
-            return (int)round(VoxelGridTexture.Load(int4(coord, 0)).g * 255.0);
+            return (int)round(VoxelGridTexture.Load(int4(coord, VoxelGridLod)).g * 255.0);
         }
     };
 }

@@ -59,6 +59,7 @@ namespace Stride.Rendering.Voxels.Grid
                 // meets the field, and settles a fraction of a cell past it - on the far side, so
                 // the surface never shadows itself.
                 float occluderDistance;
+                SetLod(0);
                 bool blocked = Occlude(originLocal, directionLocal, orthographic ? 2.0 * reach : reach, occluderDistance);
                 if (!blocked)
                     discard;

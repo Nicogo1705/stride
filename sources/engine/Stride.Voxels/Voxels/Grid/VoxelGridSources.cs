@@ -42,6 +42,7 @@ namespace Stride.Rendering.Voxels.Grid
             if (count.X <= 0 && Texture != null)
                 count = new Int3(Texture.Width, Texture.Height, Texture.Depth);
             parameters.Set(VoxelGridFieldKeys.SampleCount, count);
+            parameters.Set(VoxelGridFieldKeys.LodLevels, Texture != null ? Texture.MipLevelCount - 1 : 0);
         }
     }
 
