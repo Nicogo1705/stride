@@ -9,32 +9,17 @@ using Stride.Shaders;
 namespace Stride.Rendering.Voxels.Grid
 {
     /// <summary>
-    /// Makes a material resolve its surface from a voxel grid instead of from the mesh it is drawn
-    /// on, so a voxel body goes down the path an ordinary model goes down.
+    /// Makes a material walk a voxel grid in the shadow caster passes, and draw nothing elsewhere.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The model this belongs on is a box the size of the grid, and it is the box the renderer
-    /// culls, sorts, transforms and rasterises. This feature runs at the front of its material and
-    /// replaces the box's surface with the field's - the point, the normal and the depth the
-    /// rasteriser keeps - so everything after it is the mesh path untouched: the material's own
-    /// diffuse, gloss and metalness features, the lights and shadow maps of the forward renderer,
-    /// the depth test against ordinary geometry, and the effects that read the depth buffer
-    /// afterwards.
-    /// </para>
-    /// <para>
-    /// Which is the point. A pass of its own would have to reimplement each of those, and each
-    /// reimplementation drifts from what a mesh does, in a way a user notices as "the voxels look
-    /// wrong" long before anyone can say which of the ten things is missing.
-    /// </para>
-    /// <para>
-    /// The field's colour is left in <c>matColorBase</c> for the diffuse slot to read through
-    /// <c>ComputeColorVoxelAlbedo</c>; a material that puts a texture in that slot instead simply
-    /// does not consult the palette.
-    /// </para>
+    /// The camera's view of a grid is resolved once by <see cref="VoxelGridResolveRenderer"/> and
+    /// drawn by the grid's own materials; the shadow maps are other views, one per cascade or
+    /// face, and each has to find the field's surface from the light. This feature is what the
+    /// grid's shadow model carries: in a caster pass it asks the traversal only where the ray meets
+    /// the field, and in every other pass it discards.
     /// </remarks>
     [DataContract("MaterialVoxelSurfaceFeature")]
-    [Display("Voxel Grid Surface")]
+    [Display("Voxel Grid Shadow")]
     public class MaterialVoxelSurfaceFeature : MaterialFeature, IMaterialSurfaceFeature
     {
         /// <summary>How the ray finds the surface, and where the samples come from.</summary>
@@ -50,10 +35,6 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberRange(0.0, 3)]
         [Display("Max Distance")]
         public float MaxDistance { get; set; }
-
-        /// <summary>See <see cref="VoxelGridFieldKeys.Debug"/>.</summary>
-        [DataMemberIgnore]
-        public float Debug { get; set; }
 
         public override void GenerateShader(MaterialGeneratorContext context)
         {
@@ -73,10 +54,8 @@ namespace Stride.Rendering.Voxels.Grid
             // The vertex half defines the pass stream the pixel half reads, in every pass.
             context.AddShaderSource(MaterialShaderStage.Vertex, new ShaderClassSource("MaterialSurfaceVoxelGridVertex"));
 
-            // The depth-only passes - Z prepass and shadow maps - rasterise the mesh with the vertex
-            // stage alone unless told otherwise, and for this material the mesh is the proxy box: the
-            // prepass would hold the box's depth and the real surface behind it would fail the depth
-            // test, and the shadow would be a cube's. The same switch alpha cutoff uses.
+            // The caster passes rasterise with the vertex stage alone unless told otherwise, and
+            // for this material the mesh is the proxy box: the shadow would be a cube's.
             context.Parameters.Set(MaterialKeys.UsePixelShaderWithDepthPass, true);
             ApplyParameters(context.Parameters);
         }
@@ -95,7 +74,6 @@ namespace Stride.Rendering.Voxels.Grid
 
             Traversal.ApplyParameters(parameters);
             parameters.Set(VoxelGridFieldKeys.MaxDistance, MaxDistance);
-            parameters.Set(VoxelGridFieldKeys.Debug, Debug);
         }
     }
 }

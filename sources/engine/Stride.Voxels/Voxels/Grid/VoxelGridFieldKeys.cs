@@ -23,8 +23,8 @@ namespace Stride.Rendering.Voxels.Grid
     /// into an image effect that is one path, mixed into a material's surface array it is
     /// <c>layers[N].materialPixelStage</c> with an N nothing outside the generator knows - and a
     /// value set under any other name reaches nothing. Linking is how the engine's own material
-    /// textures get through a composition of any depth, and it is what lets the image effect and the
-    /// material share one set of keys.
+    /// textures get through a composition of any depth, and it is what lets the resolve pass and
+    /// the materials share one set of keys.
     /// </para>
     /// </remarks>
     public static class VoxelGridFieldKeys
@@ -32,14 +32,11 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Samples per axis.</summary>
         public static readonly ValueParameterKey<Int3> SampleCount = ParameterKeys.NewValue<Int3>();
 
-        /// <summary>The field as a 3D texture: density in red, material id in green.</summary>
+        /// <summary>The field as an R8G8 3D texture: density in red, material id in green.</summary>
         public static readonly ObjectParameterKey<Texture> Texture = ParameterKeys.NewObject<Texture>();
 
         /// <summary>The field as a structured buffer of packed samples.</summary>
         public static readonly ObjectParameterKey<Buffer> Data = ParameterKeys.NewObject<Buffer>();
-
-        /// <summary>The materials, three float4 per id, see <see cref="VoxelGridPalette"/>.</summary>
-        public static readonly ObjectParameterKey<Buffer> Palette = ParameterKeys.NewObject<Buffer>();
 
         /// <summary>The min/max pyramid over the field, see <see cref="VoxelGridOccupancy"/>.</summary>
         public static readonly ObjectParameterKey<Texture> Occupancy = ParameterKeys.NewObject<Texture>();
@@ -62,10 +59,25 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>How far along a ray the surface is looked for, in grid local units.</summary>
         public static readonly ValueParameterKey<float> MaxDistance = ParameterKeys.NewValue<float>();
 
+        /// <summary>The resolve pass's normal target: the surface normal, with 1 in w where a surface was found.</summary>
+        public static readonly ObjectParameterKey<Texture> ResolveNormal = ParameterKeys.NewObject<Texture>();
+
+        /// <summary>The resolve pass's material target: the material id in r and the grid index in g, a byte each.</summary>
+        public static readonly ObjectParameterKey<Texture> ResolveMaterial = ParameterKeys.NewObject<Texture>();
+
+        /// <summary>The resolve pass's position target: the surface's world position, with its depth in w.</summary>
+        public static readonly ObjectParameterKey<Texture> ResolvePosition = ParameterKeys.NewObject<Texture>();
+
+        /// <summary>The material id a wrapped material draws, or -1 for every id of its grid.</summary>
+        public static readonly ValueParameterKey<int> MaterialId = ParameterKeys.NewValue<int>();
+
+        /// <summary>Which grid a wrapped material belongs to.</summary>
+        public static readonly ValueParameterKey<int> GridIndex = ParameterKeys.NewValue<int>();
+
         /// <summary>
-        /// Diagnostic view of the material surface. 0 shades normally; 1 paints the proxy box green
-        /// where the ray met the field and red where it did not, on the box's own depth; 2 paints the
-        /// traced normal at the surface's depth. Set from STRIDE_VOXEL_DEBUG when that is defined.
+        /// Diagnostic view of the drawn surface. 0 draws normally; 1 paints the proxy box green
+        /// where the pixel is the material's and red where it is not, on the box's own depth;
+        /// 2 paints the resolved normal at the surface's depth.
         /// </summary>
         public static readonly ValueParameterKey<float> Debug = ParameterKeys.NewValue<float>();
     }

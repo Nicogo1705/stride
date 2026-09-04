@@ -2,26 +2,13 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// Resolves a voxel grid's surface inside a material, so that a voxel body is a body the renderer
-    /// already knows how to draw.
+    /// The grid's shadow: a material that walks the field only in the shadow caster passes.
     ///
-    /// The alternative was a pass of its own, and a pass of its own is exactly what makes a voxel
-    /// look like a guest in the scene: it draws after the meshes and before the effects, so it has
-    /// no material, receives no light the others receive, casts nothing into a shadow map, and
-    /// composites against the depth buffer only as carefully as its author remembered to. Every one
-    /// of those is a thing to reimplement, and each reimplementation drifts from what a mesh does.
-    ///
-    /// Here the entity carries an ordinary model - a box the size of the grid - and this runs at the
-    /// front of that model's material. It replaces the box's surface with the grid's: the point, the
-    /// normal, and the depth the rasteriser will keep. Everything after it in the material, and
-    /// everything after the material, is the mesh path unchanged. Lights, shadows, fog, screen space
-    /// effects and the depth test against ordinary geometry are not ported; they are simply not
-    /// bypassed.
-    ///
-    /// The fragment this runs on is a face of the proxy box - the far one, so the volume is drawn
-    /// from inside as well as from outside - and the ray through it is the same ray whichever face
-    /// carries it.
-    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, IVoxelGridTraversal, ShadowMapCasterPassInfo
+    /// The resolve pass finds the surface for the camera; the shadow maps are other views, one per
+    /// cascade or face, and each walks the field on its own from the light. This runs on a proxy
+    /// box of the grid that casts shadows and draws nothing else: in every pass but a caster it
+    /// discards, and in a caster it asks the traversal only where the ray meets the field.
+    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, ShadowMapCasterPassInfo
     {
         // The traversal and its source are inherited, not composed, so all three share one scope
         // and the field's resource is declared once. See VoxelGridTraversalDDA.
@@ -32,54 +19,45 @@ namespace Stride.Rendering.Voxels.Grid
             /// sets it to the grid's diagonal when nothing else was asked for.
             [Link("VoxelGridField.MaxDistance")]
             stage float VoxelGridMaxDistance;
-
-            /// See VoxelGridFieldKeys.Debug.
-            [Link("VoxelGridField.Debug")]
-            stage float VoxelGridDebug;
         }
 
         override void Compute()
         {
-            // The fragment, in the grid's own space. The ray reaches it from the eye under a
-            // perspective projection, and along the view axis under an orthographic one - shadow
-            // maps are orthographic, and a ray built from the eye there is wrong by an amount that
-            // grows as the fragment nears it: the highest thing in the field cast no shadow. A
-            // projection is orthographic when w does not depend on z.
-            float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
-            float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
-            float3 originLocal;
-            float3 directionLocal;
-
-            bool orthographic = abs(Projection._34) < 1e-6 && abs(Projection._44 - 1.0) < 1e-6;
-            if (orthographic)
-            {
-                float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
-                directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
-                // Started far enough back to be outside the volume; the traversal clips to it.
-                originLocal = targetLocal - directionLocal * reach;
-            }
-            else
-            {
-                originLocal = mul(float4(Eye.xyz, 1), WorldInverse).xyz;
-                float3 towards = targetLocal - originLocal;
-                float travel = length(towards);
-                directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
-            }
-
-            float reachAlong = orthographic ? 2.0 * reach : reach;
-
             // One exit, no early return: a return from inside a material's Compute comes out of
             // the SPIR-V to HLSL step as a one-iteration loop round everything after it, and FXC,
             // asked to unroll that round the walk's own loop, gives up with an internal error.
             if (streams.IsShadowMapCasterPass > 0.5)
             {
-                // A shadow map reads the depth and nothing else, so in a shadow caster pass the ray
-                // is asked only where it meets the field, and settles a fraction of a cell past it
-                // - on the far side, so the surface never shadows itself - for a third of the
-                // reads. The pass is known from the effect, not guessed from the projection: an
-                // orthographic camera still gets the full surface.
+                // The fragment, in the grid's own space. Shadow maps are orthographic for a
+                // directional light and perspective for the others; the ray reaches the fragment
+                // from the eye under a perspective projection, and along the view axis under an
+                // orthographic one, which is the case when w does not depend on z.
+                float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
+                float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
+                float3 originLocal;
+                float3 directionLocal;
+
+                bool orthographic = abs(Projection._34) < 1e-6 && abs(Projection._44 - 1.0) < 1e-6;
+                if (orthographic)
+                {
+                    float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
+                    directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
+                    // Started far enough back to be outside the volume; the traversal clips to it.
+                    originLocal = targetLocal - directionLocal * reach;
+                }
+                else
+                {
+                    originLocal = mul(float4(Eye.xyz, 1), WorldInverse).xyz;
+                    float3 towards = targetLocal - originLocal;
+                    float travel = length(towards);
+                    directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
+                }
+
+                // A shadow map reads the depth and nothing else, so the ray is asked only where it
+                // meets the field, and settles a fraction of a cell past it - on the far side, so
+                // the surface never shadows itself.
                 float occluderDistance;
-                bool blocked = Occlude(originLocal, directionLocal, reachAlong, occluderDistance);
+                bool blocked = Occlude(originLocal, directionLocal, orthographic ? 2.0 * reach : reach, occluderDistance);
                 if (!blocked)
                     discard;
 
@@ -93,89 +71,8 @@ namespace Stride.Rendering.Voxels.Grid
             }
             else
             {
-                float hitDistance;
-                float3 hitNormal;
-                float3 hitAlbedo;
-                bool found = Trace(originLocal, directionLocal, reachAlong, hitDistance, hitNormal, hitAlbedo);
-
-                if (VoxelGridDebug > 0.5 && VoxelGridDebug < 1.5)
-                {
-                    // Diagnostic 1: the box itself, green where the ray met the field and red where
-                    // it did not, on the box's own depth and without discarding - so the box is
-                    // seen whatever the ray did, which is the one thing a blank screen cannot say.
-                    streams.matColorBase = float4(found ? 0 : 1, found ? 1 : 0, 0, 1);
-                    streams.matDiffuse = streams.matColorBase;
-                    streams.Depth = streams.ShadingPosition.z;
-                }
-                else
-                {
-                    if (!found)
-                    {
-                        // No surface along this ray. Discarding rather than shading nothing is what
-                        // lets the box be invisible where the field is empty, and lets whatever is
-                        // behind the grid be seen through it.
-                        discard;
-                    }
-
-                    float3 hitLocal = originLocal + directionLocal * hitDistance;
-                    float4 hitWS = mul(float4(hitLocal, 1), World);
-                    streams.PositionWS = hitWS;
-
-                    // The depth the surface is actually at, not the box face's: the grid then sorts
-                    // against other geometry as itself, and a mesh standing in the volume is cut
-                    // where it enters.
-                    float4 hitClip = mul(hitWS, ViewProjection);
-                    streams.Depth = hitClip.z / hitClip.w;
-
-                    // A local not named normalWS - a local named like a stream confuses the compiler.
-                    float3 surfaceNormal = normalize(mul(float4(hitNormal, 0), World).xyz);
-
-                    // The lighting stage flips normalWS on back faces so a two-sided mesh is lit from
-                    // the side it is seen from. Every fragment here is a back face of the proxy box
-                    // and says nothing about the surface, so the flag is compensated in advance.
-                    if (!streams.IsFrontFace)
-                        surfaceNormal = -surfaceNormal;
-
-                    // A whole tangent frame whose third row is the traced normal, so the default
-                    // tangent-space normal lands on it and a normal map a user adds composes as on a
-                    // mesh.
-                    float3 aside = abs(surfaceNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
-                    float3 tangent = normalize(cross(aside, surfaceNormal));
-                    float3 bitangent = cross(surfaceNormal, tangent);
-
-                    streams.normalWS = surfaceNormal;
-                    streams.meshNormalWS = surfaceNormal;
-                    streams.tangentToWorld = float3x3(tangent, bitangent, surfaceNormal);
-                    streams.viewWS = normalize(Eye.xyz - hitWS.xyz);
-
-                    if (VoxelGridDebug > 1.5)
-                    {
-                        // Diagnostic 2: the traced normal, at the surface's own depth.
-                        streams.matColorBase = float4(surfaceNormal * 0.5 + 0.5, 1);
-                        streams.matDiffuse = streams.matColorBase;
-                    }
-                    else
-                    {
-                        // The material at the hit, from the palette, straight onto the material
-                        // streams: what the diffuse, glossiness, metalness and emissive features
-                        // would each have written from a constant, written here from the blend of
-                        // the eight samples round the point. The map features of the default
-                        // material hand these back unchanged. The metal workflow is the engine's
-                        // own: a metal's specular is its colour and its diffuse goes dark.
-                        float3 surfaceColor = SurfaceColor(hitLocal).rgb;
-                        float4 surfaceEmissive = SurfaceEmissive(hitLocal);
-                        float4 surfaceProperties = SurfaceProperties(hitLocal);
-                        float surfaceGlossiness = surfaceProperties.x;
-                        float surfaceMetalness = surfaceProperties.y;
-
-                        streams.matColorBase = float4(surfaceColor, 1);
-                        streams.matDiffuse = float4(lerp(surfaceColor, float3(0, 0, 0), surfaceMetalness), 1);
-                        streams.matSpecular = lerp(float3(0.02, 0.02, 0.02), surfaceColor, surfaceMetalness);
-                        streams.matGlossiness = surfaceGlossiness;
-                        streams.matEmissive = float4(surfaceEmissive.rgb, 1);
-                        streams.matEmissiveIntensity = surfaceEmissive.w;
-                    }
-                }
+                // The camera's passes draw the grid through its materials, not through this.
+                discard;
             }
         }
     };

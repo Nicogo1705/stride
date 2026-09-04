@@ -5,7 +5,7 @@ using Stride.Shaders;
 
 namespace Stride.Rendering.Voxels.Grid
 {
-    public partial class VoxelGridRenderShaderKeys
+    public partial class VoxelGridResolveShaderKeys
     {
         public static readonly PermutationParameterKey<ShaderSource> Traversal = ParameterKeys.NewPermutation<ShaderSource>();
     }

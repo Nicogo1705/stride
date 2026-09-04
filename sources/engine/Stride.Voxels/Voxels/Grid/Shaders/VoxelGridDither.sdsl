@@ -1,0 +1,49 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Thresholds for sharing a boundary between two materials out between pixels.
+    ///
+    /// A pixel of the grid is drawn by one material, but the field says a point is seventy percent
+    /// one and thirty the other. Handing each pixel to the heavier material draws a hard line that
+    /// follows the cells; handing it to either in those proportions, decided by a fixed pattern
+    /// over the screen, draws a blend at any distance and a fine stipple up close - which the
+    /// antialiasing that follows takes off. The numbers match VoxelMaterialDither.
+    shader VoxelGridDither
+    {
+        /// The 4x4 Bayer matrix, in the order it is usually written.
+        static const float Bayer4x4[16] =
+        {
+             0.0,  8.0,  2.0, 10.0,
+            12.0,  4.0, 14.0,  6.0,
+             3.0, 11.0,  1.0,  9.0,
+            15.0,  7.0, 13.0,  5.0,
+        };
+
+        /// A threshold in [0, 1) for a pixel: 0 for the sharp choice, which the caller reads as
+        /// "the heaviest wins"; else the ordered dither of the mode asked for.
+        float DitherThreshold(int2 pixel, int mode)
+        {
+            float threshold = 0.0;
+            if (mode == 1)
+            {
+                threshold = (Bayer4x4[(pixel.y & 3) * 4 + (pixel.x & 3)] + 0.5) / 16.0;
+            }
+            else if (mode == 2)
+            {
+                // The 8x8 matrix is the 4x4 one, four times, with the 2x2 matrix deciding the
+                // quarter: the usual recursive construction.
+                float fine = Bayer4x4[(pixel.y & 3) * 4 + (pixel.x & 3)];
+                float coarse = (float)((((pixel.x >> 2) & 1) * 2 + ((pixel.y >> 2) & 1) * 3) & 3);
+                threshold = (fine * 4.0 + coarse + 0.5) / 64.0;
+            }
+            else if (mode == 3)
+            {
+                // Interleaved gradient noise, Jimenez 2014: no visible tile, and the antialiasing
+                // that follows likes it better than a matrix.
+                threshold = frac(52.9829189 * frac(0.06711056 * pixel.x + 0.00583715 * pixel.y));
+            }
+            return threshold;
+        }
+    };
+}

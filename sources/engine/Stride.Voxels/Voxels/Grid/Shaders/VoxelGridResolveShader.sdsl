@@ -1,0 +1,71 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Finds the surface of a grid once per pixel, and leaves what a material needs to draw it:
+    /// where it is, which way it faces, and which material it is.
+    ///
+    /// The walk is the expensive part of drawing a field, and a field is drawn by as many materials
+    /// as it has ids - each an ordinary Stride material with its own shader, so each must be its own
+    /// draw. Walking once here, and letting every material's draw read the answer for the pixels
+    /// that are its own, is what keeps the count of materials from multiplying the cost of the
+    /// walk. Depth is written too, so several grids resolve against one another.
+    shader VoxelGridResolveShader : ImageEffectShader
+    {
+        compose IVoxelGridTraversal Traversal;
+
+        float4x4 VoxelGridViewProjectionInverse;
+        float4x4 VoxelGridViewProjection;
+        float4x4 VoxelGridWorldInverse;
+        float4x4 VoxelGridWorld;
+
+        /// How far along the ray the surface is looked for, in grid local units.
+        float VoxelGridMaxDistance;
+
+        /// See VoxelGridDither.
+        int VoxelGridDither;
+
+        /// Which grid this is, so a material of one grid does not claim a pixel of another.
+        int VoxelGridIndex;
+
+        stage override float4 Shading()
+        {
+            // The ray through the pixel, from the near plane to the far one: right under any
+            // projection, so an orthographic camera in the editor resolves as a perspective one.
+            float2 uv = streams.TexCoord;
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            float4 nearPoint = mul(float4(ndc, 0.0, 1.0), VoxelGridViewProjectionInverse);
+            float4 farPoint = mul(float4(ndc, 1.0, 1.0), VoxelGridViewProjectionInverse);
+            float3 originWS = nearPoint.xyz / nearPoint.w;
+            float3 directionWS = normalize(farPoint.xyz / farPoint.w - originWS);
+
+            float3 localOrigin = mul(float4(originWS, 1), VoxelGridWorldInverse).xyz;
+            float3 localDirection = mul(float4(directionWS, 0), VoxelGridWorldInverse).xyz;
+            float directionScale = length(localDirection);
+            localDirection = localDirection / directionScale;
+
+            float hitDistance;
+            float3 localNormal;
+            if (!Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance * directionScale, hitDistance, localNormal))
+            {
+                discard;
+            }
+
+            float3 localPosition = localOrigin + localDirection * hitDistance;
+            float3 worldPosition = mul(float4(localPosition, 1), VoxelGridWorld).xyz;
+            float3 worldNormal = normalize(mul(float4(localNormal, 0), VoxelGridWorld).xyz);
+
+            float4 hitClip = mul(float4(worldPosition, 1), VoxelGridViewProjection);
+            float depth = hitClip.z / hitClip.w;
+            streams.Depth = depth;
+
+            int material = Traversal.SurfaceMaterialId(localPosition, (int2)streams.ShadingPosition.xy, VoxelGridDither);
+
+            // Three targets: the normal with a 1 in w that says "resolved"; the material id and
+            // the grid index, a byte each; the world position with the depth in w.
+            streams.ColorTarget1 = float4(material / 255.0, VoxelGridIndex / 255.0, 0, 1);
+            streams.ColorTarget2 = float4(worldPosition, depth);
+            return float4(worldNormal, 1);
+        }
+    };
+}

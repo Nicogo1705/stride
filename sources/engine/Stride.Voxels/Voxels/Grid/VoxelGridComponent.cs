@@ -9,94 +9,95 @@ using Stride.Rendering.Materials;
 
 namespace Stride.Rendering.Voxels.Grid
 {
+    /// <summary>How a boundary between two materials is shared out between pixels.</summary>
+    public enum VoxelMaterialDither
+    {
+        /// <summary>Every pixel goes to the material that weighs most at the point: a hard line that follows the cells.</summary>
+        Sharp = 0,
+
+        /// <summary>A 4x4 ordered dither: a blend at a distance, a visible 4 pixel tile up close.</summary>
+        Bayer4x4 = 1,
+
+        /// <summary>An 8x8 ordered dither: finer steps, an 8 pixel tile up close.</summary>
+        Bayer8x8 = 2,
+
+        /// <summary>Interleaved gradient noise: no tile, a grain that temporal antialiasing takes off best.</summary>
+        InterleavedGradientNoise = 3,
+    }
+
     /// <summary>
-    /// A voxel grid that draws as a model: same materials, same lights, same shadows, same depth.
+    /// Draws a voxel field as a body of the scene, with the materials of the scene.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The entity gets an ordinary <see cref="ModelComponent"/> holding a box the size of the grid,
-    /// with a material whose surface is resolved from the field rather than from the box. From the
-    /// renderer's side there is nothing unusual about it: it is culled by its bounds, sorted with
-    /// everything else, drawn by the mesh render feature, lit by the lights in the scene and written
-    /// into the depth buffer at the depth its surface is actually at.
+    /// The field is walked once per pixel by a resolve pass, which leaves where the surface is,
+    /// which way it faces and which material it carries. Each material in <see cref="Materials"/>
+    /// is then drawn as itself: an ordinary material, taken as compiled, put over the pixels that
+    /// are its own. Lights, shadows, fog, screen space effects and the depth test against other
+    /// geometry are not reimplemented for the field; the field simply goes down the same path.
     /// </para>
     /// <para>
-    /// So the things a user would otherwise notice as missing are not implemented here at all. Lights
-    /// and shadow maps apply because the material is a material; a mesh standing inside the volume is
-    /// resolved correctly because the depth is the surface's; screen space effects work because they
-    /// read the same depth buffer. A pass of its own would have had to earn each of those separately.
-    /// </para>
-    /// <para>
-    /// Give it a <see cref="Traversal"/> with a source, and set <see cref="Material"/> if the field's
-    /// own palette is not the wanted look: a material of your own needs a
-    /// <see cref="MaterialVoxelSurfaceFeature"/> in its surface slot, and whatever its diffuse slot
-    /// holds is what colours the surface.
+    /// The samples come from <see cref="Traversal"/>'s source; a sample's material byte is an index
+    /// into <see cref="Materials"/>.
     /// </para>
     /// </remarks>
     [DataContract("VoxelGridComponent")]
     [Display("Voxel Grid", Expand = ExpandRule.Once)]
-    [ComponentCategory("Voxels")]
     [DefaultEntityComponentProcessor(typeof(VoxelGridProcessor), ExecutionMode = ExecutionMode.All)]
+    [ComponentCategory("Model")]
     public sealed class VoxelGridComponent : ActivableEntityComponent
     {
         /// <summary>How a ray finds the surface, and where the samples come from.</summary>
-        /// <remarks>
-        /// Serialized, so a grid can be set up in the editor rather than only from code: the
-        /// traversal's cell size, iso level and surface form are ordinary properties, and a source
-        /// backed by a 3D texture is an asset like any other. A source backed by a buffer the game
-        /// fills is not, and stays something code hands over at load.
-        /// </remarks>
-        /// <userdoc>How rays find the surface, and where the samples come from.</userdoc>
+        /// <userdoc>How the surface is found in the field, and where the field's samples come from.</userdoc>
         [DataMember(10)]
         public IVoxelGridTraversal Traversal { get; set; } = new VoxelGridTraversalDDA();
 
         /// <summary>
-        /// The material to draw with. Left null, one is built carrying nothing but the field's own
-        /// colours, which is enough to see the grid but is not a material a game would ship.
+        /// One material for the whole field, whatever the samples say. Leave empty to draw each
+        /// id with the material of the same index in <see cref="Materials"/>.
         /// </summary>
-        /// <userdoc>The material to draw with. Leave empty for one that shows the field's own colours.</userdoc>
+        /// <userdoc>One material for the whole field. Leave empty to use the list of materials by id.</userdoc>
         [DataMember(15)]
         public Material Material { get; set; }
 
         /// <summary>
-        /// Whether the grid casts and receives shadows, as a model does.
+        /// The materials the samples point at, by id: a sample whose material byte is 3 is drawn
+        /// with the fourth material here. Up to 256, authored like any other material and drawn as
+        /// themselves - every feature of the material, not a copy of its numbers.
         /// </summary>
-        /// <userdoc>Whether the grid casts shadows, as a model does.</userdoc>
+        /// <remarks>
+        /// Each material is one draw of the field's proxy box over the pixels the resolve pass gave
+        /// to its id, so the count of materials is the count of draws; each is cheap, a read and a
+        /// compare per pixel for the pixels that are not its own. Texture coordinates are the proxy
+        /// box's, which a texture in a material will show; a material meant for a field maps by
+        /// world position.
+        /// </remarks>
+        /// <userdoc>The materials the samples point at, by id. A sample's material byte is an index into this list.</userdoc>
+        [DataMember(17)]
+        public List<Material> Materials { get; } = [];
+
+        /// <summary>How a boundary between two materials is shared out between pixels.</summary>
+        /// <userdoc>How the boundary between two materials is drawn: a hard line, or a dither that reads as a blend.</userdoc>
+        [DataMember(18)]
+        public VoxelMaterialDither Dither { get; set; } = VoxelMaterialDither.InterleavedGradientNoise;
+
+        /// <summary>Whether the field writes the shadow maps. It receives shadows either way.</summary>
+        /// <userdoc>Whether the field casts shadows.</userdoc>
         [DataMember(20)]
         public bool CastShadows { get; set; } = true;
 
-        /// <summary>
-        /// The materials the samples point at, by id: a sample whose material byte is 3 is drawn
-        /// with the fourth material here. Up to 256, authored like any other material.
-        /// </summary>
-        /// <remarks>
-        /// What the field's shaders take from each is its colour, glossiness, metalness and
-        /// emission, read off the material's constant parameters; a material fed a texture in one
-        /// of those slots falls back to a default there, since a byte per sample carries nothing a
-        /// texture could be looked up with.
-        /// </remarks>
-        /// <userdoc>The materials the samples point at, by id. A sample's material byte is an index into this list.</userdoc>
-        [DataMember(25)]
-        public List<Material> Materials { get; } = [];
-
-        /// <summary>
-        /// Diagnostic view of the drawn surface, see <see cref="VoxelGridFieldKeys.Debug"/>. Zero
-        /// draws normally. Not saved with the scene.
-        /// </summary>
+        /// <summary>See <see cref="VoxelGridFieldKeys.Debug"/>.</summary>
         [DataMemberIgnore]
         public float DebugView { get; set; }
 
         /// <summary>
-        /// Tells the component the field's extent changed, so the box standing in for it is rebuilt.
+        /// Counts the times the field's extent changed, so the model can be rebuilt on an extent
+        /// change that the sample count alone would not show.
         /// </summary>
-        /// <remarks>
-        /// Not needed when samples change. The material reads the field as it draws, so digging a
-        /// hole shows up in the next frame with nothing rebuilt and no material recompiled - only a
-        /// grid that grew or shrank moves the box.
-        /// </remarks>
-        public void InvalidateExtent() => ExtentRevision++;
-
         [DataMemberIgnore]
-        internal int ExtentRevision { get; private set; }
+        public int ExtentRevision { get; private set; }
+
+        /// <summary>Tells the processor the field's extent changed and the proxy box must follow.</summary>
+        public void InvalidateExtent() => ExtentRevision++;
     }
 }

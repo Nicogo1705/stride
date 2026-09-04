@@ -1,0 +1,104 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Puts a resolved voxel surface under an ordinary material.
+    ///
+    /// Mixed in at the front of any material's pixel stage - the user's own material, taken as
+    /// compiled, with nothing regenerated - this replaces the proxy box's surface with the one the
+    /// resolve pass found for the pixel, and steps aside for every pixel that belongs to another
+    /// material or to no grid. Everything after it is the material as its author wrote it: its
+    /// diffuse, its normal map on the tangent frame built here, its emission, and then the lights
+    /// and shadows of the renderer. Which is the point: a voxel drawn with a material is that
+    /// material, not a copy of its numbers.
+    shader MaterialSurfaceVoxelGridResolve : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, MaterialPixelStream
+    {
+        rgroup PerMaterial
+        {
+            /// The surface's normal, with 1 in w where the pass found a surface at all.
+            [Link("VoxelGridField.ResolveNormal")]
+            stage Texture2D<float4> VoxelGridResolveNormal;
+
+            /// The material id in r and the grid index in g, a byte each.
+            [Link("VoxelGridField.ResolveMaterial")]
+            stage Texture2D<float4> VoxelGridResolveMaterial;
+
+            /// The surface's world position, with its depth in w.
+            [Link("VoxelGridField.ResolvePosition")]
+            stage Texture2D<float4> VoxelGridResolvePosition;
+        }
+
+        cbuffer PerMaterial
+        {
+            /// The id this material draws, or -1 to draw every id of its grid.
+            [Link("VoxelGridField.MaterialId")]
+            stage int VoxelGridMaterialId;
+
+            /// The grid this material belongs to.
+            [Link("VoxelGridField.GridIndex")]
+            stage int VoxelGridIndex;
+
+            /// See VoxelGridFieldKeys.Debug.
+            [Link("VoxelGridField.Debug")]
+            stage float VoxelGridDebug;
+        }
+
+        override void Compute()
+        {
+            int3 pixel = int3((int2)streams.ShadingPosition.xy, 0);
+            float4 normalResolved = VoxelGridResolveNormal.Load(pixel);
+            float4 idGrid = VoxelGridResolveMaterial.Load(pixel);
+            float4 positionDepth = VoxelGridResolvePosition.Load(pixel);
+
+            bool resolved = normalResolved.w > 0.5;
+            int material = (int)round(idGrid.r * 255.0);
+            int grid = (int)round(idGrid.g * 255.0);
+            bool mine = resolved && grid == VoxelGridIndex && (VoxelGridMaterialId < 0 || material == VoxelGridMaterialId);
+
+            // One exit: a return from inside Compute reaches FXC as a loop to unroll, and it does
+            // not always manage.
+            if (VoxelGridDebug > 0.5 && VoxelGridDebug < 1.5)
+            {
+                // Diagnostic 1: the proxy box, green where the pixel is this material's and red
+                // where it is not, on the box's own depth and without discarding.
+                streams.matColorBase = float4(mine ? 0 : 1, mine ? 1 : 0, 0, 1);
+                streams.matDiffuse = streams.matColorBase;
+                streams.Depth = streams.ShadingPosition.z;
+            }
+            else
+            {
+                if (!mine)
+                    discard;
+
+                // The surface's own depth, so the grid sorts against other geometry as itself.
+                streams.Depth = positionDepth.w;
+                streams.PositionWS = float4(positionDepth.xyz, 1);
+
+                // The lighting stage flips normalWS on back faces so a two-sided mesh is lit from
+                // the side it is seen from. Every fragment here is a back face of the proxy box and
+                // says nothing about the surface, so the flag is compensated in advance.
+                float3 surfaceNormal = normalize(normalResolved.xyz);
+                if (!streams.IsFrontFace)
+                    surfaceNormal = -surfaceNormal;
+
+                // A whole tangent frame whose third row is the resolved normal, so a normal map in
+                // the material composes on it as on a mesh.
+                float3 aside = abs(surfaceNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
+                float3 tangent = normalize(cross(aside, surfaceNormal));
+                float3 bitangent = cross(surfaceNormal, tangent);
+
+                streams.normalWS = surfaceNormal;
+                streams.meshNormalWS = surfaceNormal;
+                streams.tangentToWorld = float3x3(tangent, bitangent, surfaceNormal);
+                streams.viewWS = normalize(Eye.xyz - positionDepth.xyz);
+
+                if (VoxelGridDebug > 1.5)
+                {
+                    // Diagnostic 2: the resolved normal, at the surface's own depth.
+                    streams.matColorBase = float4(surfaceNormal * 0.5 + 0.5, 1);
+                    streams.matDiffuse = streams.matColorBase;
+                }
+            }
+        }
+    };
+}

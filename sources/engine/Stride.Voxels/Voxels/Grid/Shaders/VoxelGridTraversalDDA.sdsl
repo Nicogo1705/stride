@@ -30,7 +30,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// same surface and the body drawn and the body collided against are one body. Compiling only
     /// the form asked for keeps the other two - surface nets alone is several hundred reads - out of
     /// the shader entirely.
-    shader VoxelGridTraversalDDA<int TSurface> : IVoxelGridTraversal, IVoxelGridSource
+    shader VoxelGridTraversalDDA<int TSurface> : IVoxelGridTraversal, IVoxelGridSource, VoxelGridDither
     {
         // The source is inherited rather than composed, so that it shares this scope: a composition
         // is a scope of its own with its own copy of every declaration, and a resource declared in
@@ -67,11 +67,6 @@ namespace Stride.Rendering.Voxels.Grid
             /// The pyramid: least density in red, greatest in green, see VoxelGridOccupancy.
             [Link("VoxelGridField.Occupancy")]
             stage Texture3D<float2> VoxelGridOccupancy;
-
-            /// The materials, three float4 per id: colour; emissive with intensity in w;
-            /// glossiness and metalness. See VoxelGridPalette.
-            [Link("VoxelGridField.Palette")]
-            stage StructuredBuffer<float4> VoxelGridPalette;
         }
 
         /// Bisection steps that place the crossing once the interval holding it is known. Each
@@ -118,69 +113,88 @@ namespace Stride.Rendering.Voxels.Grid
             return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
         }
 
-        /// One float4 of one palette entry: 0 the colour, 1 the emissive with its intensity in w,
-        /// 2 glossiness and metalness in x and y.
-        float4 PaletteEntry(int3 coord, int part)
-        {
-            return VoxelGridPalette[clamp(MaterialId(coord), 0, 255) * 3 + part];
-        }
-
-        /// One part of the material between samples, on the same trilinear weights as the field.
-        ///
-        /// Reading it from the cell the hit landed in instead makes the material change on cell
-        /// boundaries, which draws a staircase along every material boundary - on a surface that is
-        /// otherwise perfectly smooth, so it reads as a geometry fault rather than what it is.
-        float4 SamplePalette(float3 localPosition, int part)
-        {
-            float3 grid = localPosition / VoxelGridCellSize;
-            int3 cell = (int3)floor(grid);
-            float3 f = grid - (float3)cell;
-
-            float4 a000 = PaletteEntry(cell + int3(0, 0, 0), part);
-            float4 a100 = PaletteEntry(cell + int3(1, 0, 0), part);
-            float4 a010 = PaletteEntry(cell + int3(0, 1, 0), part);
-            float4 a110 = PaletteEntry(cell + int3(1, 1, 0), part);
-            float4 a001 = PaletteEntry(cell + int3(0, 0, 1), part);
-            float4 a101 = PaletteEntry(cell + int3(1, 0, 1), part);
-            float4 a011 = PaletteEntry(cell + int3(0, 1, 1), part);
-            float4 a111 = PaletteEntry(cell + int3(1, 1, 1), part);
-
-            float4 ax00 = lerp(a000, a100, f.x);
-            float4 ax10 = lerp(a010, a110, f.x);
-            float4 ax01 = lerp(a001, a101, f.x);
-            float4 ax11 = lerp(a011, a111, f.x);
-            return lerp(lerp(ax00, ax10, f.y), lerp(ax01, ax11, f.y), f.z);
-        }
-
-        /// The cell a point is in, for the cube form, which takes one material per cell.
+        /// The cell a point is in.
         int3 CellOf(float3 localPosition)
         {
             int3 cells = SampleCount() - int3(1, 1, 1);
             return clamp((int3)floor(localPosition / VoxelGridCellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
         }
 
-        /// One part of the material at a point. Cubes take the cell's own material, which is the
-        /// point of cubes; a smooth surface takes the blend, so a material boundary is as smooth as
-        /// the surface carrying it.
-        float4 SurfacePart(float3 localPosition, int part)
+        /// The material of the point: cubes take the cell's own, which is the point of cubes; a
+        /// smooth surface weighs the eight samples round the point as the field itself does, adds
+        /// up the weight of each id, and picks one - the heaviest, or one drawn by the dither
+        /// threshold against the running total, so that two materials share a boundary out
+        /// between pixels in the proportion the field gives them.
+        override int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)
         {
+            int3 cell = CellOf(localPosition);
             bool cubes = TSurface == 0;
-            return cubes ? PaletteEntry(CellOf(localPosition), part) : SamplePalette(localPosition, part);
-        }
 
-        override float4 SurfaceColor(float3 localPosition)
-        {
-            return SurfacePart(localPosition, 0);
-        }
+            float3 grid = localPosition / VoxelGridCellSize;
+            float3 f = saturate(grid - (float3)cell);
 
-        override float4 SurfaceEmissive(float3 localPosition)
-        {
-            return SurfacePart(localPosition, 1);
-        }
+            int ids[8];
+            float weights[8];
+            ids[0] = MaterialId(cell + int3(0, 0, 0)); weights[0] = (1 - f.x) * (1 - f.y) * (1 - f.z);
+            ids[1] = MaterialId(cell + int3(1, 0, 0)); weights[1] = f.x * (1 - f.y) * (1 - f.z);
+            ids[2] = MaterialId(cell + int3(0, 1, 0)); weights[2] = (1 - f.x) * f.y * (1 - f.z);
+            ids[3] = MaterialId(cell + int3(1, 1, 0)); weights[3] = f.x * f.y * (1 - f.z);
+            ids[4] = MaterialId(cell + int3(0, 0, 1)); weights[4] = (1 - f.x) * (1 - f.y) * f.z;
+            ids[5] = MaterialId(cell + int3(1, 0, 1)); weights[5] = f.x * (1 - f.y) * f.z;
+            ids[6] = MaterialId(cell + int3(0, 1, 1)); weights[6] = (1 - f.x) * f.y * f.z;
+            ids[7] = MaterialId(cell + int3(1, 1, 1)); weights[7] = f.x * f.y * f.z;
 
-        override float4 SurfaceProperties(float3 localPosition)
-        {
-            return SurfacePart(localPosition, 2);
+            // The same id at several corners counts once, with all their weight, on its first
+            // corner. Air, id 0 below the iso level, weighs nothing: a surface is made of what is
+            // solid on either side of it, and air is solid nowhere.
+            for (int i = 0; i < 8; i++)
+            {
+                if (ids[i] == 0)
+                    weights[i] = 0;
+                for (int j = 0; j < i; j++)
+                {
+                    if (ids[j] == ids[i])
+                    {
+                        weights[j] += weights[i];
+                        weights[i] = 0;
+                    }
+                }
+            }
+
+            float total = 0;
+            for (int k = 0; k < 8; k++)
+                total += weights[k];
+
+            int chosen = ids[0];
+            if (total > 0)
+            {
+                float threshold = DitherThreshold(pixel, dither) * total;
+                float best = -1;
+                float running = 0;
+                bool drawn = false;
+                for (int m = 0; m < 8; m++)
+                {
+                    if (dither == 0)
+                    {
+                        if (weights[m] > best)
+                        {
+                            best = weights[m];
+                            chosen = ids[m];
+                        }
+                    }
+                    else
+                    {
+                        running += weights[m];
+                        if (!drawn && weights[m] > 0 && running > threshold)
+                        {
+                            chosen = ids[m];
+                            drawn = true;
+                        }
+                    }
+                }
+            }
+
+            return cubes ? MaterialId(cell) : chosen;
         }
 
         /// Central differences on the reconstructed field, half a cell apart. Taken at the hit rather
@@ -455,11 +469,10 @@ namespace Stride.Rendering.Voxels.Grid
             return hit;
         }
 
-        override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
+        override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
         {
             hitDistance = 0;
             hitNormal = float3(0, 1, 0);
-            hitAlbedo = float3(1, 1, 1);
 
             int3 cells = SampleCount() - int3(1, 1, 1);
             float cellSize = VoxelGridCellSize;
@@ -637,7 +650,6 @@ namespace Stride.Rendering.Voxels.Grid
             {
                 float3 position = origin + safeDirection * tHit;
                 hitDistance = tHit;
-                hitAlbedo = smooth ? SamplePalette(position, 0).rgb : PaletteEntry(CellOf(position), 0).rgb;
 
                 // The face just crossed, facing back along the ray.
                 float3 faceNormal = float3(

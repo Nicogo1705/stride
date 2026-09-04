@@ -5,9 +5,9 @@ namespace Stride.Rendering.Voxels.Grid
     /// How a ray finds the surface of a voxel grid.
     ///
     /// The seam that keeps the rest of the pipeline honest about what it depends on: everything
-    /// above only wants a hit, a distance and a normal, and does not care how they were found. The
-    /// implementation beside this file walks the grid cell by cell, which needs nothing but the
-    /// occupancy and runs on every graphics API.
+    /// above only wants a hit, a distance, a normal and a material, and does not care how they were
+    /// found. The implementation beside this file walks the grid cell by cell, which needs nothing
+    /// but the samples and runs on every graphics API.
     ///
     /// The reason it is an interface rather than a function is what comes after it. A hardware ray
     /// tracing path implements this same shader and everything above it is untouched; so does a
@@ -18,18 +18,17 @@ namespace Stride.Rendering.Voxels.Grid
         /// Traces a ray expressed in the grid local space, where the grid spans
         /// [0, cells * cellSize] on each axis. Returns whether anything was hit; hitDistance is
         /// measured along a normalized direction, and hitNormal points away from the surface.
-        bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal, out float3 hitAlbedo)
+        bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
         {
             hitDistance = 0;
             hitNormal = float3(0, 1, 0);
-            hitAlbedo = float3(1, 1, 1);
             return false;
         }
 
         /// The same ray, asked only whether and where it meets the surface - for a shadow map,
         /// which reads nothing but the depth. Free to stop within a fraction of a cell of the
         /// surface, on its far side rather than its near one so a receiver at the true surface
-        /// is never behind its own shadow. No normal, no colour, none of the reads they cost.
+        /// is never behind its own shadow. No normal, none of the reads it costs.
         /// Not named after Trace: a method whose name begins with another's was resolved to the
         /// wrong body by the shader mixer, and a shadow ray then found nothing.
         bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
@@ -38,27 +37,13 @@ namespace Stride.Rendering.Voxels.Grid
             return false;
         }
 
-        /// The material at a point of the surface, blended from the palette entries of the eight
-        /// samples round it with the same weights the field itself is reconstructed with - so a
-        /// boundary between two materials is as smooth as the surface that carries it. Three
-        /// values returned rather than one method with out parameters: the HLSL compiler falls
-        /// over ("argument pulled into unrelated predicate") inlining those under a branch.
-        /// The colour, in rgb.
-        float4 SurfaceColor(float3 localPosition)
+        /// The material a point of the surface is drawn with: one id, chosen among the eight
+        /// samples round the point by their trilinear weight. A pixel is drawn by one material,
+        /// as a pixel of a mesh is; dither picks how a boundary between two is shared out between
+        /// pixels (see VoxelGridDither), and 0 gives every pixel to the heaviest.
+        int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)
         {
-            return float4(1, 1, 1, 1);
-        }
-
-        /// What the surface emits, in rgb, with its intensity in w.
-        float4 SurfaceEmissive(float3 localPosition)
-        {
-            return float4(0, 0, 0, 0);
-        }
-
-        /// Glossiness in x, metalness in y.
-        float4 SurfaceProperties(float3 localPosition)
-        {
-            return float4(0, 0, 0, 0);
+            return 0;
         }
 
         /// Diagnostic: what the composed source reports at a point, as

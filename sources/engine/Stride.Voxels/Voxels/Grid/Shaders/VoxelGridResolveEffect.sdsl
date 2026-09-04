@@ -2,17 +2,17 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    effect VoxelGridRenderEffect
+    effect VoxelGridResolveEffect
     {
-        using params VoxelGridRenderShaderKeys;
+        using params VoxelGridResolveShaderKeys;
 
-        mixin VoxelGridRenderShader;
+        mixin VoxelGridResolveShader;
         // The traversal arrives already carrying its own source composition, built on the C# side -
         // so swapping DDA for a hardware traced or distance field implementation changes this file
         // not at all.
-        if (VoxelGridRenderShaderKeys.Traversal != null)
+        if (VoxelGridResolveShaderKeys.Traversal != null)
         {
-            mixin compose Traversal = VoxelGridRenderShaderKeys.Traversal;
+            mixin compose Traversal = VoxelGridResolveShaderKeys.Traversal;
         }
     }
 }

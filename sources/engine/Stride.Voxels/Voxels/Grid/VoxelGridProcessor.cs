@@ -2,10 +2,12 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Games;
 using Stride.Graphics;
+using Stride.Rendering.Compositing;
 using Stride.Rendering.Materials;
 using Stride.Rendering.Materials.ComputeColors;
 using Stride.Shaders;
@@ -14,30 +16,67 @@ using GraphicsBuffer = Stride.Graphics.Buffer;
 namespace Stride.Rendering.Voxels.Grid
 {
     /// <summary>
-    /// Keeps a <see cref="VoxelGridComponent"/>'s model and material in step with its field.
+    /// Keeps a <see cref="VoxelGridComponent"/>'s models in step with its field and its materials,
+    /// and the resolve pass in the compositor.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A grid is drawn by several models, all the same twelve-triangle box the size of the grid:
+    /// one per material, each carrying that material wrapped so that a resolve layer runs at the
+    /// front of its pixel stage and hands the material the resolved surface; and one that casts
+    /// the shadows, carrying a material that walks the field only in the caster passes. The box
+    /// is what the renderer culls, sorts and rasterises, and its far faces are kept so the volume
+    /// is drawn from inside as well.
+    /// </para>
+    /// <para>
+    /// The resolve pass is put at the front of the camera's renderer the first time a grid exists,
+    /// from the update and never from a draw, since a compositor being drawn is a list being
+    /// walked.
+    /// </para>
+    /// </remarks>
     public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>
     {
-        /// <summary>What the processor keeps per component: the model standing in for the grid, and
-        /// what it was built from, so it is rebuilt only when that changes.</summary>
+        /// <summary>One model of the field: a material of the list, or the shadow caster.</summary>
+        public sealed class Draw
+        {
+            public Material Source;
+            public Material Wrapped;
+            public Entity Carrier;
+            public ModelComponent Model;
+        }
+
+        /// <summary>What the processor keeps per component.</summary>
         public sealed class State
         {
-            public ModelComponent Model;
-            public Material Material;
-            public MaterialVoxelSurfaceFeature Surface;
+            public int GridIndex;
             public Int3 SampleCount;
             public float CellSize;
             public int ExtentRevision = -1;
+            public Vector3 Extent;
 
-            /// <summary>The traversal's shader as it was when the material was built.</summary>
+            /// <summary>The traversal's shader as it was when the shadow material was built.</summary>
             public ShaderSource Shader;
-
-            /// <summary>The materials the samples point at, built from the component's list.</summary>
-            public VoxelGridPalette Palette;
 
             /// <summary>The box's buffers, released when it is rebuilt or the component goes.</summary>
             public GraphicsBuffer VertexBuffer;
             public GraphicsBuffer IndexBuffer;
+            public VertexDeclaration Layout;
+            public int VertexCount;
+            public int IndexCount;
+            public BoundingBox Bounds;
+            public BoundingSphere Sphere;
+
+            /// <summary>The materials, one draw each, in the order of the component's list.</summary>
+            public List<Draw> Materials = [];
+
+            /// <summary>The shadow caster, and the feature its material walks the field with.</summary>
+            public Draw Shadow;
+            public MaterialVoxelSurfaceFeature ShadowSurface;
+
+            /// <summary>The grey the field is drawn with when no material was given.</summary>
+            public Material Fallback;
+
+            public int TargetsVersion = -1;
 
             public void ReleaseBuffers()
             {
@@ -46,33 +85,32 @@ namespace Stride.Rendering.Voxels.Grid
                 VertexBuffer = null;
                 IndexBuffer = null;
             }
-
-            public void ReleasePalette()
-            {
-                Palette?.Dispose();
-                Palette = null;
-            }
         }
 
         private IGraphicsDeviceService graphicsDeviceService;
-        private IGame game;
+        private SceneSystem sceneSystem;
+        private VoxelGridResolvePass resolvePass;
+        private int nextGridIndex;
 
         protected override void OnSystemAdd()
         {
             base.OnSystemAdd();
             graphicsDeviceService = Services.GetService<IGraphicsDeviceService>();
-            game = Services.GetService<IGame>();
+            sceneSystem = Services.GetService<SceneSystem>();
         }
 
-        protected override State GenerateComponentData(Entity entity, VoxelGridComponent component) => new();
+        protected override State GenerateComponentData(Entity entity, VoxelGridComponent component)
+            => new() { GridIndex = nextGridIndex++ % 256 };
 
         protected override void OnEntityComponentRemoved(Entity entity, VoxelGridComponent component, State state)
         {
-            if (state.Model?.Entity is { } carrier && carrier != entity)
-                entity.RemoveChild(carrier);
-            state.Model = null;
+            foreach (var draw in state.Materials)
+                Detach(entity, draw);
+            state.Materials.Clear();
+            if (state.Shadow != null)
+                Detach(entity, state.Shadow);
+            state.Shadow = null;
             state.ReleaseBuffers();
-            state.ReleasePalette();
         }
 
         public override void Update(GameTime time)
@@ -81,84 +119,131 @@ namespace Stride.Rendering.Voxels.Grid
             if (device == null)
                 return;
 
+            EnsureResolvePass();
+            var renderer = resolvePass?.Renderer;
+            renderer?.Grids.Clear();
+
             foreach (var pair in ComponentDatas)
             {
                 var component = pair.Key;
                 var state = pair.Value;
 
-                if (!component.Enabled || component.Traversal?.Source == null)
+                var live = component.Enabled && component.Traversal?.Source != null;
+                if (!live)
                 {
-                    if (state.Model != null)
-                        state.Model.Enabled = false;
+                    SetEnabled(state, false);
                     continue;
                 }
 
-                EnsurePalette(device, component, state);
-                EnsureModel(device, component, state);
-                state.Model.Enabled = true;
-                state.Model.IsShadowCaster = component.CastShadows;
+                EnsureBox(device, component, state);
+                EnsureShadow(device, component, state);
+                EnsureMaterials(device, component, state);
+                SetEnabled(state, true);
 
-                // The pass parameters are what the mesh render feature copies from, every frame.
-                if (state.Surface != null)
+                if (state.Shadow != null)
                 {
-                    state.Surface.Debug = component.DebugView;
-                    state.Surface.ApplyParameters(state.Material.Passes[0].Parameters);
+                    state.Shadow.Model.IsShadowCaster = component.CastShadows;
+                    state.Shadow.Model.Enabled = component.CastShadows;
+                    state.ShadowSurface.ApplyParameters(state.Shadow.Wrapped.Passes[0].Parameters);
+                }
+
+                // The resolve targets, bound again when the renderer remade them, and the
+                // diagnostic view, every frame.
+                foreach (var draw in state.Materials)
+                {
+                    foreach (var pass in draw.Wrapped.Passes)
+                    {
+                        pass.Parameters.Set(VoxelGridFieldKeys.Debug, component.DebugView);
+                        if (renderer != null && state.TargetsVersion != renderer.TargetsVersion)
+                        {
+                            pass.Parameters.Set(VoxelGridFieldKeys.ResolveNormal, renderer.Normal);
+                            pass.Parameters.Set(VoxelGridFieldKeys.ResolveMaterial, renderer.Material);
+                            pass.Parameters.Set(VoxelGridFieldKeys.ResolvePosition, renderer.Position);
+                        }
+                    }
+                }
+                if (renderer != null)
+                    state.TargetsVersion = renderer.TargetsVersion;
+
+                if (renderer != null)
+                {
+                    component.Entity.Transform.UpdateWorldMatrix();
+                    renderer.Grids.Add(new VoxelGridResolveEntry
+                    {
+                        Traversal = component.Traversal,
+                        World = component.Entity.Transform.WorldMatrix,
+                        MaxDistance = state.Extent.Length(),
+                        Dither = component.Dither,
+                        GridIndex = state.GridIndex,
+                    });
                 }
             }
         }
 
         /// <summary>
-        /// Keeps the palette in step with the component's material list, and on the traversal, which
-        /// is what the shaders read it through.
+        /// Puts the resolve pass at the front of the camera's renderer, once. Inside the camera
+        /// renderer, not beside it: a renderer beside it runs with no view and resolves nothing.
         /// </summary>
-        private void EnsurePalette(GraphicsDevice device, VoxelGridComponent component, State state)
+        private void EnsureResolvePass()
         {
-            state.Palette ??= new VoxelGridPalette(device);
-            if (state.Palette.NeedsUpdate(component.Materials))
-                state.Palette.Update(game.GraphicsContext.CommandList, component.Materials);
-            component.Traversal.Palette = state.Palette;
+            if (resolvePass != null)
+                return;
+
+            var compositor = sceneSystem?.GraphicsCompositor;
+            if (compositor?.Game == null)
+                return;
+
+            var pass = new VoxelGridResolvePass();
+            if (InsertFirst(compositor.Game, pass))
+                resolvePass = pass;
         }
 
-        private static void EnsureModel(GraphicsDevice device, VoxelGridComponent component, State state)
+        private static bool InsertFirst(ISceneRenderer renderer, ISceneRenderer pass)
+        {
+            switch (renderer)
+            {
+                case SceneCameraRenderer camera:
+                    if (camera.Child is SceneRendererCollection inner)
+                    {
+                        inner.Children.Insert(0, pass);
+                    }
+                    else
+                    {
+                        var wrapper = new SceneRendererCollection();
+                        wrapper.Children.Add(pass);
+                        wrapper.Children.Add(camera.Child);
+                        camera.Child = wrapper;
+                    }
+                    return true;
+
+                case SceneRendererCollection collection:
+                    foreach (var child in collection.Children)
+                    {
+                        if (InsertFirst(child, pass))
+                            return true;
+                    }
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static void SetEnabled(State state, bool enabled)
+        {
+            foreach (var draw in state.Materials)
+                draw.Model.Enabled = enabled;
+            if (state.Shadow != null && !enabled)
+                state.Shadow.Model.Enabled = false;
+        }
+
+        /// <summary>The proxy box, rebuilt only when the field's extent moves.</summary>
+        private static void EnsureBox(GraphicsDevice device, VoxelGridComponent component, State state)
         {
             var samples = component.Traversal.Source.SampleCount;
             var cellSize = component.Traversal.CellSize;
 
-            // The traversal's shader is a permutation: change the surface form and it is a different
-            // shader, so the default material is built again. A material the user supplied is theirs
-            // to regenerate. Shader sources compare structurally, so no string is built for it.
-            var shader = component.Traversal.GetShaderSource();
-            var wanted = component.Material;
-            var rebuild = state.Material == null
-                          || (wanted != null && state.Material != wanted)
-                          || (wanted == null && !Equals(state.Shader, shader));
-            if (rebuild)
-            {
-                if (wanted != null)
-                {
-                    state.Material = wanted;
-                    state.Surface = wanted.Descriptor?.Attributes?.Surface as MaterialVoxelSurfaceFeature;
-                }
-                else
-                {
-                    // Held from construction: Material.New does not keep the descriptor it was given,
-                    // so the feature cannot be looked up on the finished material.
-                    state.Material = BuildDefaultMaterial(device, component, out var built);
-                    state.Surface = built;
-                }
-
-                state.Shader = shader;
-                state.Model = null;
-
-                // The far faces are kept, so the volume is drawn from inside as well as from outside
-                // for one walk per pixel. The ray through a far face is the same ray as through the
-                // near one; only the far one is still there when the camera stands in the volume.
-                foreach (var pass in state.Material.Passes)
-                    pass.CullMode = CullMode.Front;
-            }
-
-            // The box stands in for the volume, so it is rebuilt only when the volume's extent moves.
-            var stale = state.Model == null
+            var stale = state.VertexBuffer == null
                         || state.SampleCount != samples
                         || state.CellSize != cellSize
                         || state.ExtentRevision != component.ExtentRevision;
@@ -168,42 +253,207 @@ namespace Stride.Rendering.Voxels.Grid
             state.SampleCount = samples;
             state.CellSize = cellSize;
             state.ExtentRevision = component.ExtentRevision;
-
-            var extent = new Vector3(samples.X - 1, samples.Y - 1, samples.Z - 1) * cellSize;
+            state.Extent = new Vector3(samples.X - 1, samples.Y - 1, samples.Z - 1) * cellSize;
 
             state.ReleaseBuffers();
-            var model = new Model { state.Material };
-            model.Add(BuildBoxMesh(device, extent, state, out var bounds, out var sphere));
-            model.BoundingBox = bounds;
-            model.BoundingSphere = sphere;
+            BuildBox(device, state);
 
-            if (state.Model == null)
+            // Every model carries the box; a new box means new meshes.
+            foreach (var draw in state.Materials)
+                draw.Model.Model = BuildModel(state, draw.Wrapped);
+            if (state.Shadow != null)
+                state.Shadow.Model.Model = BuildModel(state, state.Shadow.Wrapped);
+        }
+
+        /// <summary>The shadow caster: a box whose material walks the field in the caster passes only.</summary>
+        private static void EnsureShadow(GraphicsDevice device, VoxelGridComponent component, State state)
+        {
+            var shader = component.Traversal.GetShaderSource();
+            if (state.Shadow != null && Equals(state.Shader, shader))
+                return;
+
+            if (state.Shadow != null)
+                Detach(component.Entity, state.Shadow);
+
+            state.Shader = shader;
+            state.ShadowSurface = new MaterialVoxelSurfaceFeature { Traversal = component.Traversal, MaxDistance = state.Extent.Length() };
+            var material = Material.New(device, new MaterialDescriptor
             {
-                // A child entity of its own, rather than a ModelComponent on the grid's entity. That
-                // entity is the user's - it commonly already carries a collider, and may carry a
-                // model the user put there - and quietly taking over its ModelComponent is both a
-                // collision and a thing that is hard to see from the outside.
-                var carrier = new Entity("VoxelGridModel");
-                state.Model = carrier.GetOrCreate<ModelComponent>();
-                component.Entity.AddChild(carrier);
-            }
+                Attributes =
+                {
+                    Surface = state.ShadowSurface,
+                    // A diffuse feature, or the generator adds no pixel stage worth running.
+                    Diffuse = new MaterialDiffuseMapFeature(new ComputeColor(Color4.Black)),
+                    DiffuseModel = new MaterialDiffuseLambertModelFeature(),
+                },
+            });
+            foreach (var pass in material.Passes)
+                pass.CullMode = CullMode.Front;
 
-            state.Model.Model = model;
-
-            // A ray that crosses the volume corner to corner has gone as far as it can.
-            if (state.Surface != null && state.Surface.MaxDistance <= 0)
-                state.Surface.MaxDistance = extent.Length();
+            state.Shadow = Attach(component.Entity, "VoxelGridShadow", state, null, material);
+            state.Shadow.Model.IsShadowCaster = component.CastShadows;
         }
 
         /// <summary>
-        /// The volume's bounds, as twelve triangles for a ray to be found through.
+        /// One model per material, rebuilt when the list changes. A single <see cref="VoxelGridComponent.Material"/>
+        /// draws every id; an empty list draws every id in grey.
+        /// </summary>
+        private static void EnsureMaterials(GraphicsDevice device, VoxelGridComponent component, State state)
+        {
+            var wanted = new List<(Material material, int id)>();
+            if (component.Material != null)
+            {
+                wanted.Add((component.Material, -1));
+            }
+            else if (component.Materials.Count > 0)
+            {
+                for (int id = 0; id < component.Materials.Count && id < 256; id++)
+                    if (component.Materials[id] != null)
+                        wanted.Add((component.Materials[id], id));
+            }
+            else
+            {
+                state.Fallback ??= Material.New(device, new MaterialDescriptor
+                {
+                    Attributes =
+                    {
+                        Diffuse = new MaterialDiffuseMapFeature(new ComputeColor(new Color4(0.6f, 0.6f, 0.6f, 1f))),
+                        DiffuseModel = new MaterialDiffuseLambertModelFeature(),
+                        MicroSurface = new MaterialGlossinessMapFeature(new ComputeFloat(0.3f)),
+                        Specular = new MaterialMetalnessMapFeature(new ComputeFloat(0f)),
+                        SpecularModel = new MaterialSpecularMicrofacetModelFeature { Environment = new MaterialSpecularMicrofacetEnvironmentGGXPolynomial() },
+                    },
+                });
+                wanted.Add((state.Fallback, -1));
+            }
+
+            var same = wanted.Count == state.Materials.Count;
+            for (int i = 0; same && i < wanted.Count; i++)
+                same = ReferenceEquals(state.Materials[i].Source, wanted[i].material);
+            if (same)
+                return;
+
+            foreach (var draw in state.Materials)
+                Detach(component.Entity, draw);
+            state.Materials.Clear();
+
+            foreach (var (material, id) in wanted)
+            {
+                var wrapped = Wrap(material, id, state.GridIndex);
+                var draw = Attach(component.Entity, $"VoxelGridMaterial{id}", state, material, wrapped);
+                draw.Model.IsShadowCaster = false;
+                state.Materials.Add(draw);
+            }
+
+            // Bound on the next update, whatever version the targets are at.
+            state.TargetsVersion = -1;
+        }
+
+        /// <summary>
+        /// A material, taken as compiled, with the resolve layer at the front of its pixel stage.
         /// </summary>
         /// <remarks>
-        /// Built the way a procedural model is built - tangents generated, bounding sphere computed -
-        /// so the mesh path treats it like any other mesh.
+        /// No descriptor is needed and none is used: a compiled material's pixel stage is a shader
+        /// source in its parameters, an array of layers, and a layer put in front of the others is
+        /// run before them. The parameters are copied, so the material the user holds is untouched
+        /// and each wrapped copy carries its own id.
         /// </remarks>
-        private static Mesh BuildBoxMesh(GraphicsDevice device, Vector3 extent, State state, out BoundingBox bounds, out BoundingSphere sphere)
+        private static Material Wrap(Material source, int id, int gridIndex)
         {
+            var wrapped = new Material();
+            foreach (var sourcePass in source.Passes)
+            {
+                var parameters = new ParameterCollection(sourcePass.Parameters);
+
+                var layers = new ShaderMixinSource();
+                layers.Mixins.Add(new ShaderClassSource("MaterialSurfaceArray"));
+                layers.AddCompositionToArray("layers", new ShaderClassSource("MaterialSurfaceVoxelGridResolve"));
+
+                var original = parameters.Get(MaterialKeys.PixelStageSurfaceShaders);
+                if (original is ShaderMixinSource mixin && mixin.Compositions.TryGetValue("layers", out var array) && array is ShaderArraySource arraySource)
+                {
+                    foreach (var layer in arraySource.Values)
+                        layers.AddCompositionToArray("layers", layer);
+                }
+                else if (original != null)
+                {
+                    layers.AddCompositionToArray("layers", original);
+                }
+
+                parameters.Set(MaterialKeys.PixelStageSurfaceShaders, layers);
+                // The depth-only passes rasterise with the vertex stage alone unless told otherwise,
+                // and for this material the mesh is the proxy box.
+                parameters.Set(MaterialKeys.UsePixelShaderWithDepthPass, true);
+                parameters.Set(VoxelGridFieldKeys.MaterialId, id);
+                parameters.Set(VoxelGridFieldKeys.GridIndex, gridIndex);
+
+                wrapped.Passes.Add(new MaterialPass(parameters)
+                {
+                    // The far faces are kept, so the volume is drawn from inside as well as from
+                    // outside; the layer discards what the resolve pass did not give this material.
+                    CullMode = CullMode.Front,
+                    DepthFunction = sourcePass.DepthFunction,
+                    BlendState = sourcePass.BlendState,
+                    TessellationMethod = sourcePass.TessellationMethod,
+                    HasTransparency = sourcePass.HasTransparency,
+                    AlphaToCoverage = sourcePass.AlphaToCoverage,
+                    IsLightDependent = sourcePass.IsLightDependent,
+                    PassIndex = sourcePass.PassIndex,
+                });
+            }
+            return wrapped;
+        }
+
+        /// <summary>
+        /// A child entity of its own, rather than a ModelComponent on the grid's entity. That
+        /// entity is the user's - it commonly already carries a collider, and may carry a model the
+        /// user put there - and quietly taking over its ModelComponent is both a collision and a
+        /// thing that is hard to see from the outside.
+        /// </summary>
+        private static Draw Attach(Entity entity, string name, State state, Material source, Material wrapped)
+        {
+            var carrier = new Entity(name);
+            var model = carrier.GetOrCreate<ModelComponent>();
+            model.Model = BuildModel(state, wrapped);
+            entity.AddChild(carrier);
+            return new Draw { Source = source, Wrapped = wrapped, Carrier = carrier, Model = model };
+        }
+
+        private static void Detach(Entity entity, Draw draw)
+        {
+            if (draw.Carrier.GetParent() == entity)
+                entity.RemoveChild(draw.Carrier);
+        }
+
+        private static Model BuildModel(State state, Material material)
+        {
+            var model = new Model { material };
+            model.Add(new Mesh
+            {
+                MaterialIndex = 0,
+                BoundingBox = state.Bounds,
+                BoundingSphere = state.Sphere,
+                Draw = new MeshDraw
+                {
+                    PrimitiveType = PrimitiveType.TriangleList,
+                    DrawCount = state.IndexCount,
+                    IndexBuffer = new IndexBufferBinding(state.IndexBuffer, false, state.IndexCount),
+                    VertexBuffers = [new VertexBufferBinding(state.VertexBuffer, state.Layout, state.VertexCount)],
+                },
+            });
+            model.BoundingBox = state.Bounds;
+            model.BoundingSphere = state.Sphere;
+            return model;
+        }
+
+        /// <summary>
+        /// The volume's bounds, as twelve triangles for the resolve to be read through. Built the
+        /// way a procedural model is built - tangents generated, bounding sphere computed - so the
+        /// mesh path treats it like any other mesh.
+        /// </summary>
+        private static void BuildBox(GraphicsDevice device, State state)
+        {
+            var extent = state.Extent;
             var vertices = new VertexPositionNormalTexture[8];
             for (int corner = 0; corner < 8; ++corner)
             {
@@ -212,9 +462,9 @@ namespace Stride.Rendering.Voxels.Grid
                     (corner & 2) != 0 ? extent.Y : 0,
                     (corner & 4) != 0 ? extent.Z : 0);
 
-                // Normals and texture coordinates that are merely not degenerate: the surface shader
-                // replaces the frame with the traced one, but tangent generation divides by the
-                // spread of the texture coordinates and hands back NaN when every vertex shares one.
+                // Normals and texture coordinates that are merely not degenerate: the resolve layer
+                // replaces the frame, but tangent generation divides by the spread of the texture
+                // coordinates and hands back NaN when every vertex shares one.
                 vertices[corner] = new VertexPositionNormalTexture(
                     position,
                     Vector3.Normalize(position - extent * 0.5f),
@@ -222,7 +472,7 @@ namespace Stride.Rendering.Voxels.Grid
             }
 
             // Corner order matches the bit pattern above: bit 0 is +X, bit 1 +Y, bit 2 +Z. One
-            // winding; the material pass keeps the far faces.
+            // winding; the material passes keep the far faces.
             int[] indices =
             [
                 0, 1, 2, 1, 3, 2, // -Z
@@ -233,11 +483,11 @@ namespace Stride.Rendering.Voxels.Grid
                 1, 5, 3, 3, 5, 7, // +X
             ];
 
-            bounds = new BoundingBox(Vector3.Zero, extent);
+            state.Bounds = new BoundingBox(Vector3.Zero, extent);
             unsafe
             {
                 fixed (void* positions = vertices)
-                    BoundingSphere.FromPoints((IntPtr)positions, 0, vertices.Length, VertexPositionNormalTexture.Size, out sphere);
+                    BoundingSphere.FromPoints((IntPtr)positions, 0, vertices.Length, VertexPositionNormalTexture.Size, out state.Sphere);
             }
 
             var withTangents = VertexHelper.GenerateTangentBinormal(vertices[0].GetLayout(), vertices, indices);
@@ -247,62 +497,11 @@ namespace Stride.Rendering.Voxels.Grid
             for (int i = 0; i < indicesShort.Length; ++i)
                 indicesShort[i] = (ushort)indices[i];
 
-            var vertexBuffer = state.VertexBuffer = GraphicsBuffer.New(device, complete.VertexBuffer, BufferFlags.VertexBuffer, GraphicsResourceUsage.Default);
-            var indexBuffer = state.IndexBuffer = GraphicsBuffer.Index.New(device, indicesShort);
-
-            return new Mesh
-            {
-                MaterialIndex = 0,
-                BoundingBox = bounds,
-                BoundingSphere = sphere,
-                Draw = new MeshDraw
-                {
-                    PrimitiveType = PrimitiveType.TriangleList,
-                    DrawCount = indices.Length,
-                    IndexBuffer = new IndexBufferBinding(indexBuffer, false, indices.Length),
-                    VertexBuffers = [new VertexBufferBinding(vertexBuffer, complete.Layout, vertices.Length)],
-                },
-            };
-        }
-
-        /// <summary>
-        /// The material that lets the palette through: the surface feature writes colour, glossiness,
-        /// specular and emission straight onto the material streams from the palette, and each map
-        /// feature here hands its stream back unchanged. The features are not decoration: the
-        /// generator adds lighting only to a material that has a diffuse feature, and emission only
-        /// to one that has an emissive feature.
-        /// </summary>
-        /// <remarks>
-        /// The environment function is the polynomial approximation rather than the lookup table: the
-        /// table is a texture the pipeline binds for a material that came from an asset, and a
-        /// material built here at runtime has none - which leaves environment specular at zero and
-        /// metal reading as black.
-        /// </remarks>
-        private static Material BuildDefaultMaterial(GraphicsDevice device, VoxelGridComponent component, out MaterialVoxelSurfaceFeature surface)
-        {
-            surface = new MaterialVoxelSurfaceFeature { Traversal = component.Traversal };
-            var descriptor = new MaterialDescriptor
-            {
-                Attributes =
-                {
-                    Surface = surface,
-                    Diffuse = new MaterialDiffuseMapFeature(new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelDiffuse" }),
-                    DiffuseModel = new MaterialDiffuseLambertModelFeature(),
-                    Specular = new MaterialSpecularMapFeature { SpecularMap = new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelSpecular" } },
-                    SpecularModel = new MaterialSpecularMicrofacetModelFeature
-                    {
-                        Environment = new MaterialSpecularMicrofacetEnvironmentGGXPolynomial(),
-                    },
-                    MicroSurface = new MaterialGlossinessMapFeature(new ComputeShaderClassScalar { MixinReference = "ComputeColorVoxelGlossiness" }),
-                    Emissive = new MaterialEmissiveMapFeature(new ComputeShaderClassColor { MixinReference = "ComputeColorVoxelEmissive" })
-                    {
-                        Intensity = new ComputeShaderClassScalar { MixinReference = "ComputeColorVoxelEmissiveIntensity" },
-                        UseAlpha = false,
-                    },
-                },
-            };
-
-            return Material.New(device, descriptor);
+            state.VertexBuffer = GraphicsBuffer.New(device, complete.VertexBuffer, BufferFlags.VertexBuffer, GraphicsResourceUsage.Default);
+            state.IndexBuffer = GraphicsBuffer.Index.New(device, indicesShort);
+            state.Layout = complete.Layout;
+            state.VertexCount = vertices.Length;
+            state.IndexCount = indices.Length;
         }
     }
 }
