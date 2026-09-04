@@ -40,6 +40,7 @@ shader VoxelMarchSetRandomHemisphere : VoxelMarchSet, ShaderBase
 
         float4 reflLighting = float4(0, 0, 0, 0);
 
+        [loop]
         for(int i = 0; i < marchCount; i ++)
         {
             float3 dir = CosineWeightedPointOnHemisphere(streams.ShadingPosition.xy + i*1.73 + time);

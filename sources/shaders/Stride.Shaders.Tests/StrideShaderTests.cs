@@ -959,6 +959,28 @@ new ShaderMacro("class", "shader"),
         }
     }
 
+    // [loop] and [unroll] on a loop must reach the SPIR-V as OpLoopMerge's loop control. SPIRV-Cross
+    // turns them back into the HLSL attributes; without them FXC unrolls every loop whose trip count
+    // it can see, and a voxel cone march of a few hundred steps took it half a minute per effect.
+    [Fact]
+    public void LoopAttributesReachSpirvLoopControl()
+    {
+        var loader = new ShaderLoader("./assets/SDSL/CompilerTests");
+        var shaderMixer = new ShaderMixer(loader);
+        Assert.True(shaderMixer.ShaderLoader.LoadExternalBuffer("LoopControlRoot", [], out var buffer, out _, out _));
+
+        var controls = new List<Stride.Shaders.Spirv.Specification.LoopControlMask>();
+        foreach (var i in buffer.Buffer)
+        {
+            if (i.Op == Stride.Shaders.Spirv.Specification.Op.OpLoopMerge)
+                controls.Add(((Stride.Shaders.Spirv.Core.OpLoopMerge)i).LoopControl);
+        }
+
+        Assert.Equal(
+            [Stride.Shaders.Spirv.Specification.LoopControlMask.DontUnroll, Stride.Shaders.Spirv.Specification.LoopControlMask.Unroll, Stride.Shaders.Spirv.Specification.LoopControlMask.DontUnroll],
+            controls);
+    }
+
     // Regression: a `stage compose` slot is hoisted to the root with the shader that declares it,
     // and CompositionArrayStageFromNested covers its value being hoisted along. But the value was
     // then merged as if it had been supplied at the root, so resources underneath got root-relative

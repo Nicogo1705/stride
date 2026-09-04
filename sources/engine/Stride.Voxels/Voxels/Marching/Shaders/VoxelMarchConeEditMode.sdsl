@@ -27,6 +27,7 @@ shader VoxelMarchConeEditMode : VoxelMarchMethod, VoxelRadiusMarchMethod, MarchA
         float4 light = float4(0.0, 0.0, 0.0, 0.0);
         rayPos += offset * voxelSize * rayDir;
 
+        [loop]
         for (int i = 0; i < steps; i ++)
         {
             float diameter = max(voxelSize, finalRatio * dist);

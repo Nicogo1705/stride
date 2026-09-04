@@ -23,30 +23,24 @@ shader VoxelMarchSetHemisphere6 : VoxelMarchSet, ShaderBase
 
         float4 reflLighting = float4(0, 0, 0, 0);
         
-        //Dot products of rays
-        float central = 1.0;
-        float outer = 0.445;
-        float sum = central + outer * 5;
-        central /= sum;
-        outer /= sum;
+        // Six cones from a table, for the same reason as VoxelMarchSetHemisphere12: each written-out
+        // March call inlines the whole cone, and the copies were what FXC spent its time on.
+        // Dot products of rays: one central cone at 1.0, five outer at 0.445.
+        static const float central = 1.0 / (1.0 + 0.445 * 5);
+        static const float outer = 0.445 / (1.0 + 0.445 * 5);
+        static const float3 directions[6] =
+        {
+            float3(0, 0, 1),
+            float3(0.85093, 0.27830, 0.44549), float3(0.52740, -0.72355, 0.44534), float3(-0.52630, -0.72441, 0.44525),
+            float3(-0.85145, 0.27714, 0.44523), float3(0.81802, 0.40672, 0.40672),
+        };
 
-        rayDir = mul(float3(0, 0, 1), tangentMatrix);
-        reflLighting += Marcher.March(startPos, rayDir) * central;
-
-        rayDir = mul(normalize(float3(0.85, 0.278, 0.445)), tangentMatrix);
-        reflLighting += Marcher.March(startPos, rayDir) * outer;
-
-        rayDir = mul(normalize(float3(0.527, -0.723, 0.445)), tangentMatrix);
-        reflLighting += Marcher.March(startPos, rayDir) * outer;
-
-        rayDir = mul(normalize(float3(-0.526, -0.724, 0.445)), tangentMatrix);
-        reflLighting += Marcher.March(startPos, rayDir) * outer;
-
-        rayDir = mul(normalize(float3(-0.851, 0.277, 0.445)), tangentMatrix);
-        reflLighting += Marcher.March(startPos, rayDir) * outer;
-
-        rayDir = mul(normalize(float3(0.895, 0.445, 0.445)), tangentMatrix);
-        reflLighting += Marcher.March(startPos, rayDir) * outer;
+        [loop]
+        for (int i = 0; i < 6; i++)
+        {
+            float3 dir = mul(directions[i], tangentMatrix);
+            reflLighting += Marcher.March(startPos, dir) * (i == 0 ? central : outer);
+        }
 
         return reflLighting;
     }

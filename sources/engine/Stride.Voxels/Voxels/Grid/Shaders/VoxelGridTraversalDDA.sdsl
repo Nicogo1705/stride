@@ -487,6 +487,7 @@ namespace Stride.Rendering.Voxels.Grid
             int3 cell = int3(0, 0, 0);
 
             int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            [loop]
             for (int i = 0; i < steps && running; i++)
             {
                 float3 probe = origin + safeDirection * (t + nudge);
