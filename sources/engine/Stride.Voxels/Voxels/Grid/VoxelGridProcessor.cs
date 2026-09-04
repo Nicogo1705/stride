@@ -35,14 +35,8 @@ namespace Stride.Rendering.Voxels.Grid
     /// walked.
     /// </para>
     /// </remarks>
-    public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>, IEntityComponentRenderProcessor
+    public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>
     {
-        /// <summary>The visibility group the fields are listed on for the GI, set by the engine.</summary>
-        public VisibilityGroup VisibilityGroup { get; set; }
-
-        /// <summary>Unused; required of a render processor.</summary>
-        public RenderGroup RenderGroup { get; set; }
-
         private readonly VoxelGridInjectionList injection = new();
         /// <summary>One model of the field: a material of the list, or the shadow caster.</summary>
         public sealed class Draw
@@ -143,7 +137,6 @@ namespace Stride.Rendering.Voxels.Grid
             graphicsDeviceService = Services.GetService<IGraphicsDeviceService>();
             sceneSystem = Services.GetService<SceneSystem>();
             game = Services.GetService<IGame>();
-            VisibilityGroup?.Tags.Set(VoxelGridInjector.CurrentEntries, injection);
         }
 
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component)
@@ -171,6 +164,15 @@ namespace Stride.Rendering.Voxels.Grid
             var renderer = resolvePass?.Renderer;
             renderer?.Grids.Clear();
             injection.Entries.Clear();
+
+            // The list the GI's injector reads, on every visibility group of the scene: the
+            // renderer finds it through the one its view draws with. (A processor only gets a
+            // visibility group of its own when its component names it as a renderer.)
+            var groups = sceneSystem?.SceneInstance?.VisibilityGroups;
+            if (groups != null)
+                foreach (var group in groups)
+                    if (group.Tags.Get(VoxelGridInjector.CurrentEntries) != injection)
+                        group.Tags.Set(VoxelGridInjector.CurrentEntries, injection);
 
             foreach (var pair in ComponentDatas)
             {

@@ -83,10 +83,12 @@ namespace Stride.Rendering.Voxels.Grid
                 return;
 
             var commandList = context.CommandList;
+            // Zero in every channel: the normal's w is what says "resolved", and Color4.Black
+            // carries a 1 there - which made every pixel of the sky the first grid's id 0.
             commandList.Clear(depth, DepthStencilClearOptions.DepthBuffer);
-            commandList.Clear(Normal, Color4.Black);
-            commandList.Clear(Material, Color4.Black);
-            commandList.Clear(Position, Color4.Black);
+            commandList.Clear(Normal, new Color4(0, 0, 0, 0));
+            commandList.Clear(Material, new Color4(0, 0, 0, 0));
+            commandList.Clear(Position, new Color4(0, 0, 0, 0));
 
             var viewProjection = renderView.ViewProjection;
             Matrix.Invert(ref viewProjection, out var viewProjectionInverse);
