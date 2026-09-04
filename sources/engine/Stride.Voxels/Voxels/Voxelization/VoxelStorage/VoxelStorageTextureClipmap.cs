@@ -27,6 +27,14 @@ namespace Stride.Rendering.Voxels
         public Vector4[] PerMapOffsetScaleCurrent = new Vector4[20];
         public Vector3[] MippingOffset = new Vector3[20];
 
+        /// <summary>
+        /// The ring voxelized this frame, or -1 when every ring was. A ring's downsample into the
+        /// next only goes stale when one of the two was rewritten, so the others are skipped.
+        /// </summary>
+        public int RingUpdated = -1;
+
+        bool RingPairChanged(int finer) => RingUpdated < 0 || RingUpdated == finer || RingUpdated == finer + 1;
+
         /// <summary>Releases the ring, mip and scratch textures and the mipmapping shaders.</summary>
         public void Dispose()
         {
@@ -106,6 +114,11 @@ namespace Stride.Rendering.Voxels
             {
                 for (int i = 0; i < ClipMapCount - 1; i++)
                 {
+                    if (!RingPairChanged(i))
+                    {
+                        offsetIndex++;
+                        continue;
+                    }
                     Vector3 Offset = MippingOffset[offsetIndex];
 
                     // The direction's own shader for the first mip level: same thread numbers, same
@@ -167,8 +180,10 @@ namespace Stride.Rendering.Voxels
             }
             Vector3 resolution = ClipMapResolution;
             offsetIndex = ClipMapCount-1;
-            //Mipmaps for the largest clipmap
-            for (int i = 0; i < TempMipMaps.Length - 1; i++)
+            //Mipmaps for the largest clipmap - rebuilt only when that ring changed: its own
+            //voxelization, or the finer ring's downsample into its centre.
+            bool largestChanged = RingPairChanged(ClipMapCount - 2) || ClipMapCount == 1;
+            for (int i = 0; largestChanged && i < TempMipMaps.Length - 1; i++)
             {
                 Vector3 Offset = MippingOffset[offsetIndex];
                 resolution /= 2;

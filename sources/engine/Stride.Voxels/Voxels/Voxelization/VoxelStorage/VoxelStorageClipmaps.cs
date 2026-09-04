@@ -233,6 +233,7 @@ namespace Stride.Rendering.Voxels
                 }
             }
             clipmap.DownsampleFinerClipMaps = DownsampleFinerClipMaps;
+            clipmap.RingUpdated = UpdatesPerFrame == UpdateMethods.SingleClipmap ? ClipMapCurrent : -1;
             clipmap.ClipMapResolution = ClipMapResolution;
             clipmap.ClipMapCount = ClipMapCount;
             clipmap.LayoutSize = LayoutSize;
