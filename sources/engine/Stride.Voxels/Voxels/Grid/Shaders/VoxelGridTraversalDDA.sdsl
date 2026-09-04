@@ -84,7 +84,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// The cell size at the level in force: the field's, doubled per level.
         float CellSize()
         {
-            return VoxelGridCellSize * (float)(1 << clamp(VoxelGridLod, 0, 15));
+            return VoxelGridCellSize * (float)(1 << clamp(streams.VoxelGridLod, 0, 15));
         }
 
         override float CellSizeAtLod()
@@ -92,14 +92,16 @@ namespace Stride.Rendering.Voxels.Grid
             return CellSize();
         }
 
-        override int LodLevels()
+        override int LodLevelCount()
         {
-            return IVoxelGridSource.LodLevels();
+            // The source's own answer, through its override: naming the base class would call the
+            // base and answer zero for every source.
+            return LodLevels();
         }
 
         override void SetLod(int lod)
         {
-            VoxelGridLod = clamp(lod, 0, IVoxelGridSource.LodLevels());
+            streams.VoxelGridLod = clamp(lod, 0, LodLevels());
         }
 
         override void SetLodForSize(float size)
@@ -113,7 +115,7 @@ namespace Stride.Rendering.Voxels.Grid
         override float LodAt(float distance, float unitsPerDistance)
         {
             float footprint = max(distance, 0.0) * unitsPerDistance / max(VoxelGridCellSize, 1e-6);
-            return clamp(log2(max(footprint, 1.0)), 0.0, (float)IVoxelGridSource.LodLevels());
+            return clamp(log2(max(footprint, 1.0)), 0.0, (float)LodLevels());
         }
 
         float SealedDensity(int3 coord)
@@ -239,7 +241,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         override int BrickState(float3 localPosition, float radius)
         {
-            int levels = clamp(VoxelGridOccupancyLevels - VoxelGridLod, 0, 16);
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
             int state = 1;
             if (levels > 0)
             {
@@ -253,7 +255,7 @@ namespace Stride.Rendering.Voxels.Grid
                 int size = 1 << level;
                 int3 cell = CellOf(localPosition);
                 int3 brick = cell / size;
-                float2 minMax = VoxelGridOccupancy.Load(int4(brick, level - 1 + VoxelGridLod)).rg;
+                float2 minMax = VoxelGridOccupancy.Load(int4(brick, level - 1 + streams.VoxelGridLod)).rg;
 
                 float3 brickMin = (float3)(brick * size) * CellSize();
                 float3 brickMax = brickMin + (float)size * CellSize();
@@ -515,7 +517,7 @@ namespace Stride.Rendering.Voxels.Grid
                 tHit = tEnter;
             }
 
-            int levels = clamp(VoxelGridOccupancyLevels - VoxelGridLod, 0, 16);
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
             int level = levels;
             float t = tEnter;
             float nudge = cellSize * 1e-3;
@@ -537,7 +539,7 @@ namespace Stride.Rendering.Voxels.Grid
 
                 bool empty = false;
                 if (level > 0)
-                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + VoxelGridLod)).g < VoxelGridIsoLevel;
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + streams.VoxelGridLod)).g < VoxelGridIsoLevel;
 
                 if (level > 0 && !empty)
                 {
@@ -654,7 +656,7 @@ namespace Stride.Rendering.Voxels.Grid
             // is left through its far face in one step, and the next look is a level coarser; any
             // other brick is looked at again a level finer; at level zero the brick is a cell and
             // the surface is settled there. With no pyramid at all the walk stays at the cell.
-            int levels = clamp(VoxelGridOccupancyLevels - VoxelGridLod, 0, 16);
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
             int level = levels;
             float t = tEnter;
 
@@ -697,7 +699,7 @@ namespace Stride.Rendering.Voxels.Grid
                 // it holds surface or solid.
                 bool empty = false;
                 if (level > 0)
-                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + VoxelGridLod)).g < VoxelGridIsoLevel;
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + streams.VoxelGridLod)).g < VoxelGridIsoLevel;
 
                 if (level > 0 && !empty)
                 {

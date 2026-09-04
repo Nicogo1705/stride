@@ -10,7 +10,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// draw. Walking once here, and letting every material's draw read the answer for the pixels
     /// that are its own, is what keeps the count of materials from multiplying the cost of the
     /// walk. Depth is written too, so several grids resolve against one another.
-    shader VoxelGridResolveShader : ImageEffectShader, VoxelGridDither
+    shader VoxelGridResolveShader : ImageEffectShader, VoxelGridDither, VoxelGridLodStream
     {
         compose IVoxelGridTraversal Traversal;
 
@@ -35,6 +35,8 @@ namespace Stride.Rendering.Voxels.Grid
 
         stage override float4 Shading()
         {
+            // Written first, before any read of the field: the level the walks are made at.
+            streams.VoxelGridLod = 0;
             // The ray through the pixel, from the near plane to the far one: right under any
             // projection, so an orthographic camera in the editor resolves as a perspective one.
             float2 uv = streams.TexCoord;
@@ -52,21 +54,35 @@ namespace Stride.Rendering.Voxels.Grid
             float hitDistance;
             float3 localNormal;
             bool found;
-            int levels = Traversal.LodLevels();
-            if (levels > 0 && VoxelGridLodPixel > 0)
+            int levels = Traversal.LodLevelCount();
+            // Only when some pixel of the field can want a coarser level at all: the farthest
+            // reach of the walk, at this pixel size, still under level one means every pixel walks
+            // the finest level and the coarse pass would be a cost with no return.
+            float farthest = Traversal.LodAt(VoxelGridMaxDistance * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+            if (levels > 0 && VoxelGridLodPixel > 0 && farthest >= 1.0)
             {
                 // Coarse first: the coarsest level finds roughly where the surface is, cheaply, and
                 // the distance decides which level this pixel deserves. That level is then walked
                 // from a little before the coarse hit, so the fine walk is short. The level is
                 // fractional and dithered, so the band where two levels meet is a pattern the
                 // antialiasing folds away rather than a line.
-                Traversal.SetLod(levels);
+                // The coarse pass stops four levels short of the last: sixteen samples a side
+                // still place a surface; the last levels are a handful and lose whole features.
+                int coarse = max(levels - 4, 0);
+                Traversal.SetLod(coarse);
                 found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
-                if (found)
+                if (!found)
+                {
+                    // What the coarse level lost - a thin thing, a silhouette - is looked for at
+                    // the finest, from the start: a miss must not become a hole.
+                    Traversal.SetLod(0);
+                    found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
+                }
+                else
                 {
                     float wanted = Traversal.LodAt(hitDistance * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
                     int lod = clamp((int)floor(wanted + DitherThreshold((int2)streams.ShadingPosition.xy, VoxelGridDither)), 0, levels);
-                    if (lod < levels)
+                    if (lod < coarse)
                     {
                         float coarseCell = Traversal.CellSizeAtLod();
                         Traversal.SetLod(lod);
@@ -83,7 +99,7 @@ namespace Stride.Rendering.Voxels.Grid
                         {
                             // The finer surface is not where the coarse one was: keep the coarse
                             // answer rather than punch a hole, and read the material at its level.
-                            Traversal.SetLod(levels);
+                            Traversal.SetLod(coarse);
                         }
                     }
                 }

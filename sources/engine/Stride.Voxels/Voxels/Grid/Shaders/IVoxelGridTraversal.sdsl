@@ -35,7 +35,7 @@ namespace Stride.Rendering.Voxels.Grid
         }
 
         /// How many coarser levels the walk can be made at.
-        int LodLevels()
+        int LodLevelCount()
         {
             return 0;
         }
