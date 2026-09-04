@@ -9,8 +9,8 @@ namespace Stride.Rendering.Voxels.Grid
     /// for every material, to find a surface the samples state outright; reading the samples costs
     /// a few loads per GI voxel and answers the same question. One thread per voxel of the ring:
     /// the voxel's centre is taken into the field, bricks that are all air or all solid are skipped
-    /// on the min/max pyramid, and a voxel on the surface - the surface crosses between its centre
-    /// and a neighbour's - is written to the fragment buffer as the voxelizer would have written it: per
+    /// on the min/max pyramid, and a voxel the surface passes through - its corners not all on one
+    /// side of the iso level - is written to the fragment buffer as the voxelizer would have: per
     /// direction, the radiance weighted by the normal, packed as the fragment packer packs it,
     /// combined by atomic max. Everything after the buffer - opacify, arrangement, mipmaps - then
     /// runs unchanged.
@@ -63,16 +63,23 @@ namespace Stride.Rendering.Voxels.Grid
             // One exit, as everywhere the shader compiler is involved.
             if (inRing && inField && Traversal.BrickState(localPos, localVoxel) == 1)
             {
-                // On the surface: the surface crosses between this voxel's centre and a
-                // neighbour's, either way round. Both sides, or a surface that sits just past a
-                // neighbour's centre falls between two voxels that each call the other solid, and
-                // the shell has a gap wherever the surface's phase against the grid says so - rings
-                // across every gentle slope.
-                bool solid = Traversal.IsSolid(localPos);
-                bool shell =
-                    solid != Traversal.IsSolid(localPos + float3(localVoxel, 0, 0)) || solid != Traversal.IsSolid(localPos - float3(localVoxel, 0, 0)) ||
-                    solid != Traversal.IsSolid(localPos + float3(0, localVoxel, 0)) || solid != Traversal.IsSolid(localPos - float3(0, localVoxel, 0)) ||
-                    solid != Traversal.IsSolid(localPos + float3(0, 0, localVoxel)) || solid != Traversal.IsSolid(localPos - float3(0, 0, localVoxel));
+                // The voxel the surface passes through: its eight corners are not all on one side
+                // of the iso level. Exactly the voxels the voxelizer would have rasterised a
+                // fragment into - one voxel thick, no gap along any column, and none of the extra
+                // layer that a test on neighbouring centres adds on the air side, where the cone
+                // marcher starts and reads its own surface as an occluder in rings.
+                float h = localVoxel * 0.5;
+                bool c000 = Traversal.IsSolid(localPos + float3(-h, -h, -h));
+                bool c100 = Traversal.IsSolid(localPos + float3( h, -h, -h));
+                bool c010 = Traversal.IsSolid(localPos + float3(-h,  h, -h));
+                bool c110 = Traversal.IsSolid(localPos + float3( h,  h, -h));
+                bool c001 = Traversal.IsSolid(localPos + float3(-h, -h,  h));
+                bool c101 = Traversal.IsSolid(localPos + float3( h, -h,  h));
+                bool c011 = Traversal.IsSolid(localPos + float3(-h,  h,  h));
+                bool c111 = Traversal.IsSolid(localPos + float3( h,  h,  h));
+                bool anySolid = c000 || c100 || c010 || c110 || c001 || c101 || c011 || c111;
+                bool allSolid = c000 && c100 && c010 && c110 && c001 && c101 && c011 && c111;
+                bool shell = anySolid && !allSolid;
 
                 if (shell)
                 {
