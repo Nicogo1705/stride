@@ -16,9 +16,13 @@ namespace Stride.Rendering.Voxels.Grid
     /// <summary>One field the GI takes straight from its samples.</summary>
     public struct VoxelGridInjectionEntry
     {
+        /// <summary>The traversal that samples the field.</summary>
         public IVoxelGridTraversal Traversal;
+        /// <summary>The field's world matrix.</summary>
         public Matrix World;
+        /// <summary>The field's extent in its own units.</summary>
         public Vector3 Extent;
+        /// <summary>The material table: colour and emission per id.</summary>
         public GraphicsBuffer Table;
     }
 
@@ -31,14 +35,17 @@ namespace Stride.Rendering.Voxels.Grid
     /// </remarks>
     public sealed class VoxelGridInjectionTable : IDisposable
     {
+        /// <summary>Material ids are a byte: this many entries.</summary>
         public const int Capacity = 256;
 
+        /// <summary>The device buffer the injector reads: two float4 per id.</summary>
         public GraphicsBuffer Buffer { get; }
 
         private readonly Vector4[] entries = new Vector4[Capacity * 2];
         private readonly Vector4[] scratch = new Vector4[Capacity * 2];
         private bool uploaded;
 
+        /// <summary>Allocates the table; nothing is uploaded until <see cref="Refresh"/>.</summary>
         public VoxelGridInjectionTable(GraphicsDevice device)
         {
             Buffer = GraphicsBuffer.Structured.New(device, Capacity * 2, 16);
@@ -70,6 +77,7 @@ namespace Stride.Rendering.Voxels.Grid
             uploaded = true;
         }
 
+        /// <summary>Releases the device buffer.</summary>
         public void Dispose() => Buffer.Dispose();
     }
 
@@ -78,6 +86,7 @@ namespace Stride.Rendering.Voxels.Grid
     [DataContract]
     public sealed class VoxelGridInjectionList
     {
+        /// <summary>The fields, cleared and refilled by the processor every frame.</summary>
         [DataMemberIgnore]
         public readonly List<VoxelGridInjectionEntry> Entries = [];
     }
@@ -167,6 +176,7 @@ namespace Stride.Rendering.Voxels.Grid
             }
         }
 
+        /// <summary>Releases the compute shader.</summary>
         public void Dispose()
         {
             shader?.Dispose();

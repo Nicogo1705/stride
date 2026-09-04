@@ -12,10 +12,15 @@ namespace Stride.Rendering.Voxels.Grid
     /// <summary>One grid to resolve, as the pass sees it.</summary>
     public struct VoxelGridResolveEntry
     {
+        /// <summary>The traversal that finds the surface.</summary>
         public IVoxelGridTraversal Traversal;
+        /// <summary>The grid's world matrix.</summary>
         public Matrix World;
+        /// <summary>How far a ray is walked, in the grid's own units.</summary>
         public float MaxDistance;
+        /// <summary>The pattern that decides a pixel on a material boundary.</summary>
         public VoxelMaterialDither Dither;
+        /// <summary>The byte that identifies this grid in the targets.</summary>
         public int GridIndex;
     }
 
@@ -147,6 +152,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// </summary>
     public sealed class VoxelGridResolvePass : SceneRendererBase
     {
+        /// <summary>The renderer this pass drives; grids register with it each frame.</summary>
         [Stride.Core.DataMemberIgnore]
         public VoxelGridResolveRenderer Renderer { get; } = new();
 

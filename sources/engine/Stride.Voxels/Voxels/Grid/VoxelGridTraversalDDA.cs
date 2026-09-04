@@ -129,6 +129,7 @@ namespace Stride.Rendering.Voxels.Grid
         public VoxelGridOccupancy Occupancy { get; set; }
 
 
+        /// <summary>The traversal shader with its source mixed in, generic on the surface mode.</summary>
         public ShaderSource GetShaderSource()
         {
             // Mixed beside its source rather than composing it, so both share one scope and the
@@ -142,6 +143,7 @@ namespace Stride.Rendering.Voxels.Grid
             return mixin;
         }
 
+        /// <summary>Binds the source, the occupancy pyramid and the walk's limits.</summary>
         public void ApplyParameters(ParameterCollection parameters)
         {
             parameters.Set(VoxelGridFieldKeys.CellSize, CellSize);

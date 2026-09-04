@@ -51,6 +51,7 @@ namespace Stride.Rendering.Voxels.Grid
         private readonly byte[][] levels;
         private readonly int[] sizes;
 
+        /// <summary>Allocates the pyramid for a field of that many samples; nothing is built until the first update.</summary>
         public VoxelGridOccupancy(GraphicsDevice device, Int3 sampleCount)
         {
             SampleCount = sampleCount;
@@ -184,6 +185,7 @@ namespace Stride.Rendering.Voxels.Grid
             Texture.SetData(commandList, box, 0, level, region);
         }
 
+        /// <summary>Releases the pyramid texture.</summary>
         public void Dispose() => Texture.Dispose();
     }
 }

@@ -47,19 +47,28 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>One model of the field: a material of the list, or the shadow caster.</summary>
         public sealed class Draw
         {
+            /// <summary>The material as the user gave it.</summary>
             public Material Source;
+            /// <summary>The same material with the resolve layer in front of its own.</summary>
             public Material Wrapped;
+            /// <summary>The entity that carries the proxy-box model for this draw.</summary>
             public Entity Carrier;
+            /// <summary>The proxy-box model, one mesh, the wrapped material.</summary>
             public ModelComponent Model;
         }
 
         /// <summary>What the processor keeps per component.</summary>
         public sealed class State
         {
+            /// <summary>The byte that identifies this grid in the resolve targets.</summary>
             public int GridIndex;
+            /// <summary>The field's sample count on each axis.</summary>
             public Int3 SampleCount;
+            /// <summary>The size of one cell in the grid's own units.</summary>
             public float CellSize;
+            /// <summary>The component's extent revision the box was built for.</summary>
             public int ExtentRevision = -1;
+            /// <summary>The extent the box was built for.</summary>
             public Vector3 Extent;
 
             /// <summary>The traversal's shader as it was when the shadow material was built.</summary>
@@ -70,11 +79,17 @@ namespace Stride.Rendering.Voxels.Grid
 
             /// <summary>The box's buffers, released when it is rebuilt or the component goes.</summary>
             public GraphicsBuffer VertexBuffer;
+            /// <summary>The proxy box's indices.</summary>
             public GraphicsBuffer IndexBuffer;
+            /// <summary>The proxy box's vertex layout.</summary>
             public VertexDeclaration Layout;
+            /// <summary>Vertices in the proxy box.</summary>
             public int VertexCount;
+            /// <summary>Indices in the proxy box.</summary>
             public int IndexCount;
+            /// <summary>The proxy box's bounds, for culling.</summary>
             public BoundingBox Bounds;
+            /// <summary>The proxy box's bounding sphere, for culling.</summary>
             public BoundingSphere Sphere;
 
             /// <summary>The materials, one draw each, in the order of the component's list.</summary>
@@ -82,6 +97,7 @@ namespace Stride.Rendering.Voxels.Grid
 
             /// <summary>The shadow caster, and the feature its material walks the field with.</summary>
             public Draw Shadow;
+            /// <summary>The feature behind the shadow material, kept to update its parameters.</summary>
             public MaterialVoxelSurfaceFeature ShadowSurface;
 
             /// <summary>The grey the field is drawn with when no material was given.</summary>
@@ -96,8 +112,10 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The materials wanted this frame, compared against the draws; kept so no list is made per frame.</summary>
             public List<(Material material, int id)> Wanted = [];
 
+            /// <summary>The resolve targets' version the materials were last bound to.</summary>
             public int TargetsVersion = -1;
 
+            /// <summary>Releases the proxy box's buffers.</summary>
             public void ReleaseBuffers()
             {
                 VertexBuffer?.Dispose();

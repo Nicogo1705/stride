@@ -31,8 +31,10 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         public Int3 SampleCount { get; set; }
 
+        /// <summary>The SDSL side of this source.</summary>
         public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourceTexture3D");
 
+        /// <summary>Binds the resource and its layout.</summary>
         public void ApplyParameters(ParameterCollection parameters)
         {
             parameters.Set(VoxelGridFieldKeys.Texture, Texture);
@@ -62,8 +64,10 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Samples per axis, one more than the cells per axis.</summary>
         public Int3 SampleCount { get; set; }
 
+        /// <summary>The SDSL side of this source.</summary>
         public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourcePackedBuffer");
 
+        /// <summary>Binds the resource and its layout.</summary>
         public void ApplyParameters(ParameterCollection parameters)
         {
             parameters.Set(VoxelGridFieldKeys.Data, Data);
