@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -9,6 +9,9 @@ namespace Stride.Rendering.Voxels
 {
     public interface IVoxelLayout
     {
+        /// <summary>Directions stored per voxel: 1 isotropic, 3 paired, 6 anisotropic.</summary>
+        int DirectionCount { get; }
+
         int PrepareLocalStorage(VoxelStorageContext context, IVoxelStorage storage);
         void PrepareOutputStorage(VoxelStorageContext context, IVoxelStorage storage);
         void ClearOutputStorage();

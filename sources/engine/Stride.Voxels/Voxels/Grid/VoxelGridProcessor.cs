@@ -79,6 +79,9 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The grey the field is drawn with when no material was given.</summary>
             public Material Fallback;
 
+            /// <summary>The materials' colour and emission by id, for the GI injector.</summary>
+            public VoxelGridInjectionTable Table;
+
             public int TargetsVersion = -1;
 
             public void ReleaseBuffers()
@@ -87,11 +90,14 @@ namespace Stride.Rendering.Voxels.Grid
                 IndexBuffer?.Dispose();
                 VertexBuffer = null;
                 IndexBuffer = null;
+                Table?.Dispose();
+                Table = null;
             }
         }
 
         private IGraphicsDeviceService graphicsDeviceService;
         private SceneSystem sceneSystem;
+        private IGame game;
         private VoxelGridResolvePass resolvePass;
         private int nextGridIndex;
 
@@ -100,6 +106,7 @@ namespace Stride.Rendering.Voxels.Grid
             base.OnSystemAdd();
             graphicsDeviceService = Services.GetService<IGraphicsDeviceService>();
             sceneSystem = Services.GetService<SceneSystem>();
+            game = Services.GetService<IGame>();
         }
 
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component)
@@ -125,6 +132,7 @@ namespace Stride.Rendering.Voxels.Grid
             EnsureResolvePass();
             var renderer = resolvePass?.Renderer;
             renderer?.Grids.Clear();
+            VoxelGridInjection.Entries.Clear();
 
             foreach (var pair in ComponentDatas)
             {
@@ -160,6 +168,7 @@ namespace Stride.Rendering.Voxels.Grid
                         component.Traversal.ApplyParameters(pass.Parameters);
                         pass.Parameters.Set(VoxelGridFieldKeys.MaxDistance, state.Extent.Length());
                         pass.Parameters.Set(VoxelGridFieldKeys.Debug, component.DebugView);
+                        pass.Parameters.Set(VoxelGridFieldKeys.Injected, component.InjectIntoGI ? 1f : 0f);
                         if (renderer != null && state.TargetsVersion != renderer.TargetsVersion)
                         {
                             pass.Parameters.Set(VoxelGridFieldKeys.ResolveNormal, renderer.Normal);
@@ -171,9 +180,23 @@ namespace Stride.Rendering.Voxels.Grid
                 if (renderer != null)
                     state.TargetsVersion = renderer.TargetsVersion;
 
+                component.Entity.Transform.UpdateWorldMatrix();
+
+                // What the GI injector needs, when the field goes to the GI from its samples.
+                if (component.InjectIntoGI && game?.GraphicsContext != null)
+                {
+                    EnsureTable(device, component, state);
+                    VoxelGridInjection.Entries.Add(new VoxelGridInjectionEntry
+                    {
+                        Traversal = component.Traversal,
+                        World = component.Entity.Transform.WorldMatrix,
+                        Extent = state.Extent,
+                        Table = state.Table.Buffer,
+                    });
+                }
+
                 if (renderer != null)
                 {
-                    component.Entity.Transform.UpdateWorldMatrix();
                     renderer.Grids.Add(new VoxelGridResolveEntry
                     {
                         Traversal = component.Traversal,
@@ -184,6 +207,15 @@ namespace Stride.Rendering.Voxels.Grid
                     });
                 }
             }
+        }
+
+        /// <summary>The injector's table of colours and emissions, kept in step with the material list.</summary>
+        private void EnsureTable(GraphicsDevice device, VoxelGridComponent component, State state)
+        {
+            state.Table ??= new VoxelGridInjectionTable(device);
+            var materials = component.Material != null ? [component.Material] : component.Materials;
+            if (state.Table.NeedsUpdate(materials))
+                state.Table.Update(game.GraphicsContext.CommandList, materials);
         }
 
         /// <summary>

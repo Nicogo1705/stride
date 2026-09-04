@@ -113,6 +113,47 @@ namespace Stride.Rendering.Voxels.Grid
             return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
         }
 
+        override bool IsSolid(float3 localPosition)
+        {
+            return SampleField(localPosition) >= VoxelGridIsoLevel;
+        }
+
+        override float3 SurfaceNormal(float3 localPosition)
+        {
+            float3 gradient = FieldGradient(localPosition);
+            return dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : float3(0, 1, 0);
+        }
+
+        override int BrickState(float3 localPosition, float radius)
+        {
+            int levels = clamp(VoxelGridOccupancyLevels, 0, 16);
+            int state = 1;
+            if (levels > 0)
+            {
+                // The level whose bricks span the radius twice over, so the point and everything
+                // within the radius sit in one brick when the point is far enough from its faces.
+                float cellsNeeded = (2.0 * radius) / VoxelGridCellSize + 2.0;
+                int level = 1;
+                while (level < levels && (float)(1 << level) < cellsNeeded)
+                    level++;
+
+                int size = 1 << level;
+                int3 cell = CellOf(localPosition);
+                int3 brick = cell / size;
+                float2 minMax = VoxelGridOccupancy.Load(int4(brick, level - 1)).rg;
+
+                float3 brickMin = (float3)(brick * size) * VoxelGridCellSize;
+                float3 brickMax = brickMin + (float)size * VoxelGridCellSize;
+                bool inside = all(localPosition - brickMin > radius) && all(brickMax - localPosition > radius);
+
+                if (minMax.y < VoxelGridIsoLevel)
+                    state = 0;
+                else if (inside && minMax.x >= VoxelGridIsoLevel)
+                    state = 2;
+            }
+            return state;
+        }
+
         /// The cell a point is in.
         int3 CellOf(float3 localPosition)
         {

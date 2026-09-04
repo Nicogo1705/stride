@@ -49,6 +49,11 @@ namespace Stride.Rendering.Voxels.Grid
             /// How far along the ray the surface is looked for when the surface is walked here.
             [Link("VoxelGridField.MaxDistance")]
             stage float VoxelGridMaxDistance;
+
+            /// 1 when the field reaches the GI straight from its samples, and the voxelizer's view
+            /// has nothing to draw here.
+            [Link("VoxelGridField.Injected")]
+            stage float VoxelGridInjected;
         }
 
         override void Compute()
@@ -89,7 +94,8 @@ namespace Stride.Rendering.Voxels.Grid
                 positionDepth.w = hitClip.z / hitClip.w;
             }
 
-            bool mine = resolved && grid == VoxelGridIndex && (VoxelGridMaterialId < 0 || material == VoxelGridMaterialId);
+            bool mine = resolved && grid == VoxelGridIndex && (VoxelGridMaterialId < 0 || material == VoxelGridMaterialId)
+                        && !(streams.IsVoxelizationPass > 0.5 && VoxelGridInjected > 0.5);
 
             // One exit: a return from inside Compute reaches FXC as a loop to unroll, and it does
             // not always manage.

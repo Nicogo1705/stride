@@ -46,6 +46,26 @@ namespace Stride.Rendering.Voxels.Grid
             return 0;
         }
 
+        /// Whether a point of the grid's space is inside matter.
+        bool IsSolid(float3 localPosition)
+        {
+            return false;
+        }
+
+        /// The surface's outward normal near a point, from the field's gradient.
+        float3 SurfaceNormal(float3 localPosition)
+        {
+            return float3(0, 1, 0);
+        }
+
+        /// What the field is like within a radius of a point: 0 all air, 2 all solid, 1 neither or
+        /// unknown. Answered on the occupancy pyramid where there is one, so a caller looking for
+        /// surface skips the bricks that cannot hold any.
+        int BrickState(float3 localPosition, float radius)
+        {
+            return 1;
+        }
+
         /// Diagnostic: what the composed source reports at a point, as
         /// (samples per axis / 128, density, iso level). A pass that finds nothing looks the same
         /// whether the source is unbound, the dimensions are zero or the field is empty.

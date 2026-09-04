@@ -52,6 +52,9 @@ namespace Stride.Rendering.Voxels
 
         //Per-Layout Settings
         protected virtual int LayoutCount { get; set; } = 1;
+
+        /// <inheritdoc />
+        public int DirectionCount => LayoutCount;
         protected virtual ShaderClassSource Writer { get; set; } = new ShaderClassSource("VoxelIsotropicWriter_Float4");
         protected virtual ShaderClassSource Sampler { get; set; } = new ShaderClassSource("VoxelIsotropicSampler");
         protected virtual string ApplierKey { get; set; } = "Isotropic";

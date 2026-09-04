@@ -239,6 +239,9 @@ namespace Stride.Rendering.Voxels
                                     pass.method.Render(storageContext, context, pass.view);
                                 }
                             }
+
+                            // Voxel fields, straight from their samples into the same buffer.
+                            Grid.VoxelGridInjection.Inject(context, pass);
                         }
                         foreach (VoxelizationPass pass in processedVolume.passList.passes)
                         {

@@ -71,6 +71,9 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The material id a wrapped material draws, or -1 for every id of its grid.</summary>
         public static readonly ValueParameterKey<int> MaterialId = ParameterKeys.NewValue<int>();
 
+        /// <summary>1 when the field reaches the GI straight from its samples rather than through the voxelizer.</summary>
+        public static readonly ValueParameterKey<float> Injected = ParameterKeys.NewValue<float>();
+
         /// <summary>Which grid a wrapped material belongs to.</summary>
         public static readonly ValueParameterKey<int> GridIndex = ParameterKeys.NewValue<int>();
 

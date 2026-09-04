@@ -81,6 +81,19 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMember(18)]
         public VoxelMaterialDither Dither { get; set; } = VoxelMaterialDither.InterleavedGradientNoise;
 
+        /// <summary>
+        /// Whether a voxel GI volume takes the field straight from its samples, instead of
+        /// rasterising the field's proxy box through the voxelizer, walking a ray per fragment.
+        /// </summary>
+        /// <remarks>
+        /// What reaches the GI this way is what the field's materials emit, and its occlusion; the
+        /// voxelizer would also carry the sun's light off the field. A world lit by what emits loses
+        /// nothing and saves the walks.
+        /// </remarks>
+        /// <userdoc>Let a voxel GI volume read the field's samples directly, rather than voxelizing the field like a mesh. Carries emission and occlusion; not direct light.</userdoc>
+        [DataMember(19)]
+        public bool InjectIntoGI { get; set; } = true;
+
         /// <summary>Whether the field writes the shadow maps. It receives shadows either way.</summary>
         /// <userdoc>Whether the field casts shadows.</userdoc>
         [DataMember(20)]

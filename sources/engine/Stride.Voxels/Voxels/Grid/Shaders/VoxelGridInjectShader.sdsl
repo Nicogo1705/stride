@@ -1,0 +1,118 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Puts a voxel field into a voxel GI ring straight from its samples, in place of rasterising
+    /// its proxy box through the voxelizer.
+    ///
+    /// The field is a voxel already. Rasterising it means walking a ray per voxelizer fragment,
+    /// for every material, to find a surface the samples state outright; reading the samples costs
+    /// a few loads per GI voxel and answers the same question. One thread per voxel of the ring:
+    /// the voxel's centre is taken into the field, bricks that are all air or all solid are skipped
+    /// on the min/max pyramid, and a voxel on the surface - the surface crosses between its centre
+    /// and a neighbour's - is written to the fragment buffer as the voxelizer would have written it: per
+    /// direction, the radiance weighted by the normal, packed as the fragment packer packs it,
+    /// combined by atomic max. Everything after the buffer - opacify, arrangement, mipmaps - then
+    /// runs unchanged.
+    ///
+    /// What is written is what the field emits, since the voxelizer writes shaded radiance and the
+    /// field has no lights of its own here; the sun's bounce off a field lit only this way is not
+    /// carried. A field that emits, in a world lit by what emits, is carried exactly.
+    shader VoxelGridInjectShader : ComputeShaderBase, DataPacking
+    {
+        compose IVoxelGridTraversal Traversal;
+
+        /// The ring's slot of the GI fragment buffer, as the voxelizer writes it.
+        stage RWBuffer<uint> VoxelFragments;
+
+        /// Two float4 per material id: the colour, and what it emits with its intensity already in.
+        stage StructuredBuffer<float4> VoxelGridInjectTable;
+
+        float4x4 VoxelGridWorld;
+        float4x4 VoxelGridWorldInverse;
+
+        /// The field's size in its own space.
+        float3 VoxelGridExtent;
+
+        /// The ring: voxels per axis, the slot's first voxel in the buffer, uints per voxel, the
+        /// attribute's offset within a voxel, and how many directions the layout keeps.
+        int3 ClipResolution;
+        int ClipSlot;
+        int StorageUints;
+        int BufferOffset;
+        int DirectionCount;
+
+        /// World to ring: texPos = world * w + xyz, as the storer has it.
+        float4 ClipOffsetScale;
+
+        override void Compute()
+        {
+            int3 voxel = (int3)streams.DispatchThreadId.xyz;
+            bool inRing = all(voxel < ClipResolution);
+
+            float3 texPos = ((float3)voxel + 0.5) / (float3)ClipResolution;
+            float3 worldPos = (texPos - ClipOffsetScale.xyz) / ClipOffsetScale.w;
+            float3 localPos = mul(float4(worldPos, 1), VoxelGridWorldInverse).xyz;
+            bool inField = all(localPos >= 0) && all(localPos <= VoxelGridExtent);
+
+            // A GI voxel's size, in the field's space: one step of texPos is one voxel, and the
+            // field's own scale is taken off the world size.
+            float worldVoxel = 1.0 / (ClipOffsetScale.w * (float)ClipResolution.x);
+            float localVoxel = worldVoxel * length(mul(float4(1, 0, 0, 0), VoxelGridWorldInverse).xyz);
+
+            // One exit, as everywhere the shader compiler is involved.
+            if (inRing && inField && Traversal.BrickState(localPos, localVoxel) == 1)
+            {
+                // On the surface: the surface crosses between this voxel's centre and a
+                // neighbour's, either way round. Both sides, or a surface that sits just past a
+                // neighbour's centre falls between two voxels that each call the other solid, and
+                // the shell has a gap wherever the surface's phase against the grid says so - rings
+                // across every gentle slope.
+                bool solid = Traversal.IsSolid(localPos);
+                bool shell =
+                    solid != Traversal.IsSolid(localPos + float3(localVoxel, 0, 0)) || solid != Traversal.IsSolid(localPos - float3(localVoxel, 0, 0)) ||
+                    solid != Traversal.IsSolid(localPos + float3(0, localVoxel, 0)) || solid != Traversal.IsSolid(localPos - float3(0, localVoxel, 0)) ||
+                    solid != Traversal.IsSolid(localPos + float3(0, 0, localVoxel)) || solid != Traversal.IsSolid(localPos - float3(0, 0, localVoxel));
+
+                if (shell)
+                {
+                    float3 normal = normalize(mul(float4(Traversal.SurfaceNormal(localPos), 0), VoxelGridWorld).xyz);
+                    int id = clamp(Traversal.SurfaceMaterialId(localPos, int2(0, 0), 0), 0, 255);
+                    float3 radiance = VoxelGridInjectTable[id * 2 + 1].rgb;
+
+                    uint index = (uint)ClipSlot * (uint)(ClipResolution.x * ClipResolution.y * ClipResolution.z)
+                                 + (uint)voxel.x + (uint)voxel.y * (uint)ClipResolution.x + (uint)voxel.z * (uint)(ClipResolution.x * ClipResolution.y);
+                    uint address = index * (uint)StorageUints + (uint)BufferOffset;
+
+                    // Per direction, the radiance and the coverage weighted by the normal, as the
+                    // anisotropic writer weights them; three pairs for the paired layout, one for
+                    // the isotropic. Each is two uints: the colour and the coverage.
+                    float weights[6];
+                    if (DirectionCount == 6)
+                    {
+                        weights[0] = max(normal.x, 0); weights[1] = max(-normal.x, 0);
+                        weights[2] = max(normal.y, 0); weights[3] = max(-normal.y, 0);
+                        weights[4] = max(normal.z, 0); weights[5] = max(-normal.z, 0);
+                    }
+                    else if (DirectionCount == 3)
+                    {
+                        weights[0] = abs(normal.x); weights[1] = abs(normal.y); weights[2] = abs(normal.z);
+                        weights[3] = 0; weights[4] = 0; weights[5] = 0;
+                    }
+                    else
+                    {
+                        weights[0] = 1; weights[1] = 0; weights[2] = 0; weights[3] = 0; weights[4] = 0; weights[5] = 0;
+                    }
+
+                    uint unused;
+                    for (int direction = 0; direction < DirectionCount; direction++)
+                    {
+                        float weight = weights[direction];
+                        InterlockedMax(VoxelFragments[address + (uint)(direction * 2)], Float3ToR11G11B10(radiance * weight), unused);
+                        InterlockedMax(VoxelFragments[address + (uint)(direction * 2 + 1)], FloatToHalfFloat(weight), unused);
+                    }
+                }
+            }
+        }
+    };
+}
