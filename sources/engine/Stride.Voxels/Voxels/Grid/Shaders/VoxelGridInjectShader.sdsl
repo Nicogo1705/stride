@@ -56,9 +56,14 @@ namespace Stride.Rendering.Voxels.Grid
             bool inField = all(localPos >= 0) && all(localPos <= VoxelGridExtent);
 
             // A GI voxel's size, in the field's space: one step of texPos is one voxel, and the
-            // field's own scale is taken off the world size.
+            // field's own scale is taken off the world size - the largest of its three axes, so a
+            // field scaled unevenly is probed over the whole voxel rather than part of it.
             float worldVoxel = 1.0 / (ClipOffsetScale.w * (float)ClipResolution.x);
-            float localVoxel = worldVoxel * length(mul(float4(1, 0, 0, 0), VoxelGridWorldInverse).xyz);
+            float3 axisScales = float3(
+                length(mul(float4(1, 0, 0, 0), VoxelGridWorldInverse).xyz),
+                length(mul(float4(0, 1, 0, 0), VoxelGridWorldInverse).xyz),
+                length(mul(float4(0, 0, 1, 0), VoxelGridWorldInverse).xyz));
+            float localVoxel = worldVoxel * max(axisScales.x, max(axisScales.y, axisScales.z));
 
             // One exit, as everywhere the shader compiler is involved.
             if (inRing && inField && Traversal.BrickState(localPos, localVoxel) == 1)
@@ -67,23 +72,14 @@ namespace Stride.Rendering.Voxels.Grid
                 // of the iso level. Exactly the voxels the voxelizer would have rasterised a
                 // fragment into - one voxel thick, no gap along any column, and none of the extra
                 // layer that a test on neighbouring centres adds on the air side, where the cone
-                // marcher starts and reads its own surface as an occluder in rings.
-                float h = localVoxel * 0.5;
-                bool c000 = Traversal.IsSolid(localPos + float3(-h, -h, -h));
-                bool c100 = Traversal.IsSolid(localPos + float3( h, -h, -h));
-                bool c010 = Traversal.IsSolid(localPos + float3(-h,  h, -h));
-                bool c110 = Traversal.IsSolid(localPos + float3( h,  h, -h));
-                bool c001 = Traversal.IsSolid(localPos + float3(-h, -h,  h));
-                bool c101 = Traversal.IsSolid(localPos + float3( h, -h,  h));
-                bool c011 = Traversal.IsSolid(localPos + float3(-h,  h,  h));
-                bool c111 = Traversal.IsSolid(localPos + float3( h,  h,  h));
-                bool anySolid = c000 || c100 || c010 || c110 || c001 || c101 || c011 || c111;
-                bool allSolid = c000 && c100 && c010 && c110 && c001 && c101 && c011 && c111;
-                bool shell = anySolid && !allSolid;
+                // marcher starts and reads its own surface as an occluder in rings. One probe
+                // answers it, with the normal, off the eight corners of the field cell.
+                float3 localNormal;
+                bool shell = Traversal.SurfaceProbe(localPos, localVoxel * 0.5, localNormal) == 1;
 
                 if (shell)
                 {
-                    float3 normal = normalize(mul(float4(Traversal.SurfaceNormal(localPos), 0), VoxelGridWorld).xyz);
+                    float3 normal = normalize(mul(float4(localNormal, 0), VoxelGridWorld).xyz);
                     int id = clamp(Traversal.SurfaceMaterialId(localPos, int2(0, 0), 0), 0, 255);
                     float3 radiance = VoxelGridInjectTable[id * 2 + 1].rgb;
 

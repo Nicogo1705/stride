@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -20,6 +20,9 @@ namespace Stride.Rendering.Voxels
 {
     public interface IVoxelizationMethod
     {
+        /// <summary>Releases the method's render targets; they are made again on the next render.</summary>
+        void Dispose();
+
         void Reset();
         void CollectVoxelizationPasses(VoxelizationPassList passList, IVoxelStorer storer, Matrix view, Vector3 resolution, VoxelAttribute attr, VoxelizationStage stage, bool output, bool shadows);
         void Render(VoxelStorageContext storageContext, RenderDrawContext drawContext, RenderView view);

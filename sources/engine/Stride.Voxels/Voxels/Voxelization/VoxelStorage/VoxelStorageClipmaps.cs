@@ -165,9 +165,13 @@ namespace Stride.Rendering.Voxels
             var resolution = ClipMapResolution;
             int fragments = (int)(resolution.X * resolution.Y * resolution.Z) * FragmentSlots;
 
-            if (VoxelUtils.DisposeBufferBySpecs(FragmentsBuffer, storageUints * fragments) && storageUints * fragments > 0)
+            // The helper disposes a buffer of the wrong size and says so; a size of zero then
+            // leaves no buffer at all rather than a reference to a disposed one.
+            if (VoxelUtils.DisposeBufferBySpecs(FragmentsBuffer, storageUints * fragments))
             {
-                FragmentsBuffer = Stride.Graphics.Buffer.Typed.New(context.device, storageUints * fragments, PixelFormat.R32_UInt, true);
+                FragmentsBuffer = storageUints * fragments > 0
+                    ? Stride.Graphics.Buffer.Typed.New(context.device, storageUints * fragments, PixelFormat.R32_UInt, true)
+                    : null;
             }
         }
 

@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -51,6 +51,9 @@ namespace Stride.Rendering.Voxels
         public void Render(VoxelStorageContext storageContext, RenderDrawContext drawContext, RenderView view)
         {
         }
+        /// <inheritdoc />
+        public void Dispose() { }
+
         public void Reset()
         {
         }

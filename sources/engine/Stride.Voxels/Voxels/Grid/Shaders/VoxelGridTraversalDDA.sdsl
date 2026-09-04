@@ -113,6 +113,53 @@ namespace Stride.Rendering.Voxels.Grid
             return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
         }
 
+        /// The four corners of a cell on its near z face, then on its far one: (000, 100, 010,
+        /// 110) and (001, 101, 011, 111). Eight loads, held in registers by whoever needs the
+        /// field at several points of one cell - the straddle test, the probes along the ray, the
+        /// bisection and the normal all do, and reloading the same eight for each was the cost
+        /// of a hit.
+        float4 CornersNear(int3 cell)
+        {
+            return float4(
+                SealedDensity(cell + int3(0, 0, 0)), SealedDensity(cell + int3(1, 0, 0)),
+                SealedDensity(cell + int3(0, 1, 0)), SealedDensity(cell + int3(1, 1, 0)));
+        }
+
+        float4 CornersFar(int3 cell)
+        {
+            return float4(
+                SealedDensity(cell + int3(0, 0, 1)), SealedDensity(cell + int3(1, 0, 1)),
+                SealedDensity(cell + int3(0, 1, 1)), SealedDensity(cell + int3(1, 1, 1)));
+        }
+
+        /// The trilinear field at a point of the cell, from its eight corners.
+        float Trilinear(float4 near, float4 far, float3 f)
+        {
+            float4 alongX = lerp(float4(near.x, near.z, far.x, far.z), float4(near.y, near.w, far.y, far.w), f.x);
+            float2 alongY = lerp(float2(alongX.x, alongX.z), float2(alongX.y, alongX.w), f.y);
+            return lerp(alongY.x, alongY.y, f.z);
+        }
+
+        /// The gradient of the trilinear field at a point of the cell, from its eight corners:
+        /// the exact normal of the surface that is drawn, since the surface is that field's
+        /// iso level.
+        float3 TrilinearGradient(float4 near, float4 far, float3 f)
+        {
+            float dx = lerp(lerp(near.y - near.x, near.w - near.z, f.y), lerp(far.y - far.x, far.w - far.z, f.y), f.z);
+            float dy = lerp(lerp(near.z - near.x, near.w - near.y, f.x), lerp(far.z - far.x, far.w - far.y, f.x), f.z);
+            float dz = lerp(lerp(far.x - near.x, far.y - near.y, f.x), lerp(far.z - near.z, far.w - near.w, f.x), f.y);
+            return float3(dx, dy, dz) / VoxelGridCellSize;
+        }
+
+        /// Whether the corners straddle the iso level: some at or above it, some below.
+        bool CornersStraddle(float4 near, float4 far)
+        {
+            float iso = VoxelGridIsoLevel;
+            bool anyIn = any(near >= iso) || any(far >= iso);
+            bool anyOut = any(near < iso) || any(far < iso);
+            return anyIn && anyOut;
+        }
+
         override bool IsSolid(float3 localPosition)
         {
             return SampleField(localPosition) >= VoxelGridIsoLevel;
@@ -120,8 +167,39 @@ namespace Stride.Rendering.Voxels.Grid
 
         override float3 SurfaceNormal(float3 localPosition)
         {
-            float3 gradient = FieldGradient(localPosition);
+            int3 cell = CellOf(localPosition);
+            float3 f = saturate(localPosition / VoxelGridCellSize - (float3)cell);
+            float3 gradient = TrilinearGradient(CornersNear(cell), CornersFar(cell), f);
             return dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : float3(0, 1, 0);
+        }
+
+        override int SurfaceProbe(float3 localPosition, float halfSize, out float3 normal)
+        {
+            int3 cell = CellOf(localPosition);
+            float3 f = localPosition / VoxelGridCellSize - (float3)cell;
+            float4 near = CornersNear(cell);
+            float4 far = CornersFar(cell);
+
+            float3 gradient = TrilinearGradient(near, far, saturate(f));
+            normal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : float3(0, 1, 0);
+
+            // The eight points a half-voxel out from the centre. When they all fall in this cell -
+            // the usual case, a GI voxel being smaller than a field cell - the eight loads above
+            // answer for all of them; otherwise each is sampled where it lands.
+            float hf = halfSize / VoxelGridCellSize;
+            bool within = all(f - hf >= 0) && all(f + hf <= 1);
+            float iso = VoxelGridIsoLevel;
+            int solid = 0;
+            for (int corner = 0; corner < 8; corner++)
+            {
+                float3 offset = float3((corner & 1) != 0 ? hf : -hf, (corner & 2) != 0 ? hf : -hf, (corner & 4) != 0 ? hf : -hf);
+                float density = within
+                    ? Trilinear(near, far, f + offset)
+                    : SampleField(localPosition + offset * VoxelGridCellSize);
+                solid += density >= iso ? 1 : 0;
+            }
+
+            return solid == 0 ? 0 : (solid == 8 ? 2 : 1);
         }
 
         override int BrickState(float3 localPosition, float radius)
@@ -238,18 +316,6 @@ namespace Stride.Rendering.Voxels.Grid
             return cubes ? MaterialId(cell) : chosen;
         }
 
-        /// Central differences on the reconstructed field, half a cell apart. Taken at the hit rather
-        /// than at cell corners, so the normal turns continuously across a face instead of snapping
-        /// to it.
-        float3 FieldGradient(float3 localPosition)
-        {
-            float h = VoxelGridCellSize * 0.5;
-            return float3(
-                SampleField(localPosition + float3(h, 0, 0)) - SampleField(localPosition - float3(h, 0, 0)),
-                SampleField(localPosition + float3(0, h, 0)) - SampleField(localPosition - float3(0, h, 0)),
-                SampleField(localPosition + float3(0, 0, h)) - SampleField(localPosition - float3(0, 0, h)));
-        }
-
         /// Whether a cell counts as solid when the surface is not being interpolated: the mean of
         /// its eight corners reaches the iso level. The same rule the voxel collider's box form
         /// applies, so cubes drawn and cubes collided against are the same cubes.
@@ -261,23 +327,6 @@ namespace Stride.Rendering.Voxels.Grid
                 SealedDensity(cell + int3(0, 1, 0)) + SealedDensity(cell + int3(1, 1, 0)) +
                 SealedDensity(cell + int3(1, 1, 1)) + SealedDensity(cell + int3(0, 1, 1));
             return sum * 0.125 >= VoxelGridIsoLevel;
-        }
-
-        /// Whether the surface can pass through a cell: its eight corners are not all on the same
-        /// side of the iso level. Eight loads, and it rejects almost every cell a ray meets.
-        bool CellStraddles(int3 cell)
-        {
-            float iso = VoxelGridIsoLevel;
-            int inside = 0;
-            inside += SealedDensity(cell + int3(0, 0, 0)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(1, 0, 0)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(0, 1, 0)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(1, 1, 0)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(0, 0, 1)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(1, 0, 1)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(0, 1, 1)) >= iso ? 1 : 0;
-            inside += SealedDensity(cell + int3(1, 1, 1)) >= iso ? 1 : 0;
-            return inside > 0 && inside < 8;
         }
 
         override float3 Probe(float3 localPosition)
@@ -466,22 +515,29 @@ namespace Stride.Rendering.Voxels.Grid
                     bool solidCube = atCell && !smooth && CellIsSolid(cell);
 
                     // The first of four points across the cell found inside is the hit: at most a
-                    // quarter of a cell past the surface, never short of it.
+                    // quarter of a cell past the surface, never short of it. The cell's eight
+                    // corners are loaded once and the four points read off them.
                     bool crosses = false;
                     float insideAt = tSegmentEnd;
-                    if (atCell && smooth && CellStraddles(cell))
+                    if (atCell && smooth)
                     {
-                        float t1 = lerp(t, tSegmentEnd, 0.25);
-                        float t2 = lerp(t, tSegmentEnd, 0.50);
-                        float t3 = lerp(t, tSegmentEnd, 0.75);
+                        float4 near = CornersNear(cell);
+                        float4 far = CornersFar(cell);
+                        if (CornersStraddle(near, far))
+                        {
+                            float3 cellOrigin = (float3)cell * cellSize;
+                            float t1 = lerp(t, tSegmentEnd, 0.25);
+                            float t2 = lerp(t, tSegmentEnd, 0.50);
+                            float t3 = lerp(t, tSegmentEnd, 0.75);
 
-                        bool in1 = SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
-                        bool in2 = SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
-                        bool in3 = SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
-                        bool in4 = SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
+                            bool in1 = Trilinear(near, far, saturate((origin + safeDirection * t1 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in2 = Trilinear(near, far, saturate((origin + safeDirection * t2 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in3 = Trilinear(near, far, saturate((origin + safeDirection * t3 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in4 = Trilinear(near, far, saturate((origin + safeDirection * tSegmentEnd - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
 
-                        crosses = in1 || in2 || in3 || in4;
-                        insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                            crosses = in1 || in2 || in3 || in4;
+                            insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                        }
                     }
 
                     if (solidCube)
@@ -578,6 +634,10 @@ namespace Stride.Rendering.Voxels.Grid
             // smooths it straight back into the marching-cubes surface.
             int3 netsCell = int3(0, 0, 0);
 
+            // The corners of the cell the hit landed in, kept for the normal.
+            float4 hitNear = float4(0, 0, 0, 0);
+            float4 hitFar = float4(0, 0, 0, 0);
+
             // The walk ends by clearing its condition, never by break or return, which miscompile
             // inside a loop on some targets. The step count is clamped, not trusted: an unbound
             // constant buffer member reads as leftover memory, and a loop that never ends takes the
@@ -615,34 +675,44 @@ namespace Stride.Rendering.Voxels.Grid
                     bool solidCube = atCell && !smooth && CellIsSolid(cell);
 
                     // Only a cell whose corners straddle the iso level can hold surface, and almost
-                    // none do: eight reads decide it, and the thirty-two below are spent on those
-                    // cells alone. An explicit branch, because && is not guaranteed to short-circuit
-                    // in a shader.
+                    // none do: eight loads decide it, and the same eight then answer every question
+                    // asked of this cell - the probes below, the bisection, the normal - with no
+                    // load at all. An explicit branch, because && is not guaranteed to
+                    // short-circuit in a shader.
                     bool crosses = false;
                     float insideAt = tSegmentEnd;
                     float outsideAt = t;
-                    if (atCell && smooth && CellStraddles(cell))
+                    float4 near = float4(0, 0, 0, 0);
+                    float4 far = float4(0, 0, 0, 0);
+                    float3 cellOrigin = (float3)cell * cellSize;
+                    if (atCell && smooth)
                     {
-                        // Four points across the segment this cell gives the ray: testing only where
-                        // it leaves misses a surface that enters and leaves within one cell, which is
-                        // what a shallow silhouette does, and the ray then lands one cell too far - a
-                        // staircase along every such edge. Flat rather than a loop, since the
-                        // bisection below is one already and the parser takes no third level.
-                        float t1 = lerp(t, tSegmentEnd, 0.25);
-                        float t2 = lerp(t, tSegmentEnd, 0.50);
-                        float t3 = lerp(t, tSegmentEnd, 0.75);
+                        near = CornersNear(cell);
+                        far = CornersFar(cell);
+                        if (CornersStraddle(near, far))
+                        {
+                            // Four points across the segment this cell gives the ray: testing only
+                            // where it leaves misses a surface that enters and leaves within one
+                            // cell, which is what a shallow silhouette does, and the ray then lands
+                            // one cell too far - a staircase along every such edge. Flat rather than
+                            // a loop, since the bisection below is one already and the parser takes
+                            // no third level.
+                            float t1 = lerp(t, tSegmentEnd, 0.25);
+                            float t2 = lerp(t, tSegmentEnd, 0.50);
+                            float t3 = lerp(t, tSegmentEnd, 0.75);
 
-                        bool in1 = SampleField(origin + safeDirection * t1) >= VoxelGridIsoLevel;
-                        bool in2 = SampleField(origin + safeDirection * t2) >= VoxelGridIsoLevel;
-                        bool in3 = SampleField(origin + safeDirection * t3) >= VoxelGridIsoLevel;
-                        bool in4 = SampleField(origin + safeDirection * tSegmentEnd) >= VoxelGridIsoLevel;
+                            bool in1 = Trilinear(near, far, saturate((origin + safeDirection * t1 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in2 = Trilinear(near, far, saturate((origin + safeDirection * t2 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in3 = Trilinear(near, far, saturate((origin + safeDirection * t3 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in4 = Trilinear(near, far, saturate((origin + safeDirection * tSegmentEnd - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
 
-                        crosses = in1 || in2 || in3 || in4;
+                            crosses = in1 || in2 || in3 || in4;
 
-                        // The first point known to be inside, and the last one known to be outside:
-                        // the crossing is between them.
-                        insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
-                        outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
+                            // The first point known to be inside, and the last one known to be
+                            // outside: the crossing is between them.
+                            insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                            outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
+                        }
                     }
 
                     if (solidCube)
@@ -663,7 +733,7 @@ namespace Stride.Rendering.Voxels.Grid
                         for (int step = 0; step < RefineSteps; step++)
                         {
                             float mid = (low + high) * 0.5;
-                            if (SampleField(origin + safeDirection * mid) >= VoxelGridIsoLevel)
+                            if (Trilinear(near, far, saturate((origin + safeDirection * mid - cellOrigin) / cellSize)) >= VoxelGridIsoLevel)
                                 high = mid;
                             else
                                 low = mid;
@@ -672,6 +742,8 @@ namespace Stride.Rendering.Voxels.Grid
                         hit = true;
                         running = false;
                         netsCell = cell;
+                        hitNear = near;
+                        hitFar = far;
                     }
                     else
                     {
@@ -761,10 +833,14 @@ namespace Stride.Rendering.Voxels.Grid
                 }
                 else if (smooth)
                 {
-                    float3 gradient = FieldGradient(position);
-                    // Density rises into matter, so the outward normal is the gradient reversed. A
-                    // region flat enough to have no gradient has no orientation either; the face
-                    // just crossed is then the only answer available.
+                    // The gradient of the trilinear field at the hit, from the corners already held:
+                    // the exact normal of the surface drawn. Density rises into matter, so the
+                    // outward normal is the gradient reversed. A region flat enough to have no
+                    // gradient has no orientation either; the face just crossed is then the only
+                    // answer available. A hit that started inside matter has no cell held; its
+                    // normal is the box face.
+                    float3 hitF = saturate((position - (float3)netsCell * cellSize) / cellSize);
+                    float3 gradient = TrilinearGradient(hitNear, hitFar, hitF);
                     hitNormal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : faceNormal;
                 }
                 else

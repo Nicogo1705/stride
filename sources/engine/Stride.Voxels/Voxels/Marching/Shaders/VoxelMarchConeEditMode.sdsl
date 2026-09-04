@@ -32,10 +32,18 @@ shader VoxelMarchConeEditMode : VoxelMarchMethod, VoxelRadiusMarchMethod, MarchA
             float diameter = max(voxelSize, finalRatio * dist);
             float3 pos = rayPos + rayDir * dist;
 
+            // Out of the volume, or saturated: every further sample adds nothing. The same two
+            // exits the compiled cone has, so the two marches agree in cost as well as in look.
+            if (AttributeSamplers[AttributeID].OutsideVolume(pos))
+                break;
+
             if (fast)
                 light += AttributeSamplers[AttributeID].SampleNearestMip(pos, -rayDir, diameter) * saturate(1.0 - light.a);
             else
                 light += AttributeSamplers[AttributeID].Sample(pos, -rayDir, diameter) * saturate(1.0 - light.a);
+
+            if (light.a >= 0.99)
+                break;
 
             dist += diameter * stepScale;
         }

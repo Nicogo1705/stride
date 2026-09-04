@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelMarchBeam<int steps, float stepScale, float beamDiameter> : VoxelMarchMethod, VoxelRadiusMarchMethod, MarchAttributes
 {
@@ -15,14 +15,21 @@ shader VoxelMarchBeam<int steps, float stepScale, float beamDiameter> : VoxelMar
         float dist = voxelSize;
         float4 light = float4(0.0, 0.0, 0.0, 0.0);
 
+        float size = beamDiameter * radiusScale;
         for (int i = 0; i < steps; i++)
         {
-            float size = beamDiameter * radiusScale;
             float3 pos = rayPos + rayDir * dist;
 
-            light += AttributeSamplers[AttributeID].Sample(pos, -rayDir, AttributeSamplers[AttributeID].VoxelSize() * size) * saturate(1.0 - light.a);
+            // Out of the volume, or saturated: every further sample adds nothing.
+            if (AttributeSamplers[AttributeID].OutsideVolume(pos))
+                break;
 
-            dist += AttributeSamplers[AttributeID].VoxelSize() * stepScale;
+            light += AttributeSamplers[AttributeID].Sample(pos, -rayDir, voxelSize * size) * saturate(1.0 - light.a);
+
+            if (light.a >= 0.99)
+                break;
+
+            dist += voxelSize * stepScale;
         }
         return light;
     }

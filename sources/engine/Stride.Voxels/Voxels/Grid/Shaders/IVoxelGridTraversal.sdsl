@@ -58,6 +58,15 @@ namespace Stride.Rendering.Voxels.Grid
             return float3(0, 1, 0);
         }
 
+        /// What the field is like at the eight points a half-voxel out from a point: 0 all air,
+        /// 2 all solid, 1 the surface passes between them. The normal at the point comes with it.
+        /// For a caller that takes the field voxel by voxel at some other resolution.
+        int SurfaceProbe(float3 localPosition, float halfSize, out float3 normal)
+        {
+            normal = float3(0, 1, 0);
+            return 0;
+        }
+
         /// What the field is like within a radius of a point: 0 all air, 2 all solid, 1 neither or
         /// unknown. Answered on the occupancy pyramid where there is one, so a caller looking for
         /// surface skips the bricks that cannot hold any.

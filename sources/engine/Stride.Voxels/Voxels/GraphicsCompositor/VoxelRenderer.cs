@@ -19,7 +19,7 @@ using System.Linq;
 namespace Stride.Rendering.Voxels
 {
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
-    public class VoxelRenderer : IVoxelRenderer
+    public class VoxelRenderer : IVoxelRenderer, IDisposable
     {
         [DataMemberIgnore]
         public static readonly PropertyKey<Dictionary<VoxelVolumeComponent, DataVoxelVolume>> CurrentRenderVoxelVolumes = new PropertyKey<Dictionary<VoxelVolumeComponent, DataVoxelVolume>>("VoxelRenderer.CurrentRenderVoxelVolumes", typeof(VoxelRenderer));
@@ -198,6 +198,25 @@ namespace Stride.Rendering.Voxels
             }
         }
         private readonly List<VoxelVolumeComponent> goneVolumes = new List<VoxelVolumeComponent>();
+        private Grid.VoxelGridInjector injector;
+
+        /// <summary>Releases the injector's shader and every volume's device resources.</summary>
+        public void Dispose()
+        {
+            injector?.Dispose();
+            injector = null;
+            if (renderVoxelVolumeData != null)
+            {
+                foreach (var pair in renderVoxelVolumeData)
+                {
+                    pair.Value.Storage?.Dispose();
+                    pair.Value.VoxelizationMethod?.Dispose();
+                    foreach (var attribute in pair.Value.OutputAttributes)
+                        attribute.Dispose();
+                }
+                renderVoxelVolumeData.Clear();
+            }
+        }
 
         /// <summary>
         /// Gives back what a volume that is no longer in the scene held on the device: its rings
@@ -219,6 +238,7 @@ namespace Stride.Rendering.Voxels
             {
                 var processed = renderVoxelVolumeData[component];
                 processed.Storage?.Dispose();
+                processed.VoxelizationMethod?.Dispose();
                 foreach (var attribute in processed.OutputAttributes)
                     attribute.Dispose();
                 renderVoxelVolumeData.Remove(component);
@@ -271,7 +291,8 @@ namespace Stride.Rendering.Voxels
                             }
 
                             // Voxel fields, straight from their samples into the same buffer.
-                            Grid.VoxelGridInjection.Inject(context, pass);
+                            injector ??= new Grid.VoxelGridInjector();
+                            injector.Inject(context, pass, drawContext.RenderContext.VisibilityGroup?.Tags.Get(Grid.VoxelGridInjector.CurrentEntries)?.Entries);
                         }
                         foreach (VoxelizationPass pass in processedVolume.passList.passes)
                         {

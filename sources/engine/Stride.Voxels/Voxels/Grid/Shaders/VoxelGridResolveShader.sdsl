@@ -46,7 +46,8 @@ namespace Stride.Rendering.Voxels.Grid
 
             float hitDistance;
             float3 localNormal;
-            if (!Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance * directionScale, hitDistance, localNormal))
+            // The reach is in the grid's own units, as the direction was made unit length in them.
+            if (!Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal))
             {
                 discard;
             }

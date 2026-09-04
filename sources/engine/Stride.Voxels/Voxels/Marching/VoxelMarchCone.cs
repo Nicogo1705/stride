@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -13,7 +13,12 @@ namespace Stride.Rendering.Voxels
     public class VoxelMarchCone : IVoxelMarchMethod
     {
         [DataMember(0)]
-        public bool EditMode = true;
+        /// <summary>
+        /// Takes the step count, scale and cone ratio from a constant buffer rather than compiling
+        /// them in, so they can be changed without a new shader. Off by default: the compiled cone
+        /// is the one the presets are tuned on.
+        /// </summary>
+        public bool EditMode = false;
         [DataMember(10)]
         public bool Fast = false;
         [DataMember(20)]

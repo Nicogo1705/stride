@@ -3,12 +3,12 @@
 
 using System;
 using System.Collections.Generic;
+using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering.ComputeEffect;
 using Stride.Rendering.Materials;
-using Stride.Rendering.Voxels.VoxelGI;
 using GraphicsBuffer = Stride.Graphics.Buffer;
 
 namespace Stride.Rendering.Voxels.Grid
@@ -23,9 +23,12 @@ namespace Stride.Rendering.Voxels.Grid
     }
 
     /// <summary>
-    /// The colour and emission of each material id, as the injector reads them: read off the
-    /// materials' constant parameters, two float4 per id.
+    /// The colour and emission of each material id, as the injector reads them.
     /// </summary>
+    /// <remarks>
+    /// Read off the materials' constant parameters, two float4 per id, and uploaded again only
+    /// when a value changed - so a material edited at runtime reaches the GI on the next frame.
+    /// </remarks>
     public sealed class VoxelGridInjectionTable : IDisposable
     {
         public const int Capacity = 256;
@@ -33,68 +36,78 @@ namespace Stride.Rendering.Voxels.Grid
         public GraphicsBuffer Buffer { get; }
 
         private readonly Vector4[] entries = new Vector4[Capacity * 2];
-        private readonly List<Material> last = [];
+        private readonly Vector4[] scratch = new Vector4[Capacity * 2];
+        private bool uploaded;
 
         public VoxelGridInjectionTable(GraphicsDevice device)
         {
             Buffer = GraphicsBuffer.Structured.New(device, Capacity * 2, 16);
         }
 
-        public bool NeedsUpdate(IReadOnlyList<Material> materials)
+        /// <summary>Reads the materials and uploads the table when anything in it changed.</summary>
+        public void Refresh(CommandList commandList, IReadOnlyList<Material> materials)
         {
-            if (materials.Count != last.Count)
-                return true;
-            for (int i = 0; i < materials.Count; i++)
-                if (!ReferenceEquals(materials[i], last[i]))
-                    return true;
-            return false;
-        }
-
-        public void Update(CommandList commandList, IReadOnlyList<Material> materials)
-        {
-            Array.Clear(entries);
-            last.Clear();
-            for (int id = 0; id < Capacity; id++)
+            Array.Clear(scratch);
+            for (int id = 0; id < Capacity && id < materials.Count; id++)
             {
-                var material = id < materials.Count ? materials[id] : null;
-                if (id < materials.Count)
-                    last.Add(material);
-
-                var parameters = material?.Passes.Count > 0 ? material.Passes[0].Parameters : null;
+                var parameters = materials[id]?.Passes.Count > 0 ? materials[id].Passes[0].Parameters : null;
                 var colour = parameters != null && parameters.ContainsKey(MaterialKeys.DiffuseValue) ? parameters.Get(MaterialKeys.DiffuseValue) : new Color4(1, 1, 1, 1);
                 var emissive = parameters != null && parameters.ContainsKey(MaterialKeys.EmissiveValue) ? parameters.Get(MaterialKeys.EmissiveValue) : new Color4(0, 0, 0, 0);
                 var intensity = parameters != null && parameters.ContainsKey(MaterialKeys.EmissiveIntensity) ? parameters.Get(MaterialKeys.EmissiveIntensity) : 0f;
 
-                entries[id * 2] = new Vector4(colour.R, colour.G, colour.B, 1);
-                entries[id * 2 + 1] = new Vector4(emissive.R * intensity, emissive.G * intensity, emissive.B * intensity, 1);
+                scratch[id * 2] = new Vector4(colour.R, colour.G, colour.B, 1);
+                scratch[id * 2 + 1] = new Vector4(emissive.R * intensity, emissive.G * intensity, emissive.B * intensity, 1);
             }
+
+            var same = uploaded;
+            for (int i = 0; same && i < entries.Length; i++)
+                same = entries[i] == scratch[i];
+            if (same)
+                return;
+
+            Array.Copy(scratch, entries, entries.Length);
             Buffer.SetData(commandList, entries);
+            uploaded = true;
         }
 
         public void Dispose() => Buffer.Dispose();
+    }
+
+    /// <summary>The fields to inject this frame, as the grid processor lists them on the visibility group.</summary>
+    /// <remarks>A class round the list because a property key's type must serialize, and a list of entries holding a device buffer must not try.</remarks>
+    [DataContract]
+    public sealed class VoxelGridInjectionList
+    {
+        [DataMemberIgnore]
+        public readonly List<VoxelGridInjectionEntry> Entries = [];
     }
 
     /// <summary>
     /// Writes voxel fields into the GI's fragment buffer straight from their samples, where the
     /// voxelizer would have rasterised their proxy boxes. See <c>VoxelGridInjectShader</c>.
     /// </summary>
-    public static class VoxelGridInjection
+    /// <remarks>
+    /// One per <see cref="VoxelRenderer"/>, which owns its shader; the fields to inject reach it
+    /// through the visibility group, listed there by the grid processor each frame, the way the
+    /// volumes themselves reach the renderer.
+    /// </remarks>
+    public sealed class VoxelGridInjector : IDisposable
     {
-        /// <summary>The fields to inject this frame. Filled by the grid processor before the GI draws.</summary>
-        public static List<VoxelGridInjectionEntry> Entries { get; } = [];
+        /// <summary>The fields to inject this frame, listed by the grid processor on the visibility group.</summary>
+        public static readonly PropertyKey<VoxelGridInjectionList> CurrentEntries = new("VoxelGridInjector.CurrentEntries", typeof(VoxelGridInjector));
 
         private static readonly ProfilingKey ProfilingKey = new("Voxelization: Field injection");
 
-        private static ComputeEffectShader shader;
-        private static bool warnedPacker;
+        private ComputeEffectShader shader;
+        private bool warnedPacker;
 
         /// <summary>
-        /// Injects every field into the rings a voxelization pass just rasterised, so the arrangement
-        /// that follows finds them in the buffer beside the meshes' fragments.
+        /// Injects every listed field into the rings a voxelization pass just rasterised, so the
+        /// arrangement that follows finds them in the buffer beside the meshes' fragments.
         /// </summary>
-        public static void Inject(RenderDrawContext context, VoxelizationPass pass)
+        public void Inject(RenderDrawContext context, VoxelizationPass pass, IReadOnlyList<VoxelGridInjectionEntry> entries)
         {
-            if (Entries.Count == 0 || pass.storer is not VoxelStorerClipmap storer || storer.FragmentsBuffer == null)
+            if (entries == null || entries.Count == 0 || pass.storer is not VoxelStorerClipmap storer || storer.FragmentsBuffer == null)
                 return;
 
             shader ??= new ComputeEffectShader(context.RenderContext) { ShaderSourceName = "VoxelGridInjectEffect" };
@@ -115,7 +128,7 @@ namespace Stride.Rendering.Voxels.Grid
                 if (layout.StorageMethod is VoxelStorageMethodIndirect { TempStorageFormat: not VoxelFragmentPackFloatR11G11B10 })
                 {
                     if (!warnedPacker)
-                        GlobalLogger.GetLogger("VoxelGridInjection").Warning("Field injection packs fragments as VoxelFragmentPackFloatR11G11B10; the volume's packer differs, so its fields are left to the voxelizer.");
+                        GlobalLogger.GetLogger("VoxelGridInjector").Warning("Field injection packs fragments as VoxelFragmentPackFloatR11G11B10; the volume's packer differs, so its fields are left to the voxelizer.");
                     warnedPacker = true;
                     continue;
                 }
@@ -123,7 +136,7 @@ namespace Stride.Rendering.Voxels.Grid
                 for (int ring = firstRing; ring <= lastRing; ring++)
                 {
                     var slot = single ? ring % storer.FragmentSlots : ring;
-                    foreach (var entry in Entries)
+                    foreach (var entry in entries)
                     {
                         if (entry.Traversal?.Source == null || entry.Table == null)
                             continue;
@@ -152,6 +165,12 @@ namespace Stride.Rendering.Voxels.Grid
                     }
                 }
             }
+        }
+
+        public void Dispose()
+        {
+            shader?.Dispose();
+            shader = null;
         }
     }
 }

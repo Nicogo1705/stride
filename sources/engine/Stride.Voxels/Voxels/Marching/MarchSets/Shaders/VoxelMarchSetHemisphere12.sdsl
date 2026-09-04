@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelMarchSetHemisphere12 : VoxelMarchSet
 {
@@ -9,9 +9,15 @@ shader VoxelMarchSetHemisphere12 : VoxelMarchSet
     compose VoxelMarchMethod Marcher;
     override float4 March(float3 rayPos, float3 rayDir)
     {
-        float3 tan = normalize(cross(rayDir, normalize(float3(1, 1, 1))));
-        float3 bitan = cross(tan, rayDir);
-        float3x3 tangentMatrix = float3x3(tan, bitan, rayDir);
+        // A tangent from whichever axis the ray is least aligned with: a fixed reference
+        // direction is parallel to some ray, and the cross product is then zero, the normalize
+        // a NaN, and the whole cone set with it.
+        float3 reference = abs(rayDir.x) < abs(rayDir.y)
+            ? (abs(rayDir.x) < abs(rayDir.z) ? float3(1, 0, 0) : float3(0, 0, 1))
+            : (abs(rayDir.y) < abs(rayDir.z) ? float3(0, 1, 0) : float3(0, 0, 1));
+        float3 tangent = normalize(cross(rayDir, reference));
+        float3 bitan = cross(tangent, rayDir);
+        float3x3 tangentMatrix = float3x3(tangent, bitan, rayDir);
 
         float3 startPos = rayPos + rayDir * Marcher.StepSize() * offset;
 

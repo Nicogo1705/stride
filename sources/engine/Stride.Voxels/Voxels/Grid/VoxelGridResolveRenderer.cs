@@ -72,14 +72,16 @@ namespace Stride.Rendering.Voxels.Grid
             // clears and draws into whatever is bound, and must find its own.
             using var restore = context.PushRenderTargetsAndRestore();
 
+            // Nothing to resolve, nothing to clear: no material reads the targets while no grid
+            // lists itself, and the frame they are read again they are written first.
+            if (Grids.Count == 0)
+                return;
+
             var commandList = context.CommandList;
             commandList.Clear(depth, DepthStencilClearOptions.DepthBuffer);
             commandList.Clear(Normal, Color4.Black);
             commandList.Clear(Material, Color4.Black);
             commandList.Clear(Position, Color4.Black);
-
-            if (Grids.Count == 0)
-                return;
 
             var viewProjection = renderView.ViewProjection;
             Matrix.Invert(ref viewProjection, out var viewProjectionInverse);
@@ -145,6 +147,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// </summary>
     public sealed class VoxelGridResolvePass : SceneRendererBase
     {
+        [Stride.Core.DataMemberIgnore]
         public VoxelGridResolveRenderer Renderer { get; } = new();
 
         protected override void DrawCore(RenderContext context, RenderDrawContext drawContext)

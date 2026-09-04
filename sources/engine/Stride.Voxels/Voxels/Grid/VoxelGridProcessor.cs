@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using Stride.Core.Mathematics;
 using Stride.Engine;
+using Stride.Engine.Design;
 using Stride.Games;
 using Stride.Graphics;
 using Stride.Rendering.Compositing;
@@ -34,8 +35,15 @@ namespace Stride.Rendering.Voxels.Grid
     /// walked.
     /// </para>
     /// </remarks>
-    public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>
+    public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>, IEntityComponentRenderProcessor
     {
+        /// <summary>The visibility group the fields are listed on for the GI, set by the engine.</summary>
+        public VisibilityGroup VisibilityGroup { get; set; }
+
+        /// <summary>Unused; required of a render processor.</summary>
+        public RenderGroup RenderGroup { get; set; }
+
+        private readonly VoxelGridInjectionList injection = new();
         /// <summary>One model of the field: a material of the list, or the shadow caster.</summary>
         public sealed class Draw
         {
@@ -82,6 +90,12 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The materials' colour and emission by id, for the GI injector.</summary>
             public VoxelGridInjectionTable Table;
 
+            /// <summary>The single material as a list of one, for the table; kept so no list is made per frame.</summary>
+            public Material[] SingleMaterial = new Material[1];
+
+            /// <summary>The materials wanted this frame, compared against the draws; kept so no list is made per frame.</summary>
+            public List<(Material material, int id)> Wanted = [];
+
             public int TargetsVersion = -1;
 
             public void ReleaseBuffers()
@@ -99,6 +113,10 @@ namespace Stride.Rendering.Voxels.Grid
         private SceneSystem sceneSystem;
         private IGame game;
         private VoxelGridResolvePass resolvePass;
+
+        // A grid's index is a byte in the resolve targets; one given back is given out again
+        // before a new one is minted, so two live grids never share one.
+        private readonly Stack<int> freeGridIndices = new();
         private int nextGridIndex;
 
         protected override void OnSystemAdd()
@@ -107,13 +125,15 @@ namespace Stride.Rendering.Voxels.Grid
             graphicsDeviceService = Services.GetService<IGraphicsDeviceService>();
             sceneSystem = Services.GetService<SceneSystem>();
             game = Services.GetService<IGame>();
+            VisibilityGroup?.Tags.Set(VoxelGridInjector.CurrentEntries, injection);
         }
 
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component)
-            => new() { GridIndex = nextGridIndex++ % 256 };
+            => new() { GridIndex = freeGridIndices.Count > 0 ? freeGridIndices.Pop() : nextGridIndex++ % 256 };
 
         protected override void OnEntityComponentRemoved(Entity entity, VoxelGridComponent component, State state)
         {
+            freeGridIndices.Push(state.GridIndex);
             foreach (var draw in state.Materials)
                 Detach(entity, draw);
             state.Materials.Clear();
@@ -132,7 +152,7 @@ namespace Stride.Rendering.Voxels.Grid
             EnsureResolvePass();
             var renderer = resolvePass?.Renderer;
             renderer?.Grids.Clear();
-            VoxelGridInjection.Entries.Clear();
+            injection.Entries.Clear();
 
             foreach (var pair in ComponentDatas)
             {
@@ -186,7 +206,7 @@ namespace Stride.Rendering.Voxels.Grid
                 if (component.InjectIntoGI && game?.GraphicsContext != null)
                 {
                     EnsureTable(device, component, state);
-                    VoxelGridInjection.Entries.Add(new VoxelGridInjectionEntry
+                    injection.Entries.Add(new VoxelGridInjectionEntry
                     {
                         Traversal = component.Traversal,
                         World = component.Entity.Transform.WorldMatrix,
@@ -213,9 +233,13 @@ namespace Stride.Rendering.Voxels.Grid
         private void EnsureTable(GraphicsDevice device, VoxelGridComponent component, State state)
         {
             state.Table ??= new VoxelGridInjectionTable(device);
-            var materials = component.Material != null ? [component.Material] : component.Materials;
-            if (state.Table.NeedsUpdate(materials))
-                state.Table.Update(game.GraphicsContext.CommandList, materials);
+            IReadOnlyList<Material> materials = component.Materials;
+            if (component.Material != null)
+            {
+                state.SingleMaterial[0] = component.Material;
+                materials = state.SingleMaterial;
+            }
+            state.Table.Refresh(game.GraphicsContext.CommandList, materials);
         }
 
         /// <summary>
@@ -338,7 +362,8 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         private static void EnsureMaterials(GraphicsDevice device, VoxelGridComponent component, State state)
         {
-            var wanted = new List<(Material material, int id)>();
+            var wanted = state.Wanted;
+            wanted.Clear();
             if (component.Material != null)
             {
                 wanted.Add((component.Material, -1));
