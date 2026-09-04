@@ -85,6 +85,11 @@ namespace Stride.Rendering.Voxels.Grid
 
                 float4 occluderClip = mul(mul(float4(originLocal + directionLocal * occluderDistance, 1), World), ViewProjection);
                 streams.Depth = occluderClip.z / occluderClip.w;
+
+                // Opaque, in so many words: the caster keeps a fragment on the material's alpha,
+                // and the streams were reset to zero before this ran.
+                streams.matColorBase = float4(0, 0, 0, 1);
+                streams.matDiffuse = float4(0, 0, 0, 1);
             }
             else
             {
