@@ -20,6 +20,9 @@ public abstract class ShaderLoaderBase(IShaderCache fileCache) : IExternalShader
     public GenericShaderCache GenericCache { get; } = new();
     public bool SuppressSourceHash { get; set; }
 
+    /// <inheritdoc />
+    public ObjectId? SourceHashOverride { get; set; }
+
     /// <summary>
     /// Ensures only one thread compiles a given shader at a time. Other threads wait for the result.
     /// </summary>
@@ -96,17 +99,23 @@ public abstract class ShaderLoaderBase(IShaderCache fileCache) : IExternalShader
 
     public bool LoadExternalBuffer(string name, string? filename, string code, ReadOnlySpan<ShaderMacro> defines, [MaybeNullWhen(false)] out ShaderBuffers buffer, out ObjectId hash, out bool isFromCache)
     {
-        // Consume the one-shot suppress flag now, before any early return, so it can't leak into a
-        // later compilation when this load is served from the cache. A leaked flag would strip that
-        // shader's OpSourceHashSDSL, making its cached source hash read back as zero.
+        // Consume the one-shot flags now, before any early return, so they can't leak into a
+        // later compilation when this load is served from the cache. A leaked suppress flag would
+        // strip that shader's OpSourceHashSDSL, making its cached source hash read back as zero.
         var emitSourceHash = !SuppressSourceHash;
         SuppressSourceHash = false;
+        var hashOverride = SourceHashOverride;
+        SourceHashOverride = null;
 
-        isFromCache = Cache.TryLoadFromCache(name, null, defines, out buffer, out hash);
+        // Validated like any other cached class: an instantiation registered under its own key
+        // carries the original file's hash and its dependencies', and a change to any of those
+        // must miss. Served unvalidated, as this was, an edit to a generic or MemberName shader
+        // was never seen again until the cache was deleted by hand.
+        isFromCache = Cache.TryLoadFromCache(name, null, defines, out buffer, out hash) && ValidateCachedHashes(buffer);
         if (isFromCache)
             return true;
 
-        hash = ObjectId.FromBytes(Encoding.UTF8.GetBytes(code));
+        hash = hashOverride ?? ObjectId.FromBytes(Encoding.UTF8.GetBytes(code));
         // Don't auto-register in SDSLC — the caller (InstantiateMemberNames) registers under the cache key
         if (!LoadFromCode(filename, code, hash, defines, out buffer, registerInCache: false, emitSourceHash: emitSourceHash))
         {

@@ -573,15 +573,16 @@ public partial class SpirvBuilder
         if (!hasUnresolvableShader)
             return;
 
-        // Extract original filename from context (for debug info in recompiled shader)
+        // Extract original filename from context (for debug info in recompiled shader), and the
+        // original file's hash, which is what the cache validates an instantiation against.
         string? originalFilename = null;
+        ObjectId? originalHash = null;
         foreach (var i in shaderBuffers.Context)
         {
-            if (i.Op == Specification.Op.OpString)
-            {
+            if (originalFilename == null && i.Op == Specification.Op.OpString)
                 originalFilename = ((OpString)i).Value;
-                break;
-            }
+            if (originalHash == null && i.Op == Specification.Op.OpSourceHashSDSL && (OpSourceHashSDSL)i is { } sourceHash)
+                originalHash = new ObjectId((uint)sourceHash.Hash1, (uint)sourceHash.Hash2, (uint)sourceHash.Hash3, (uint)sourceHash.Hash4);
         }
 
         var instantiatedGenericsMacros = new List<(string Name, string Definition)>();
@@ -618,9 +619,14 @@ public partial class SpirvBuilder
                     shaderName = cacheKey;
                 }
 
-                // Use original filename for debug info (OpString/OpSource) but skip OpSourceHashSDSL
-                // since the hash would be of the macro-expanded code, not the original file
-                shaderLoader.SuppressSourceHash = true;
+                // Use original filename for debug info (OpString/OpSource), and the original file's
+                // hash for the cache stamp: the expanded code's would match nothing on disk, and no
+                // stamp at all left an edited generic or MemberName shader served stale from the
+                // cache for as long as the cache lived.
+                if (originalHash is { } known)
+                    shaderLoader.SourceHashOverride = known;
+                else
+                    shaderLoader.SuppressSourceHash = true;
                 if (!shaderLoader.LoadExternalBuffer(shaderName, originalFilename, code, macros, out shaderBuffers, out var compiledHash, out _))
                     throw new InvalidOperationException();
 

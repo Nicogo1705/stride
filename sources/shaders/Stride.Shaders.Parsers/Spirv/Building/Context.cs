@@ -136,6 +136,14 @@ public interface IExternalShaderLoader
 
     /// <summary>When set to true, suppresses OpSourceHashSDSL emission for the next compilation (used by MemberName recompilations).</summary>
     bool SuppressSourceHash { get; set; }
+
+    /// <summary>
+    /// The source hash to stamp on the next compilation from code, in place of the code's own:
+    /// an instantiation of a generic or MemberName shader is compiled from expanded code, and
+    /// the hash the cache must validate against is the original file's. Consumed by that
+    /// compilation.
+    /// </summary>
+    ObjectId? SourceHashOverride { get; set; }
 }
 
 // Should contain internal data not seen by the client but helpful for the generation like type symbols and other 

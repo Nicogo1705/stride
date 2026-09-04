@@ -1406,4 +1406,5 @@ public class CaptureLoadedShaders(IExternalShaderLoader inner) : IExternalShader
         => inner.LoadExternalBuffer(name, filename, code, defines, out bytecode, out hash, out isFromCache);
 
     public bool SuppressSourceHash { get => inner.SuppressSourceHash; set => inner.SuppressSourceHash = value; }
+    public ObjectId? SourceHashOverride { get => inner.SourceHashOverride; set => inner.SourceHashOverride = value; }
 }
