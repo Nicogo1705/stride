@@ -43,6 +43,11 @@ namespace Stride.Rendering.Voxels
             VoxelLayout.ClearOutputStorage();
         }
 
+        public override void Dispose()
+        {
+            VoxelLayout.Dispose();
+        }
+
 
 
 

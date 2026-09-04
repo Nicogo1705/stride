@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -17,6 +17,9 @@ namespace Stride.Rendering.Voxels
         public abstract void PrepareLocalStorage(VoxelStorageContext context, IVoxelStorage storage);
         public abstract void PrepareOutputStorage(VoxelStorageContext context, IVoxelStorage storage);
         public abstract void ClearOutputStorage();
+
+        /// <summary>Gives the attribute's textures back, when its volume goes away.</summary>
+        public virtual void Dispose() { }
 
         public abstract void CollectVoxelizationPasses(VoxelizationPassList passList, IVoxelStorer storer, Matrix view, Vector3 resolution, VoxelizationStage stage, bool output);
         public abstract void CollectAttributes(List<AttributeStream> attributes, VoxelizationStage stage, bool output);

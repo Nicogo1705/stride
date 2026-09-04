@@ -77,6 +77,13 @@ namespace Stride.Rendering.Voxels
             storageTex = null;
         }
 
+        /// <inheritdoc />
+        public virtual void Dispose()
+        {
+            storageTex?.Dispose();
+            storageTex = null;
+        }
+
         protected ShaderSource[] mipmapperSharp = null;
         protected ShaderSource[] mipmapperPhysicallyBased = null;
         protected ShaderSource[] mipmapperHeuristic = null;

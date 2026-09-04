@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -172,6 +172,19 @@ namespace Stride.Rendering.Voxels
         }
 
 
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            FragmentsBuffer?.Dispose();
+            FragmentsBuffer = null;
+            ClearBuffer?.Dispose();
+            BufferToTexture?.Dispose();
+            BufferToTextureColumns?.Dispose();
+            ClearBuffer = null;
+            BufferToTexture = null;
+            BufferToTextureColumns = null;
+        }
 
         public void UpdateTexture(VoxelStorageContext context, ref IVoxelStorageTexture texture, Stride.Graphics.PixelFormat pixelFormat, int LayoutSize)
         {

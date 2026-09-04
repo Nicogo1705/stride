@@ -110,7 +110,12 @@ namespace Stride.Rendering.Voxels.Grid
             else
             {
                 if (!mine)
+                {
+                    // Told to the voxelizer as well: a discard ends the pixel, not the fragment
+                    // store that would follow it.
+                    streams.VoxelizationSkip = 1;
                     discard;
+                }
 
                 // The surface's own depth, so the grid sorts against other geometry as itself.
                 streams.Depth = positionDepth.w;

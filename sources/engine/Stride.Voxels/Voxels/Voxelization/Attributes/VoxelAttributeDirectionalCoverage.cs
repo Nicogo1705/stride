@@ -17,6 +17,12 @@ namespace Stride.Rendering.Voxels
     {
         IVoxelStorageTexture CoverageTex;
 
+        public override void Dispose()
+        {
+            CoverageTex?.Dispose();
+            CoverageTex = null;
+        }
+
         public override void PrepareLocalStorage(VoxelStorageContext context, IVoxelStorage storage)
         {
             BufferOffset = storage.RequestTempStorage(32);

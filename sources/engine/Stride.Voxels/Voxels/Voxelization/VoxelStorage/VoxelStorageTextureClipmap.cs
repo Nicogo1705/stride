@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -26,6 +26,19 @@ namespace Stride.Rendering.Voxels
         public Vector4[] PerMapOffsetScale = new Vector4[20];
         public Vector4[] PerMapOffsetScaleCurrent = new Vector4[20];
         public Vector3[] MippingOffset = new Vector3[20];
+
+        /// <summary>Gives the rings, the mip chain and the scratch mips back to the device.</summary>
+        public void Dispose()
+        {
+            ClipMaps?.Dispose();
+            MipMaps?.Dispose();
+            if (TempMipMaps != null)
+                foreach (var temp in TempMipMaps)
+                    temp?.Dispose();
+            ClipMaps = null;
+            MipMaps = null;
+            TempMipMaps = null;
+        }
 
         ShaderClassSource sampler = new ShaderClassSource("VoxelStorageTextureClipmapShader");
 

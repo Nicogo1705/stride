@@ -8,7 +8,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// cascade or face, and each walks the field on its own from the light. This runs on a proxy
     /// box of the grid that casts shadows and draws nothing else: in every pass but a caster it
     /// discards, and in a caster it asks the traversal only where the ray meets the field.
-    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, ShadowMapCasterPassInfo
+    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, ShadowMapCasterPassInfo, VoxelizationPassInfo
     {
         // The traversal and its source are inherited, not composed, so all three share one scope
         // and the field's resource is declared once. See VoxelGridTraversalDDA.
@@ -71,7 +71,9 @@ namespace Stride.Rendering.Voxels.Grid
             }
             else
             {
-                // The camera's passes draw the grid through its materials, not through this.
+                // The camera's passes draw the grid through its materials, not through this; and
+                // the voxelizer is told so, since a discard alone leaves its store to run.
+                streams.VoxelizationSkip = 1;
                 discard;
             }
         }

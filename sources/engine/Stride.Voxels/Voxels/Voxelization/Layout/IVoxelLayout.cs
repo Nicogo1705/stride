@@ -12,6 +12,9 @@ namespace Stride.Rendering.Voxels
         /// <summary>Directions stored per voxel: 1 isotropic, 3 paired, 6 anisotropic.</summary>
         int DirectionCount { get; }
 
+        /// <summary>Gives the layout's textures back; they are made again on the next prepare.</summary>
+        void Dispose();
+
         int PrepareLocalStorage(VoxelStorageContext context, IVoxelStorage storage);
         void PrepareOutputStorage(VoxelStorageContext context, IVoxelStorage storage);
         void ClearOutputStorage();

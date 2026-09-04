@@ -45,6 +45,8 @@ namespace Stride.Rendering.Voxels
             renderVoxelVolumes = Context.VisibilityGroup.Tags.Get(CurrentRenderVoxelVolumes);
             renderVoxelVolumeData = Context.VisibilityGroup.Tags.Get(CurrentProcessedVoxelVolumes);
 
+            ReleaseGoneVolumes();
+
             if (renderVoxelVolumes == null || renderVoxelVolumes.Count == 0)
                 return;
 
@@ -195,6 +197,34 @@ namespace Stride.Rendering.Voxels
                 }
             }
         }
+        private readonly List<VoxelVolumeComponent> goneVolumes = new List<VoxelVolumeComponent>();
+
+        /// <summary>
+        /// Gives back what a volume that is no longer in the scene held on the device: its rings
+        /// and mips, its fragment buffer, its shaders. A volume put back later makes them again.
+        /// </summary>
+        private void ReleaseGoneVolumes()
+        {
+            if (renderVoxelVolumeData == null)
+                return;
+
+            goneVolumes.Clear();
+            foreach (var pair in renderVoxelVolumeData)
+            {
+                if (renderVoxelVolumes == null || !renderVoxelVolumes.ContainsKey(pair.Key))
+                    goneVolumes.Add(pair.Key);
+            }
+
+            foreach (var component in goneVolumes)
+            {
+                var processed = renderVoxelVolumeData[component];
+                processed.Storage?.Dispose();
+                foreach (var attribute in processed.OutputAttributes)
+                    attribute.Dispose();
+                renderVoxelVolumeData.Remove(component);
+            }
+        }
+
         public virtual void Draw(RenderDrawContext drawContext, Shadows.IShadowMapRenderer ShadowMapRenderer)
         {
             if (renderVoxelVolumes == null || renderVoxelVolumes.Count == 0)

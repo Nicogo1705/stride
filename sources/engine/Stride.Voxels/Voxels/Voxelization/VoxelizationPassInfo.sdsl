@@ -18,5 +18,12 @@ namespace Stride.Rendering.Voxels
     shader VoxelizationPassInfo
     {
         stage stream float IsVoxelizationPass;
+
+        /// 1 when the material has nothing at this fragment and the voxelizer must store nothing.
+        /// Said in a stream rather than left to discard: a discard ends the pixel's outputs, not
+        /// the unordered access writes that follow it, and the fragment store is one of those - a
+        /// discarded fragment was still written into the volume, as a black voxel on the face of
+        /// the mesh that carried it.
+        stage stream float VoxelizationSkip;
     };
 }
