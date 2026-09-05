@@ -108,9 +108,13 @@ namespace Stride.Rendering.Voxels
             RenderView voxelizationView = view;
             Int2 ViewSize = VoxelizationViewSizes[view];
 
-            if (VoxelUtils.DisposeTextureBySpecs(MSAARenderTarget, new Vector3(ViewSize.X, ViewSize.Y, 1), PixelFormat.R8G8B8A8_UNorm, MultisampleCount))
+            // The level is a request, not a guarantee: a software or low-end device caps R8G8B8A8 lower
+            // than the X8 default, and Texture.New throws past the cap. Take what the device offers.
+            var multisampleCount = (MultisampleCount)Math.Min((int)MultisampleCount, (int)storageContext.device.Features[PixelFormat.R8G8B8A8_UNorm].MultisampleCountMax);
+
+            if (VoxelUtils.DisposeTextureBySpecs(MSAARenderTarget, new Vector3(ViewSize.X, ViewSize.Y, 1), PixelFormat.R8G8B8A8_UNorm, multisampleCount))
             {
-                MSAARenderTarget = Texture.New(storageContext.device, TextureDescription.New2D(ViewSize.X, ViewSize.Y, new MipMapCount(false), PixelFormat.R8G8B8A8_UNorm, TextureFlags.RenderTarget, 1, GraphicsResourceUsage.Default, MultisampleCount), null);
+                MSAARenderTarget = Texture.New(storageContext.device, TextureDescription.New2D(ViewSize.X, ViewSize.Y, new MipMapCount(false), PixelFormat.R8G8B8A8_UNorm, TextureFlags.RenderTarget, 1, GraphicsResourceUsage.Default, multisampleCount), null);
             }
 
             drawContext.CommandList.ResetTargets();
