@@ -535,6 +535,12 @@ namespace Stride.Rendering.Voxels.Grid
                 float3 brickMin = (float3)(brick * size) * cellSize;
                 float3 brickMax = brickMin + (float)size * cellSize;
                 float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
+                // A plane met at or behind the position walked from is not an exit: a ray lying on a
+                // brick's plane, its direction along that axis all but zero, had that plane as its
+                // nearest far side at distance zero, left the brick where it stood, and spent every
+                // step going nowhere - a column of pixels with no surface, down the middle of a
+                // view along a grid axis.
+                farSide += (farSide <= t + nudge) * 1e30;
                 float tLeave = min(min(farSide.x, farSide.y), farSide.z);
 
                 bool empty = false;
@@ -709,6 +715,12 @@ namespace Stride.Rendering.Voxels.Grid
                 float3 brickMin = (float3)(brick * size) * cellSize;
                 float3 brickMax = brickMin + (float)size * cellSize;
                 float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
+                // A plane met at or behind the position walked from is not an exit: a ray lying on a
+                // brick's plane, its direction along that axis all but zero, had that plane as its
+                // nearest far side at distance zero, left the brick where it stood, and spent every
+                // step going nowhere - a column of pixels with no surface, down the middle of a
+                // view along a grid axis.
+                farSide += (farSide <= t + nudge) * 1e30;
                 float tLeave = min(min(farSide.x, farSide.y), farSide.z);
                 int leaveAxis = farSide.x <= farSide.y && farSide.x <= farSide.z ? 0 : (farSide.y <= farSide.z ? 1 : 2);
 
