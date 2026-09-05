@@ -30,19 +30,28 @@ namespace Stride.Rendering.Voxels.Grid
             // and only the caster one may be stale where a geometry shader dropped it.
             if (streams.IsShadowMapCasterPass > 0.5 && streams.IsVoxelizationPass < 0.5)
             {
-                // The fragment, in the grid's own space. Shadow maps are orthographic for a
-                // directional light and perspective for the others; the ray reaches the fragment
-                // from the eye under a perspective projection, and along the view axis under an
-                // orthographic one, which is the case when w does not depend on z.
+                // The fragment, in the grid's own space.
                 float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
                 float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
+
+                // Orthographic when no world axis moves the projected w, read off ViewProjection with
+                // mul - the transform the depth below is written with - rather than off elements of
+                // Projection, which are one layout in Stride's Matrix and may be another in the HLSL
+                // the shader pipeline emits. The view axis is then the world direction that leaves
+                // clip x and y where they are - perpendicular to the rows that produce them - pointed
+                // the way clip depth grows, away from the light.
+                float4 axisX = mul(float4(1, 0, 0, 0), ViewProjection);
+                float4 axisY = mul(float4(0, 1, 0, 0), ViewProjection);
+                float4 axisZ = mul(float4(0, 0, 1, 0), ViewProjection);
+                bool orthographic = abs(axisX.w) + abs(axisY.w) + abs(axisZ.w) < 1e-6;
+
                 float3 originLocal;
                 float3 directionLocal;
-
-                bool orthographic = abs(Projection._34) < 1e-6 && abs(Projection._44 - 1.0) < 1e-6;
                 if (orthographic)
                 {
-                    float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
+                    float3 forwardWS = normalize(cross(float3(axisX.x, axisY.x, axisZ.x), float3(axisX.y, axisY.y, axisZ.y)));
+                    if (dot(forwardWS, float3(axisX.z, axisY.z, axisZ.z)) < 0)
+                        forwardWS = -forwardWS;
                     directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
                     // Started far enough back to be outside the volume; the traversal clips to it.
                     originLocal = targetLocal - directionLocal * reach;

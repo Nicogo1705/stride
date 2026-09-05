@@ -121,6 +121,17 @@ namespace Stride.Rendering.Voxels.Grid
                 streams.Depth = positionDepth.w;
                 streams.PositionWS = float4(positionDepth.xyz, 1);
 
+                // The surface's view depth too. DepthVS is written in the vertex stage from the proxy
+                // box, and the box's back face is what rasterizes here, so it read as the far side
+                // of the box however close the surface was. The shadow receiver picks its cascade by
+                // it, and a near surface put in a far cascade sits on texels several times too
+                // coarse for the offset that keeps it off its own shadow map: a lattice of dark
+                // specks on every lit face, and a sawtooth along anything seen at a grazing angle,
+                // whenever the field casts shadows. The vertex stage writes ShadingPosition.w, so
+                // this is the same number for the surface.
+                float4 surfaceClip = mul(float4(positionDepth.xyz, 1), ViewProjection);
+                streams.DepthVS = surfaceClip.w;
+
                 // The lighting stage flips normalWS on back faces so a two-sided mesh is lit from
                 // the side it is seen from. Every fragment here is a back face of the proxy box and
                 // says nothing about the surface, so the flag is compensated in advance.

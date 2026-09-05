@@ -14,7 +14,7 @@ namespace Stride.Rendering.Shadows
     {
         override stage void PSMain()
         {
-            streams.IsShadowMapCasterPass = 1;
+            streams.IsShadowMapCasterPass = ShadowMapViewFlag.x;
             base.PSMain();
         }
     };
