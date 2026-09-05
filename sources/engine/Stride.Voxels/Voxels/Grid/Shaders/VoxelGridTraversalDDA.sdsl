@@ -604,6 +604,23 @@ namespace Stride.Rendering.Voxels.Grid
             return hit;
         }
 
+        /// Where the ray meets the field's box, along the ray from its origin: zero from inside,
+        /// and past the box when it misses. A walk's reach is measured from its origin, and the
+        /// reach a field is drawn with is its own extent; from a camera farther from the box than
+        /// that, the walk ended before it arrived, and the field was clipped away at a distance
+        /// every mesh was still drawn at. The reach is meant from here.
+        override float EnterDistance(float3 origin, float3 direction)
+        {
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float3 boundsMax = (float3)cells * CellSize();
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+            float3 toMin = (0.0 - origin) * inverseDirection;
+            float3 toMax = (boundsMax - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            return max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+        }
+
         override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
         {
             hitDistance = 0;

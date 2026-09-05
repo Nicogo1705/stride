@@ -49,6 +49,10 @@ namespace Stride.Rendering.Voxels.Grid
         /// Traces a ray expressed in the grid local space, where the grid spans
         /// [0, cells * cellSize] on each axis. Returns whether anything was hit; hitDistance is
         /// measured along a normalized direction, and hitNormal points away from the surface.
+        float EnterDistance(float3 origin, float3 direction)
+        {
+            return 0;
+        }
         bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
         {
             hitDistance = 0;

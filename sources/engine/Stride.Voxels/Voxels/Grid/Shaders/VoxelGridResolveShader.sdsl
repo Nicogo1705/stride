@@ -54,11 +54,22 @@ namespace Stride.Rendering.Voxels.Grid
             float hitDistance;
             float3 localNormal;
             bool found;
+            // The walk starts where the ray enters the box, not at the near plane. Two reasons. The
+            // reach a field is walked with is its own extent - enough to cross it, not to get to
+            // it from wherever the camera is, and from farther than that the field was clipped
+            // away. And the walk keeps its distance along the ray in a float: measured from a
+            // camera far off, that float no longer resolves the thousandth of a cell the walk
+            // nudges itself by, so it stood still, spent its steps, and the surface it was walking
+            // to - the far side of an arch, the pillars at the back - was not found. From here
+            // its precision is the box's, however far the camera.
+            float enter = Traversal.EnterDistance(localOrigin, localDirection);
+            localOrigin += localDirection * enter;
+            float reach = VoxelGridMaxDistance;
             int levels = Traversal.LodLevelCount();
             // Only when some pixel of the field can want a coarser level at all: the farthest
             // reach of the walk, at this pixel size, still under level one means every pixel walks
             // the finest level and the coarse pass would be a cost with no return.
-            float farthest = Traversal.LodAt(VoxelGridMaxDistance * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+            float farthest = Traversal.LodAt((enter + reach) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
             if (levels > 0 && VoxelGridLodPixel > 0 && farthest >= 1.0)
             {
                 // Coarse first: the coarsest level finds roughly where the surface is, cheaply, and
@@ -70,17 +81,17 @@ namespace Stride.Rendering.Voxels.Grid
                 // still place a surface; the last levels are a handful and lose whole features.
                 int coarse = max(levels - 4, 0);
                 Traversal.SetLod(coarse);
-                found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
+                found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);
                 if (!found)
                 {
                     // What the coarse level lost - a thin thing, a silhouette - is looked for at
                     // the finest, from the start: a miss must not become a hole.
                     Traversal.SetLod(0);
-                    found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
+                    found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);
                 }
                 else
                 {
-                    float wanted = Traversal.LodAt(hitDistance * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+                    float wanted = Traversal.LodAt((enter + hitDistance) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
                     int lod = clamp((int)floor(wanted + DitherThreshold((int2)streams.ShadingPosition.xy, VoxelGridDither)), 0, levels);
                     if (lod < coarse)
                     {
@@ -90,7 +101,7 @@ namespace Stride.Rendering.Voxels.Grid
                         float3 nearOrigin = localOrigin + localDirection * back;
                         float nearDistance;
                         float3 nearNormal;
-                        if (Traversal.Trace(nearOrigin, localDirection, VoxelGridMaxDistance - back, nearDistance, nearNormal))
+                        if (Traversal.Trace(nearOrigin, localDirection, reach - back, nearDistance, nearNormal))
                         {
                             hitDistance = back + nearDistance;
                             localNormal = nearNormal;
@@ -108,7 +119,7 @@ namespace Stride.Rendering.Voxels.Grid
             {
                 Traversal.SetLod(0);
                 // The reach is in the grid's own units, as the direction was made unit length in them.
-                found = Traversal.Trace(localOrigin, localDirection, VoxelGridMaxDistance, hitDistance, localNormal);
+                found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);
             }
             if (!found)
             {
