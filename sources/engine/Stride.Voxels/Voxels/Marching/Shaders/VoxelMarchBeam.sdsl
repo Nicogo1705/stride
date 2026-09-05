@@ -16,14 +16,23 @@ shader VoxelMarchBeam<int steps, float stepScale, float beamDiameter> : VoxelMar
         float4 light = float4(0.0, 0.0, 0.0, 0.0);
 
         float size = beamDiameter * radiusScale;
+        bool entered = false;
         [loop]
         for (int i = 0; i < steps; i++)
         {
             float3 pos = rayPos + rayDir * dist;
 
-            // Out of the volume, or saturated: every further sample adds nothing.
+            // A straight ray that has left the volume never re-enters, and a saturated beam gains
+            // nothing: stop there. Before it enters, though, keep walking - a camera parked outside
+            // the volume (the usual place to view it from) would otherwise see nothing at all.
             if (AttributeSamplers[AttributeID].OutsideVolume(pos))
-                break;
+            {
+                if (entered)
+                    break;
+                dist += voxelSize * stepScale;
+                continue;
+            }
+            entered = true;
 
             light += AttributeSamplers[AttributeID].Sample(pos, -rayDir, voxelSize * size) * saturate(1.0 - light.a);
 
