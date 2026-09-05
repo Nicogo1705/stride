@@ -69,7 +69,9 @@ namespace Stride.Rendering.Voxels.Grid
                 // the surface never shadows itself.
                 float occluderDistance;
                 SetLod(0);
-                bool blocked = Occlude(originLocal, directionLocal, orthographic ? 2.0 * reach : reach, occluderDistance);
+                // The reach is the field's extent, so it is counted from where the ray meets the box:
+                // a light farther from the field than that must still see it.
+                bool blocked = Occlude(originLocal, directionLocal, EnterDistance(originLocal, directionLocal) + reach, occluderDistance);
                 if (!blocked)
                     discard;
 

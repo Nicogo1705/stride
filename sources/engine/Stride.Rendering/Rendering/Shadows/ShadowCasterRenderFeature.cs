@@ -48,7 +48,10 @@ namespace Stride.Rendering.Shadows
                     var shadowMapView = viewLayout.GetLogicalGroup(shadowMapViewKey);
                     if (shadowMapView.Hash == ObjectId.Empty)
                         continue;
+                    // A view that draws nothing through this layout has no buffer prepared for it.
                     var resourceGroup = viewLayout.Entries[view.Index].Resources;
+                    if (resourceGroup?.ConstantBuffer == null)
+                        continue;
                     resourceGroup.UpdateLogicalGroup(ref shadowMapView, shadowMapRenderView != null ? InShadowMapView : NotInShadowMapView);
                 }
                 if (shadowMapRenderView != null)
