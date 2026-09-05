@@ -245,6 +245,7 @@ namespace Stride.Rendering.Voxels.Grid
                         MaxDistance = state.Extent.Length(),
                         Dither = component.Dither,
                         GridIndex = state.GridIndex,
+                        LodBias = component.LevelOfDetail ? component.LodBias : float.NaN,
                     });
                 }
             }

@@ -86,6 +86,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
             private ValueParameterKey<float> specularIntensityKey;
             private ValueParameterKey<float> specularRoughnessCutoffKey;
             private ValueParameterKey<float> specularOffsetKey;
+            private ValueParameterKey<Vector3> skyLightKey;
             private ValueParameterKey<float> giResolveEnabledKey;
             private ValueParameterKey<Vector4> giResolveSizesKey;
             private ObjectParameterKey<Texture> giResolveTextureKey;
@@ -154,6 +155,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 specularIntensityKey = LightVoxelShaderKeys.SpecularIntensity.ComposeWith(compositionName);
                 specularRoughnessCutoffKey = LightVoxelShaderKeys.SpecularRoughnessCutoff.ComposeWith(compositionName);
                 specularOffsetKey = LightVoxelShaderKeys.SpecularOffset.ComposeWith(compositionName);
+                skyLightKey = LightVoxelShaderKeys.SkyLight.ComposeWith(compositionName);
                 giResolveEnabledKey = LightVoxelShaderKeys.GIResolveEnabled.ComposeWith(compositionName);
                 giResolveSizesKey = LightVoxelShaderKeys.GIResolveSizes.ComposeWith(compositionName);
                 giResolveTextureKey = LightVoxelShaderKeys.GIResolveTexture.ComposeWith(compositionName);
@@ -231,6 +233,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 parameters.Set(specularIntensityKey, specularIntensity);
                 parameters.Set(specularRoughnessCutoffKey, lightVoxel.SpecularRoughnessCutoff);
                 parameters.Set(specularOffsetKey, lightVoxel.SpecularOffset);
+                parameters.Set(skyLightKey, (Vector3)lightVoxel.SkyColor * lightVoxel.SkyIntensity);
 
                 var resolved = PrepareScreenSpaceResolve(context, lightVoxel, viewContext);
 
@@ -297,6 +300,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 traceAttribute.UpdateSamplingLayout("AttributeSamplers[0]");
 
                 state.Parameters.Set(VoxelGIResolveShaderKeys.diffuseMarcher, resolveMarcher);
+                state.Parameters.Set(VoxelGIResolveShaderKeys.SkyLight, (Vector3)lightVoxel.SkyColor * lightVoxel.SkyIntensity);
                 state.Parameters.Set(MarchAttributesKeys.AttributeSamplers, resolveSamplers);
                 lightVoxel.DiffuseMarcher.ApplyMarchingParameters(state.Parameters);
                 traceAttribute.ApplySamplingParameters(new VoxelViewContext(false), state.Parameters);

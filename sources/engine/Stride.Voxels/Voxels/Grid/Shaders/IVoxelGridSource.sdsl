@@ -14,8 +14,14 @@ namespace Stride.Rendering.Voxels.Grid
     /// The mirror of this seam on the CPU side is Stride.BepuPhysics' IVoxelDensitySource. Same
     /// idea, same reason: describe a packing once, and let collision, meshing, tracing and lighting
     /// all read it.
-    shader IVoxelGridSource
+    shader IVoxelGridSource : VoxelGridLodStream
     {
+        /// How many coarser levels the source holds beyond the finest. Zero when it has none.
+        int LodLevels()
+        {
+            return 0;
+        }
+
         /// Samples per axis. One more than the number of cells per axis, since a cell reads the
         /// eight samples at its corners.
         int3 SampleCount()

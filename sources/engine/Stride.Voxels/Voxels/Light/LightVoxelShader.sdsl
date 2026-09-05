@@ -15,6 +15,9 @@ namespace Stride.Rendering.Voxels.VoxelGI
             float SpecularRoughnessCutoff;
             float SpecularOffset;
 
+            // What a cone that met nothing sees: credited by how much of it is still open.
+            float3 SkyLight;
+
             // Zero marches the diffuse cones here, per shaded pixel, as it always did. Otherwise
             // VoxelGIResolveShader traced them into a smaller buffer and this reads that instead;
             // the sizes are (1/screen width, 1/screen height, 1/buffer width, 1/buffer height).
@@ -127,11 +130,12 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 {
                     // if/else rather than a ternary: both sides are a full cone set, and a ternary
                     // is free to evaluate both of them.
-                    float3 marched;
+                    float4 cones;
                     if (BounceMarchEnabled > 0.0)
-                        marched = bounceMarcher.March(worldPos, streams.normalWS.xyz).rgb;
+                        cones = bounceMarcher.March(worldPos, streams.normalWS.xyz);
                     else
-                        marched = diffuseMarcher.March(worldPos, streams.normalWS.xyz).rgb;
+                        cones = diffuseMarcher.March(worldPos, streams.normalWS.xyz);
+                    float3 marched = cones.rgb + SkyLight * saturate(1.0 - cones.a);
 
                     diffuse = lerp(marched, resolved, confidence);
                 }
@@ -157,7 +161,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
                     // separates them - 0.9 stays 0.81 while 0.09 collapses to 0.008 - so one ratio
                     // finally fits the whole room. The cutoff above keeps plain roughness, which is
                     // what it is a threshold on.
-                    streams.envLightSpecularColor = specularMarcher.MarchRadius(startPos, reflect(-streams.viewWS, streams.normalWS), streams.alphaRoughness).rgb * specularFade;
+                    float4 mirror = specularMarcher.MarchRadius(startPos, reflect(-streams.viewWS, streams.normalWS), streams.alphaRoughness);
+                    streams.envLightSpecularColor = (mirror.rgb + SkyLight * saturate(1.0 - mirror.a)) * specularFade;
                 }
                 else
                 {

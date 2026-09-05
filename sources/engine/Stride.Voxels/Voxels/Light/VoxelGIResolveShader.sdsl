@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.VoxelGI
 {
@@ -10,6 +10,12 @@ namespace Stride.Rendering.Voxels.VoxelGI
     shader VoxelGIResolveShader : ImageEffectShader, DepthBase, Transformation, MarchAttributes
     {
         compose VoxelMarchSet diffuseMarcher;
+
+        cbuffer PerView.Lighting
+        {
+            // What a cone that met nothing sees: credited by how much of it is still open.
+            float3 SkyLight;
+        }
 
 
         float3 WorldPositionFromUV(float2 uv, float zProj)
@@ -41,6 +47,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 normal = -normal;
 
             float4 light = diffuseMarcher.March(worldPosition, normal);
+            light.rgb += SkyLight * saturate(1.0 - light.a);
 
             // The raw projected depth rides in alpha, not a linearized one: linearizing needs the
             // camera's ZProjection, and the shaded pixel that reads this back has its own copy of

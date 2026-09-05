@@ -32,6 +32,8 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Samples per axis.</summary>
         public static readonly ValueParameterKey<Int3> SampleCount = ParameterKeys.NewValue<Int3>();
 
+        public static readonly ValueParameterKey<int> LodLevels = ParameterKeys.NewValue<int>();
+
         /// <summary>The field as an R8G8 3D texture: density in red, material id in green.</summary>
         public static readonly ObjectParameterKey<Texture> Texture = ParameterKeys.NewObject<Texture>();
 

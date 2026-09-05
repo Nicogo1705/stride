@@ -4,12 +4,13 @@ namespace Stride.Rendering.Voxels.Grid
 {
     /// The vertex half of the voxel surfaces: nothing to displace, only the pass streams to
     /// define, so that the pixel half may ask which pass it is in whatever the pass.
-    shader MaterialSurfaceVoxelGridVertex : IMaterialSurfaceVertex, ShadowMapCasterPassInfo, VoxelizationPassInfo
+    shader MaterialSurfaceVoxelGridVertex : IMaterialSurfaceVertex, ShadowMapCasterPassInfo, VoxelizationPassInfo, VoxelGridLodStream
     {
         override void Compute()
         {
             streams.IsShadowMapCasterPass = 0;
             streams.IsVoxelizationPass = 0;
+            streams.VoxelGridLod = 0;
         }
     };
 }

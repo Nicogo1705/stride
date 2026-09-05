@@ -22,6 +22,8 @@ namespace Stride.Rendering.Voxels.Grid
         public VoxelMaterialDither Dither;
         /// <summary>The byte that identifies this grid in the targets.</summary>
         public int GridIndex;
+        /// <summary>Level-of-detail bias in levels; positive is coarser. NaN turns the level of detail off.</summary>
+        public float LodBias;
     }
 
     /// <summary>
@@ -110,6 +112,15 @@ namespace Stride.Rendering.Voxels.Grid
                 shader.Parameters.Set(VoxelGridResolveShaderKeys.VoxelGridMaxDistance, grid.MaxDistance);
                 shader.Parameters.Set(VoxelGridResolveShaderKeys.VoxelGridDither, (int)grid.Dither);
                 shader.Parameters.Set(VoxelGridResolveShaderKeys.VoxelGridIndex, grid.GridIndex);
+
+                // How many of the grid's units one pixel spans per unit of distance: the pixel's
+                // angle, times how the world's unit reads in the grid's own.
+                var projection = renderView.Projection;
+                var pixelAngle = projection.M22 != 0 ? 2.0f / (System.Math.Abs(projection.M22) * height) : 0f;
+                var localScale = new Vector3(worldInverse.M11, worldInverse.M12, worldInverse.M13).Length();
+                var lodOn = !float.IsNaN(grid.LodBias);
+                shader.Parameters.Set(VoxelGridResolveShaderKeys.VoxelGridLodPixel, lodOn ? pixelAngle * localScale : 0f);
+                shader.Parameters.Set(VoxelGridResolveShaderKeys.VoxelGridLodBias, lodOn ? grid.LodBias : 0f);
 
                 // Depth tested against the grids already resolved, so the nearest surface wins.
                 shader.SetDepthOutput(depth, Normal, Material, Position);

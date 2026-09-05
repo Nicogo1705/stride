@@ -22,7 +22,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// emission alone was black wherever the material did not glow, and every self-contact of a
     /// cone with its own surface - which happens at fixed angles as the cone climbs the mips -
     /// came back as a dark ring. The sun's light off the field is still not carried.
-    shader VoxelGridInjectShader : ComputeShaderBase, DataPacking, Texturing
+    shader VoxelGridInjectShader : ComputeShaderBase, DataPacking, Texturing, VoxelGridLodStream
     {
         compose IVoxelGridTraversal Traversal;
 
@@ -106,6 +106,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         override void Compute()
         {
+            streams.VoxelGridLod = 0;
             int3 voxel = (int3)streams.DispatchThreadId.xyz;
             bool inRing = all(voxel < ClipResolution);
 
@@ -123,6 +124,10 @@ namespace Stride.Rendering.Voxels.Grid
                 length(mul(float4(0, 1, 0, 0), VoxelGridWorldInverse).xyz),
                 length(mul(float4(0, 0, 1, 0), VoxelGridWorldInverse).xyz));
             float localVoxel = worldVoxel * max(axisScales.x, max(axisScales.y, axisScales.z));
+
+            // The field at the ring's own granularity: a coarse ring reads a coarse level, so its
+            // shell is the surface its voxels can hold rather than eight probes of a fine one.
+            Traversal.SetLodForSize(localVoxel);
 
             // One exit, as everywhere the shader compiler is involved.
             if (inRing && inField && Traversal.BrickState(localPos, localVoxel) == 1)
