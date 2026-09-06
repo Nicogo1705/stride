@@ -540,7 +540,13 @@ namespace Stride.Rendering.Voxels.Grid
                 // nearest far side at distance zero, left the brick where it stood, and spent every
                 // step going nowhere - a column of pixels with no surface, down the middle of a
                 // view along a grid axis.
-                farSide += (farSide <= t + nudge) * 1e30;
+                // Only where the direction has all but no component on that axis: it is the ray
+                // lying on the plane that this guards against. Taken for every axis, a far side
+                // legitimately met at the position - the walk clamped to the box's edge, a brick
+                // just descended into - was thrown away too, the segment ran on to the far plane
+                // of some other axis, and the probes across it found a surface that was not
+                // there: a dark sliver hanging in the air across the scene.
+                farSide += (farSide <= t + nudge && abs(safeDirection) < 1e-5) * 1e30;
                 float tLeave = min(min(farSide.x, farSide.y), farSide.z);
 
                 bool empty = false;
@@ -720,7 +726,13 @@ namespace Stride.Rendering.Voxels.Grid
                 // nearest far side at distance zero, left the brick where it stood, and spent every
                 // step going nowhere - a column of pixels with no surface, down the middle of a
                 // view along a grid axis.
-                farSide += (farSide <= t + nudge) * 1e30;
+                // Only where the direction has all but no component on that axis: it is the ray
+                // lying on the plane that this guards against. Taken for every axis, a far side
+                // legitimately met at the position - the walk clamped to the box's edge, a brick
+                // just descended into - was thrown away too, the segment ran on to the far plane
+                // of some other axis, and the probes across it found a surface that was not
+                // there: a dark sliver hanging in the air across the scene.
+                farSide += (farSide <= t + nudge && abs(safeDirection) < 1e-5) * 1e30;
                 float tLeave = min(min(farSide.x, farSide.y), farSide.z);
                 int leaveAxis = farSide.x <= farSide.y && farSide.x <= farSide.z ? 0 : (farSide.y <= farSide.z ? 1 : 2);
 
