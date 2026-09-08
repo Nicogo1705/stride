@@ -885,12 +885,8 @@ new ShaderMacro("class", "shader"),
         Assert.Contains("OpImageWrite", disassembly);
     }
 
-    // Regression: a composition whose shader derives from the same base as the shader it is
-    // composed into used to contribute that base's empty virtual method, overriding the root's
-    // own override. Stride.Voxels' Voxel2x2x2Mipmap composes a Voxel2x2x2Mipmapper and both
-    // derive from ComputeShaderBase, so Compute() resolved to the empty base: the shader
-    // compiled to a bare `ret`, its textures were dead-code-removed along with the body, and
-    // voxel GI contributed exactly nothing.
+    // A composition whose shader derives from the same base as its host must not contribute that
+    // base's virtual method over the root's own override.
     [Fact]
     public void CompositionSharingABaseDoesNotOverrideTheRootsOverride()
     {
@@ -976,12 +972,8 @@ new ShaderMacro("class", "shader"),
             controls);
     }
 
-    // Regression: a `stage compose` slot is hoisted to the root with the shader that declares it,
-    // and CompositionArrayStageFromNested covers its value being hoisted along. But the value was
-    // then merged as if it had been supplied at the root, so resources underneath got root-relative
-    // link names - here "Samplers[0]" instead of "Samplers[0].nested". The engine composes its
-    // parameter keys with the path it supplied the value at, so nothing matched and the resource was
-    // left unbound: Stride.Voxels' clipmaps sampled a null texture and voxel GI lit nothing.
+    // A `stage compose` value supplied by a nested effect is hoisted to the root but its resources
+    // must keep the link names of the path it was supplied at ("Samplers[0].nested", not "Samplers[0]").
     [Fact]
     public void StageCompositionSuppliedFromNestedKeepsItsSupplyPath()
     {
@@ -1010,16 +1002,9 @@ new ShaderMacro("class", "shader"),
         var keyNames = reflection.ResourceBindings.Select(b => b.KeyInfo.KeyName).ToList();
         Assert.Contains("StageComposePathImpl.Tex.Samplers[0].nested", keyNames);
     }
-    // Regression: `streams = input[i]` in a geometry shader assigns the members the stage input
-    // carries and must leave every other stream member as it was. It used to default them to zero,
-    // so anything the shader had computed into a stream before its emit loop was wiped on every
-    // vertex. Stride.Voxels' dominant-axis voxelization chooses a projection axis that way: the
-    // axis reset to 0 each iteration, the geometry shader constant-folded to `if (true)`, and only
-    // surfaces already facing that one axis were voxelized - floors and ceilings vanished and the
-    // rest came out striped.
-    //
-    // Checked after LegalizeForHlsl, which is what EffectCompiler hands to SPIRV-Cross: the branch
-    // on the carried value has to still be a branch there, not a folded constant.
+    // `streams = input[i]` in a geometry shader assigns the members the stage input carries and must
+    // leave every other stream member as it was. Checked after LegalizeForHlsl: the branch on the
+    // carried value must still be a branch there, not a folded constant.
     [Fact]
     public void GeometryStreamsAssignKeepsMembersTheInputDoesNotCarry()
     {

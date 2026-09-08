@@ -1,13 +1,8 @@
 // PSMain(ExpectedResult=#05000000)
 
-// A `stage compose` array whose value is supplied by a *nested* effect, and read back through a
-// constant index rather than a foreach. Both halves were broken, and both are what Stride.Voxels
-// needs: MarchAttributes declares `stage compose IVoxelSampler AttributeSamplers[]`, LightVoxelEffect
-// supplies it while being itself the root's environmentLights[0], and VoxelMarchCone reads
-// AttributeSamplers[AttributeID] with AttributeID a macro (so, a literal).
-//
-// CompositionArray1 covers stage arrays supplied at the root, CompositionArrayNested covers nested
-// supply of a non-stage array. The combination of the two had no coverage.
+// A `stage compose` array whose value is supplied by a nested effect, and read back through a
+// constant index rather than a foreach. CompositionArray1 covers stage arrays supplied at the root,
+// CompositionArrayNested covers nested supply of a non-stage array.
 
 namespace Stride.Shaders.Tests;
 

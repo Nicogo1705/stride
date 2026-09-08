@@ -225,15 +225,12 @@ public partial class SpirvContext
     }
 
     /// <summary>
-    /// The Image Format an <c>RWBuffer&lt;T&gt;</c> declares.
-    /// <para>
-    /// Unknown is fine for everything except <c>OpImageTexelPointer</c>, which the spec forbids on
-    /// an image of unknown format - and that instruction is the only way to get a pointer to a
-    /// texel, which is what an atomic needs. Image atomics are in turn only defined on 32-bit
-    /// integer texels, so a concrete format is declared exactly there and Unknown is kept
-    /// everywhere else, leaving float buffers byte-for-byte as they were.
-    /// </para>
+    /// Gets the Image Format an <c>RWBuffer&lt;T&gt;</c> declares.
     /// </summary>
+    /// <remarks>
+    /// A concrete format is only needed for <c>OpImageTexelPointer</c> (atomics), which is only
+    /// defined on 32-bit integer texels; every other buffer keeps Unknown.
+    /// </remarks>
     private static Specification.ImageFormat GetStorageImageFormat(BufferType bufferType)
         => bufferType.WriteAllowed
             ? bufferType.BaseType switch

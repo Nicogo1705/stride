@@ -35,9 +35,8 @@ namespace Stride.Rendering.Voxels
         public VoxelDebug VoxelVisualization { get; set; }
 
         /// <summary>
-        /// Traces the diffuse cones into a reduced-resolution buffer when a voxel light asks for it
-        /// (<see cref="VoxelGI.LightVoxel.ScreenSpaceDivisor"/>). Inert otherwise, so a compositor
-        /// that predates it needs no change.
+        /// Traces the diffuse cones into a reduced-resolution buffer when a voxel light requests it
+        /// through <see cref="VoxelGI.LightVoxel.ScreenSpaceDivisor"/>; does nothing otherwise.
         /// </summary>
         [DataMemberIgnore]
         public VoxelGI.VoxelGIResolver GIResolver { get; } = new VoxelGI.VoxelGIResolver();
@@ -88,15 +87,11 @@ namespace Stride.Rendering.Voxels
         }
 
         /// <summary>
-        /// Traces the diffuse cones into their buffer, before the opaque pass that reads it.
+        /// Traces the diffuse cones into the reduced-resolution buffer before the opaque pass reads it.
         /// </summary>
         /// <remarks>
-        /// The pass works off depth, so the depth buffer has to hold this frame's scene before it
-        /// runs - hence a depth-only prepass here, the same stage the light-probe path uses. Base
-        /// draws its own afterwards and this one is not free, but a second depth-only pass over the
-        /// scene is a rounding error next to the cones it is there to remove. Without such a stage
-        /// on the compositor there is nothing to prime depth with, so the light keeps marching
-        /// inline and this does nothing.
+        /// The pass reads depth, so a depth-only prepass through <c>GBufferRenderStage</c> runs first.
+        /// Without such a stage the light marches inline and this does nothing.
         /// </remarks>
         private void ResolveScreenSpaceGI(RenderContext context, RenderDrawContext drawContext)
         {

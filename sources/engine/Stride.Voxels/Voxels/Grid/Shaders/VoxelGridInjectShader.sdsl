@@ -2,26 +2,12 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// Puts a voxel field into a voxel GI ring straight from its samples, in place of rasterising
-    /// its proxy box through the voxelizer.
-    ///
-    /// The field is a voxel already. Rasterising it means walking a ray per voxelizer fragment,
-    /// for every material, to find a surface the samples state outright; reading the samples costs
-    /// a few loads per GI voxel and answers the same question. One thread per voxel of the ring:
-    /// the voxel's centre is taken into the field, bricks that are all air or all solid are skipped
-    /// on the min/max pyramid, and a voxel the surface passes through - its corners not all on one
-    /// side of the iso level - is written to the fragment buffer as the voxelizer would have: per
-    /// direction, the radiance weighted by the normal, packed as the fragment packer packs it,
-    /// combined by atomic max. Everything after the buffer - opacify, arrangement, mipmaps - then
-    /// runs unchanged.
-    ///
-    /// What is written is what the field emits, plus a bounce: the material's colour times the
-    /// light the previous frame's GI held a little way out along the normal, read off the next
-    /// coarser ring. The voxelizer writes shaded radiance, so a mesh's shell carries its own lit
-    /// colour and a cone that grazes it reads roughly the surface it left; a shell that carried
-    /// emission alone was black wherever the material did not glow, and every self-contact of a
-    /// cone with its own surface - which happens at fixed angles as the cone climbs the mips -
-    /// came back as a dark ring. The sun's light off the field is still not carried.
+    /// Writes a voxel field into a voxel GI ring straight from its samples, instead of rasterising its proxy box through the voxelizer.
+    /// One thread per ring voxel: bricks that are all air or all solid are skipped on the min/max pyramid, and a voxel the
+    /// surface passes through is written to the fragment buffer as the voxelizer would, per direction, weighted by the
+    /// normal, combined by atomic max. Opacify, arrangement and mipmaps then run unchanged.
+    /// The written radiance is the material's emission plus a bounce: its colour times the previous frame's GI read a
+    /// little way out along the normal from the next coarser ring. Direct light on the field is not carried.
     shader VoxelGridInjectShader : ComputeShaderBase, DataPacking, Texturing, VoxelGridLodStream
     {
         compose IVoxelGridTraversal Traversal;
@@ -132,12 +118,8 @@ namespace Stride.Rendering.Voxels.Grid
             // One exit, as everywhere the shader compiler is involved.
             if (inRing && inField && Traversal.BrickState(localPos, localVoxel) == 1)
             {
-                // The voxel the surface passes through: its eight corners are not all on one side
-                // of the iso level. Exactly the voxels the voxelizer would have rasterised a
-                // fragment into - one voxel thick, no gap along any column, and none of the extra
-                // layer that a test on neighbouring centres adds on the air side, where the cone
-                // marcher starts and reads its own surface as an occluder in rings. One probe
-                // answers it, with the normal, off the eight corners of the field cell.
+                // The voxel the surface passes through: its eight corners are not all on one side of the iso level,
+                // one voxel thick as the voxelizer would rasterise it. One probe answers it, with the normal.
                 float3 localNormal;
                 bool shell = Traversal.SurfaceProbe(localPos, localVoxel * 0.5, localNormal) == 1;
 

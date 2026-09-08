@@ -18,15 +18,13 @@ namespace Stride.Rendering.Voxels.VoxelGI
             // What a cone that met nothing sees: credited by how much of it is still open.
             float3 SkyLight;
 
-            // Zero marches the diffuse cones here, per shaded pixel, as it always did. Otherwise
-            // VoxelGIResolveShader traced them into a smaller buffer and this reads that instead;
-            // the sizes are (1/screen width, 1/screen height, 1/buffer width, 1/buffer height).
+            // Zero marches the diffuse cones per shaded pixel; otherwise VoxelGIResolveShader traced them
+            // into a smaller buffer and this reads it. Sizes: (1/screen w, 1/screen h, 1/buffer w, 1/buffer h).
             float GIResolveEnabled;
             float4 GIResolveSizes;
 
-            // Non-zero while voxelizing: march bounceMarcher rather than diffuseMarcher. Uniform
-            // over the whole draw - it is set per view - so the branch costs nothing and the side
-            // not taken is never executed, which is the point when each side is a dozen cones.
+            // Non-zero while voxelizing: march bounceMarcher instead of diffuseMarcher. Set per view,
+            // so the branch is uniform over the draw.
             float BounceMarchEnabled;
         }
 
@@ -40,15 +38,11 @@ namespace Stride.Rendering.Voxels.VoxelGI
         compose VoxelRadiusMarchMethod specularMarcher;
 
         /// <summary>
-        /// Joint bilateral upsample of the reduced-resolution GI: the four texels around this
-        /// pixel, each weighted by how much of the pixel it covers and by how close its surface is
-        /// to this one.
+        /// Joint bilateral upsample of the reduced-resolution GI from the four surrounding texels,
+        /// weighted by coverage and by depth similarity.
         /// </summary>
         /// <remarks>
-        /// The texels are read point-sampled, not filtered. Alpha carries the depth the colour was
-        /// traced at, and a filtered fetch hands back a depth halfway between two surfaces -
-        /// belonging to neither - so every comparison against it is wrong by an amount that follows
-        /// the buffer's grid, which is exactly what a band across a wall is.
+        /// Texels are point-sampled: alpha carries the traced depth, and a filtered depth belongs to neither surface.
         /// </remarks>
         float3 SampleResolvedGI(float4 shadingPosition, out float valid)
         {
@@ -62,13 +56,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
             float depth = ZProjection.y / (shadingPosition.z - ZProjection.x);
 
-            // How far a tap's surface may sit from this pixel's before the buffer is held to have
-            // no answer here at all. The test exists for real breaks - a pane of glass shaded in
-            // front of a wall it never wrote into, a silhouette - and must not fire on a merely
-            // steep surface: a wall seen edge-on changes depth fast across the screen, the taps sit
-            // a whole divisor of pixels away, and rejecting those bands the wall. So take the
-            // surface's own slope over the distance travelled, and never less than a generous
-            // fraction of the depth.
+            // Depth tolerance: the surface's own slope over the tap distance, never less than 15% of depth,
+            // so a wall seen edge-on is not rejected while real silhouettes are.
             float divisor = GIResolveSizes.z / GIResolveSizes.x;
             float slope = (abs(ddx(depth)) + abs(ddy(depth))) * divisor * 4.0;
             float tolerance = max(slope, depth * 0.15);
@@ -94,13 +83,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
                 total += weight;
             }
 
-            // A ramp, not a verdict. This used to answer 0 or 1, and the caller either took the
-            // upsample whole or threw it away and marched the cones again - two results that are
-            // never quite equal, switched between from one pixel to the next. The line where the
-            // switch happens follows every depth discontinuity in the frame, which in a room built
-            // from alcoves and piers means every edge in sight, and a hard switch along an edge is
-            // a staircase. Handing back how much the taps agree lets the caller cross fade instead,
-            // so the seam becomes a gradient a couple of pixels wide.
+            // A confidence ramp rather than 0/1, so the caller can cross-fade to the inline march
+            // instead of switching hard along every depth discontinuity.
             valid = saturate(1.0 - nearest / max(tolerance, 0.00001));
             return sum / max(total, 0.00001);
         }
@@ -112,19 +96,14 @@ namespace Stride.Rendering.Voxels.VoxelGI
             {
                 float3 worldPos = streams.PositionWS;
 
-                // Uniform across the draw, so the branch costs nothing and the side not taken is
-                // never executed - which is the entire point when the other side is twelve cones.
+                // Uniform across the draw, so the side not taken is never executed.
                 float3 resolved = float3(0, 0, 0);
                 float confidence = 0.0;
                 if (GIResolveEnabled > 0.0)
                     resolved = SampleResolvedGI(streams.ShadingPosition, confidence);
 
-                // Whatever the buffer cannot fully answer for - silhouettes, and every transparent
-                // surface, which is shaded after the buffer was written and is not in it - marches
-                // here, as it always did, and is then mixed in by however much the buffer was
-                // trusted. Fully trusted pixels skip the march entirely, which is most of a wall;
-                // the ones that pay for it are a narrow band along each edge, which is exactly
-                // where the buffer had nothing useful to say.
+                // Pixels the buffer cannot fully answer for (silhouettes, transparent surfaces shaded
+                // after it was written) march here and are blended in by the buffer's confidence.
                 float3 diffuse = resolved;
                 if (confidence < 1.0)
                 {
@@ -142,25 +121,16 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
                 streams.envLightDiffuseColor = diffuse * Intensity;
 
-                // The specular cone costs up to 60 steps per pixel, and on a rough surface its
-                // result is a blur the diffuse cones already approximate. Fade it out as roughness
-                // approaches the cutoff and skip the march entirely past it. The window above the
-                // cutoff is 0.125 wide, so the default cutoff of 1 leaves every surface untouched.
+                // On a rough surface the specular cone adds little over the diffuse cones: fade it out
+                // below the cutoff and skip it past it. The fade window is 0.125 wide.
                 float roughness = sqrt(streams.alphaRoughness);
                 float specularFade = SpecularIntensity * saturate((SpecularRoughnessCutoff - roughness) * 8.0 + 1.0);
                 if (specularFade > 0.0)
                 {
                     float3 startPos = worldPos + streams.normalWS.xyz * specularMarcher.StepSizeRadius(SpecularOffset);
 
-                    // alphaRoughness, not roughness: the aperture of a GGX lobe follows alpha, and
-                    // alpha is roughness squared - which is also the curve this needed. Linear in
-                    // roughness, one global multiplier has to serve both ends of the material range
-                    // and cannot: set it sharp enough for chrome and a 0.9-rough plaster wall gets a
-                    // five-degree cone that hands back a legible image of the lamp; set it wide
-                    // enough for the plaster and the mirrors go blind at arm's length. Squaring
-                    // separates them - 0.9 stays 0.81 while 0.09 collapses to 0.008 - so one ratio
-                    // finally fits the whole room. The cutoff above keeps plain roughness, which is
-                    // what it is a threshold on.
+                    // alphaRoughness (roughness squared) drives the cone aperture, as it does a GGX lobe,
+                    // so one cone ratio fits both polished and rough materials. The cutoff above uses plain roughness.
                     float4 mirror = specularMarcher.MarchRadius(startPos, reflect(-streams.viewWS, streams.normalWS), streams.alphaRoughness);
                     streams.envLightSpecularColor = (mirror.rgb + SkyLight * saturate(1.0 - mirror.a)) * specularFade;
                 }

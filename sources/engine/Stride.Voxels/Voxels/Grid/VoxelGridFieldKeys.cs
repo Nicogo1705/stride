@@ -10,22 +10,9 @@ namespace Stride.Rendering.Voxels.Grid
     /// The parameters a voxel field is drawn with, under names the shaders link to directly.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// These are the keys the shaders declare with <c>[Link("VoxelGridField.X")]</c> - without the
-    /// <c>Keys</c> suffix, which the engine strips from a key class's name when it names the key,
-    /// the way <c>MaterialKeys.DiffuseMap</c> is <c>Material.DiffuseMap</c>. The names here are the
-    /// contract: a key is found by that string, so a mismatch on either side binds nothing, silently
-    /// - the effect asks for one name, the material holds another, and every read comes back zero.
-    /// </para>
-    /// <para>
-    /// Fixed names rather than the generated, per-shader ones because of where the shaders end up.
-    /// A member left unlinked takes the path it was reached by into its parameter name - composed
-    /// into an image effect that is one path, mixed into a material's surface array it is
-    /// <c>layers[N].materialPixelStage</c> with an N nothing outside the generator knows - and a
-    /// value set under any other name reaches nothing. Linking is how the engine's own material
-    /// textures get through a composition of any depth, and it is what lets the resolve pass and
-    /// the materials share one set of keys.
-    /// </para>
+    /// The shaders declare these with <c>[Link("VoxelGridField.X")]</c> (the engine strips the <c>Keys</c> suffix).
+    /// Linking gives fixed names whatever path a shader is reached by; an unlinked member mixed into a material's
+    /// surface array would be named <c>layers[N].materialPixelStage...</c>. A name mismatch binds nothing, silently.
     /// </remarks>
     public static class VoxelGridFieldKeys
     {
@@ -79,11 +66,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Which grid a wrapped material belongs to.</summary>
         public static readonly ValueParameterKey<int> GridIndex = ParameterKeys.NewValue<int>();
 
-        /// <summary>
-        /// Diagnostic view of the drawn surface. 0 draws normally; 1 paints the proxy box green
-        /// where the pixel is the material's and red where it is not, on the box's own depth;
-        /// 2 paints the resolved normal at the surface's depth.
-        /// </summary>
+        /// <summary>Diagnostic view: 0 draws normally; 1 paints the proxy box green where the pixel is the material's and red where not; 2 paints the resolved normal.</summary>
         public static readonly ValueParameterKey<float> Debug = ParameterKeys.NewValue<float>();
     }
 }

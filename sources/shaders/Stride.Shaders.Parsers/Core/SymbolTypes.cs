@@ -82,14 +82,9 @@ public abstract record SymbolType()
             };
         }
 
-        // An image - texture or typed buffer alike - cannot deliver 16-bit values: Vulkan requires
-        // its sampled type to be a 32-bit int, 64-bit int or 32-bit float
-        // (VUID-StandaloneSpirv-OpTypeImage-04656), and there is no extension that lifts it.
-        //
-        // Nothing is lost. The 16 bits live in the resource's pixel format, not in the shader's
-        // declaration: the texture unit decodes the stored halfs and delivers 32-bit floats to the
-        // registers, for free. `half` is already an alias of `float` in shader model 5 anyway, and
-        // code that wants native 16-bit registers converts after the read.
+        // Vulkan requires an image's sampled type to be 32-bit int, 64-bit int or 32-bit float
+        // (VUID-StandaloneSpirv-OpTypeImage-04656). The 16 bits live in the pixel format, so
+        // widening the element type loses nothing.
         static SymbolType WidenImageElementType(SymbolType elementType) => elementType switch
         {
             ScalarType { Type: Scalar.Half } => ScalarType.Float,
@@ -834,15 +829,12 @@ public sealed partial record ExternalType(string Name, ShaderExpressionList? Gen
 public static class SymbolTypeExtensions
 {
     /// <summary>
-    /// Opaque resource types: images - which covers textures and typed buffers alike, both being
-    /// an OpTypeImage - and samplers.
-    /// <para>
-    /// Vulkan forbids OpStore to them (VUID-StandaloneSpirv-OpTypeImage-06924), so they live in
-    /// UniformConstant storage and are handed to a method as the caller's pointer rather than
-    /// copied into a Function-storage temporary. Both of those rules used to be spelled out as
-    /// their own `is TextureType or SamplerType` list, and both had forgotten typed buffers.
-    /// </para>
+    /// Whether the type is an opaque resource (texture, typed buffer or sampler).
     /// </summary>
+    /// <remarks>
+    /// Vulkan forbids OpStore to these (VUID-StandaloneSpirv-OpTypeImage-06924): they live in
+    /// UniformConstant storage and are passed to methods as the caller's pointer.
+    /// </remarks>
     public static bool IsOpaqueResource(this SymbolType type)
         => type is TextureType or SamplerType or BufferType;
 }

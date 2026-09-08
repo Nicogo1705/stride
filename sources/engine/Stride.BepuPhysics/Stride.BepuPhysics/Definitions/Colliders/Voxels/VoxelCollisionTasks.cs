@@ -10,25 +10,18 @@ using BepuPhysics.CollisionDetection.SweepTasks;
 namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 
 /// <summary>
-/// Teaches a simulation how to collide and sweep against voxel shapes.
+/// Registers the collision and sweep tasks that let a simulation handle voxel shapes.
 /// </summary>
 /// <remarks>
-/// Bepu discovers shape types through registered tasks rather than reflection, so every pairing has
-/// to be spelled out: each of the six convex types against each voxel shape, plus the two compound
-/// types, plus the sweep equivalents. That is twenty-four tasks per voxel shape and seventy-two per
-/// density source, which sounds worse than it is - they are empty generic instantiations, and the
-/// cost is paid once when the simulation is created.
+/// Bepu discovers shape types through registered tasks, so every convex and compound pairing is
+/// spelled out. They are empty generic instantiations, registered once per simulation.
 /// </remarks>
 public static class VoxelCollisionTasks
 {
-    /// <summary>
-    /// Registers the collision and sweep tasks for one density source, covering all three shapes
-    /// built over it. Call once per simulation, after it has been created.
-    /// </summary>
+    /// <summary>Registers the collision and sweep tasks for one density source and its three shapes.</summary>
     /// <remarks>
-    /// <see cref="BepuSimulation"/> already does this for the built-in sources. A game defining its
-    /// own <see cref="IVoxelDensitySource"/> calls this for it, once, with shape type ids that do
-    /// not collide with anything else in that simulation.
+    /// Call once per simulation, after it is created. <see cref="BepuSimulation"/> already does this
+    /// for the built-in sources; a custom <see cref="IVoxelDensitySource"/> needs unique shape type ids.
     /// </remarks>
     public static void Register<TSource>(Simulation simulation)
         where TSource : unmanaged, IVoxelDensitySource

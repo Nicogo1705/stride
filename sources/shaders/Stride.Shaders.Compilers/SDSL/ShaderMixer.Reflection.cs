@@ -212,19 +212,13 @@ public partial class ShaderMixer
 
     // Emit reflection (except ConstantBuffers which was emitted during ComputeCBufferReflection)
     /// <summary>
-    /// The first unordered access register a Direct3D11 pixel shader may use.
-    /// <para>
-    /// D3D11 puts UAVs and render targets in one register space, so a pixel shader's UAVs have to
-    /// start past its render targets - FXC otherwise rejects the shader with X4509. The engine
-    /// already assumes this: CommandList.OMSetSingleUnorderedAccessView binds with
-    /// <c>UAVStartSlot: currentRenderTargetViewsActiveCount</c> and indexes
-    /// <c>slot - currentRenderTargetViewsActiveCount</c>, which is negative if a UAV took u0.
-    /// </para>
-    /// <para>
-    /// Counted as the highest output Location plus one, so multiple render targets are handled,
-    /// and left at 0 when the module has no pixel shader - a compute shader keeps u0.
-    /// </para>
+    /// Gets the first unordered access register a Direct3D11 pixel shader may use.
     /// </summary>
+    /// <remarks>
+    /// D3D11 shares one register space between UAVs and render targets, so pixel shader UAVs start
+    /// past the render targets (highest output Location + 1); CommandList binds them with the same offset.
+    /// Returns 0 when the module has no pixel shader.
+    /// </remarks>
     private static int FirstUnorderedAccessSlot(SpirvContext context)
     {
         var outputVariables = new HashSet<int>();

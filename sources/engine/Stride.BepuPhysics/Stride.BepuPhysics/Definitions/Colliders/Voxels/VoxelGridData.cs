@@ -9,30 +9,17 @@ using BepuPhysics.Collidables;
 namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 
 /// <summary>
-/// A voxel density field and every piece of geometry derived from it.
+/// A voxel density field and the geometry derived from it.
 /// </summary>
 /// <remarks>
 /// <para>
-/// How the samples are packed is <typeparamref name="TSource"/>'s business - see
-/// <see cref="IVoxelDensitySource"/>. This adds what geometry needs on top: the cell size, the iso
-/// level, and the marching-cubes and surface-nets constructions.
+/// <typeparamref name="TSource"/> holds samples, not cells: n cells per axis need n+1 samples. Cell
+/// (cx, cy, cz) spans local [cx, cx+1] x [cy, cy+1] x [cz, cz+1] scaled by <see cref="CellSize"/>.
 /// </para>
 /// <para>
-/// The source holds <em>samples</em>, not cells: a grid of n cells per axis needs n+1 samples per
-/// axis, because a cell reads the eight samples at its corners. Cell (cx, cy, cz) spans local
-/// [cx, cx+1] x [cy, cy+1] x [cz, cz+1] scaled by <see cref="CellSize"/>, with the grid origin at
-/// the local origin.
-/// </para>
-/// <para>
-/// Split in two on purpose, cheap tests apart from expensive constructions: asking <em>whether</em>
-/// a cell contributes anything costs a handful of sample reads (<see cref="CubeIndex"/>,
-/// <see cref="CellIsSolid"/>, <see cref="SurfaceNetsEdgeStraddles"/>), while actually building a
-/// triangle is only paid for the children the narrow phase goes on to test. A broad phase query
-/// touching a thousand cells therefore does a thousand cheap tests and a handful of expensive ones.
-/// </para>
-/// <para>
-/// This lives in unmanaged memory - Bepu keeps shapes in its own pools and hands them back as raw
-/// pointers - so neither it nor the source may hold anything managed.
+/// Cheap tests (<see cref="CubeIndex"/>, <see cref="CellIsSolid"/>, <see cref="SurfaceNetsEdgeStraddles"/>)
+/// are separate from triangle construction, which is only paid for children the narrow phase tests.
+/// Lives in unmanaged memory, so neither it nor the source may hold anything managed.
 /// </para>
 /// </remarks>
 public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySource
@@ -79,23 +66,13 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         cx = remainder / CellsY;
     }
 
-    /// <summary>
-    /// Density of one sample, with no bounds check.
-    /// </summary>
-    /// <remarks>
-    /// Everything below reads the eight corners of a cell, and a cell's corners are inside the
-    /// sample grid by construction - cell indices stop one short of the sample count on every axis.
-    /// So the hot path does not clamp. <see cref="Density"/> is the checked version for callers
-    /// that may be outside.
-    /// </remarks>
+    /// <summary>Density of one sample, with no bounds check.</summary>
+    /// <remarks>Cell corners are inside the sample grid by construction. <see cref="Density"/> is the clamping version.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public readonly float DensityAt(int x, int y, int z)
     {
-        // The seal belongs here rather than in the checked accessor below, because this is the one
-        // every corner read goes through. A surface exists only where the field crosses the iso
-        // level, and a grid whose edge is solid never crosses there - so without this the body has
-        // no walls and no floor. It looks closed when drawn, because a ray entering from outside
-        // stops on the box, and is open when collided against, because nothing is there.
+        // The seal is applied here because every corner read goes through this accessor; without it
+        // a grid whose edge is solid never crosses the iso level and has no walls or floor.
         if (SealBorder && (x <= 0 || y <= 0 || z <= 0 || x >= SamplesX - 1 || y >= SamplesY - 1 || z >= SamplesZ - 1))
             return 0f;
 
@@ -110,15 +87,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
             Math.Clamp(y, 0, SamplesY - 1),
             Math.Clamp(z, 0, SamplesZ - 1));
 
-    /// <summary>
-    /// Whether a cell is solid enough to carry a box or sphere child: the mean of its eight corners
-    /// is at or above the iso level.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately the mean rather than all-eight, which erodes the surface by a cell and drops
-    /// characters through the ground, or any-of-eight, which inflates it by a cell. The mean stays
-    /// within half a cell of the iso-surface on either side.
-    /// </remarks>
+    /// <summary>Whether the mean of a cell's eight corners is at or above the iso level.</summary>
+    /// <remarks>The mean stays within half a cell of the iso-surface; all-of-eight erodes it by a cell and any-of-eight inflates it.</remarks>
     public readonly bool CellIsSolid(int cx, int cy, int cz)
     {
         // Outside the grid counts as empty, so a caller asking about a neighbour off the edge gets
@@ -150,9 +120,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     // -- Marching cubes ----------------------------------------------------------------------
 
     /// <summary>
-    /// The eight corner offsets of a cell, three bytes each, in the order the triangle table indexes
-    /// them. A span of bytes rather than of a small struct so the compiler hands back a pointer into
-    /// the data section instead of allocating on every call.
+    /// The eight corner offsets of a cell, three bytes each, in triangle table order. A span of bytes
+    /// so the compiler returns a pointer into the data section instead of allocating.
     /// </summary>
     public static ReadOnlySpan<byte> CubeCorners =>
     [
@@ -168,14 +137,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         0, 4, 1, 5, 2, 6, 3, 7,
     ];
 
-    /// <summary>
-    /// Classifies a cell into a marching-cubes case index. Eight sample reads, and the only thing a
-    /// cheap test needs.
-    /// </summary>
-    /// <remarks>
-    /// A bit is set when the corner is <em>air</em>, density below the iso level, which is the
-    /// convention the table below is tabulated for.
-    /// </remarks>
+    /// <summary>Classifies a cell into a marching-cubes case index from eight sample reads.</summary>
+    /// <remarks>A bit is set when the corner is air (density below the iso level), the convention the table uses.</remarks>
     public readonly int CubeIndex(int cx, int cy, int cz)
     {
         var x1 = cx + 1;
@@ -214,10 +177,7 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         return Vector3.Lerp(new Vector3(ax, ay, az), new Vector3(bx, by, bz), t) * CellSize;
     }
 
-    /// <summary>
-    /// Which way the field rises across a cell, from differences of its eight corners. Points into
-    /// matter, so an outward normal is this reversed.
-    /// </summary>
+    /// <summary>Gradient of the field across a cell from its eight corners. Points into matter.</summary>
     public readonly Vector3 CellGradient(int cx, int cy, int cz)
     {
         var x1 = cx + 1;
@@ -256,13 +216,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         return MaxMarchingCubesTrianglesPerCell;
     }
 
-    /// <summary>
-    /// The slot'th marching-cubes triangle of an already classified cell.
-    /// </summary>
-    /// <remarks>
-    /// Takes the case index rather than recomputing it, so a caller walking several slots of one
-    /// cell pays for the classification once.
-    /// </remarks>
+    /// <summary>The slot'th marching-cubes triangle of an already classified cell.</summary>
+    /// <remarks>Takes the case index so a caller walking several slots classifies once.</remarks>
     public readonly bool TryGetMarchingCubesTriangle(int cx, int cy, int cz, int cubeIndex, int slot, out Triangle triangle)
     {
         triangle = default;
@@ -281,10 +236,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         var c = EdgePosition(cx, cy, cz, e0);
         triangle = new Triangle(a, b, c);
 
-        // Oriented against the field rather than trusted from the table: density rises into matter,
-        // so the outward direction is the gradient reversed. One sided triangles make this the
-        // difference between a surface that collides and one that lets everything through from the
-        // wrong side.
+        // Oriented against the field gradient rather than trusted from the table: density rises into
+        // matter, and Bepu triangles are one sided.
         var outward = -CellGradient(cx, cy, cz);
         // cross(C - A, B - A), not the other way round: a Bepu triangle faces along that, being
         // clockwise in a right handed frame. Taking the usual counter-clockwise convention here
@@ -302,14 +255,9 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     public const int MaxSurfaceNetsTrianglesPerCell = 6;
 
     /// <summary>
-    /// Whether the edge leaving a cell's minimum corner along an axis crosses the iso level, and the
-    /// four cells sharing it all exist. Two sample reads and three comparisons - this is the cheap
-    /// test that decides whether a cell owns a quad at all.
+    /// Whether the edge leaving a cell's minimum corner along an axis crosses the iso level and its
+    /// four surrounding cells exist. Two sample reads; the cheap test for whether a cell owns a quad.
     /// </summary>
-    /// <remarks>
-    /// No validity check on the four cells beyond their indices: an edge inside the grid is shared
-    /// by four cells that all straddle the surface if it does, so only the border needs excluding.
-    /// </remarks>
     public readonly bool SurfaceNetsEdgeStraddles(int cx, int cy, int cz, int axis, out bool solidAtOrigin)
     {
         solidAtOrigin = DensityAt(cx, cy, cz) >= IsoLevel;
@@ -338,10 +286,7 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         return solidAtOrigin != (DensityAt(nx, ny, nz) >= IsoLevel);
     }
 
-    /// <summary>
-    /// The surface-nets vertex of a cell: the mean of the iso-surface crossings on its edges.
-    /// False for a cell the surface does not pass through.
-    /// </summary>
+    /// <summary>Surface-nets vertex of a cell: mean of the iso-surface crossings on its edges. False if the surface misses the cell.</summary>
     public readonly bool TryGetSurfaceNetsVertex(int cx, int cy, int cz, out Vector3 vertex)
     {
         vertex = default;
@@ -367,14 +312,10 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
         return true;
     }
 
-    /// <summary>
-    /// The slot'th surface-nets triangle owned by a cell.
-    /// </summary>
+    /// <summary>The slot'th surface-nets triangle owned by a cell.</summary>
     /// <remarks>
     /// A cell owns the quads of the three edges leaving its minimum corner; slots 0-5 are
-    /// (edge X, edge Y, edge Z) x (first triangle, second triangle). Ownership by the minimum corner
-    /// is what emits every quad exactly once. Existence is decided far more cheaply by
-    /// <see cref="SurfaceNetsEdgeStraddles"/>; this is the construction.
+    /// (edge X, edge Y, edge Z) x (first, second triangle), so every quad is emitted exactly once.
     /// </remarks>
     public readonly bool TryGetSurfaceNetsTriangle(int cx, int cy, int cz, int slot, out Triangle triangle)
     {
@@ -405,11 +346,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
             ? new Triangle(quad[0], quad[2], quad[3])
             : new Triangle(quad[0], quad[1], quad[2]);
 
-        // Which way the face has to look is known exactly, not guessed: matter is on the side of the
-        // edge whose sample is solid, so the outward direction is the edge's axis, signed by that.
-        // Orienting each triangle against it is what makes every face of the surface collide -
-        // Bepu triangles are one sided, and a rule applied globally gets one set of faces right and
-        // the opposite set wrong, which reads as a world where only the ground is solid.
+        // Matter is on the side of the edge whose sample is solid, so the outward direction is the
+        // edge's axis signed by that. Each triangle is oriented against it; Bepu triangles are one sided.
         var outward = new Vector3(
             axis == 0 ? (solidAtOrigin ? 1f : -1f) : 0f,
             axis == 1 ? (solidAtOrigin ? 1f : -1f) : 0f,
@@ -426,9 +364,8 @@ public struct VoxelGridData<TSource> where TSource : unmanaged, IVoxelDensitySou
     }
 
     /// <summary>
-    /// Marching cubes case table: sixteen entries per case, edge indices in groups of three,
-    /// terminated by -1. The standard table, in the corner and edge ordering of
-    /// <see cref="CubeCorners"/> and <see cref="EdgeCorners"/> above.
+    /// Standard marching cubes case table: sixteen entries per case, edge indices in groups of three,
+    /// terminated by -1, in the ordering of <see cref="CubeCorners"/> and <see cref="EdgeCorners"/>.
     /// </summary>
     public static ReadOnlySpan<sbyte> TriangleTable =>
     [

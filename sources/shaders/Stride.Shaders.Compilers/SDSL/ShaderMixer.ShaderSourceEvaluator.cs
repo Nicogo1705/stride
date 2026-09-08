@@ -139,9 +139,8 @@ public partial class ShaderMixer
         }
 
         // --- Step 2b: Build the promote-composition-to-parent callback ---
-        // Twin of the callback above, for the *value* of a `stage compose` rather than the shader that
-        // declares it. At root level it writes into the root's compositions; at composition level we pass
-        // the parent's along, so a value supplied several levels down still lands at the root.
+        // Same as above, for the value of a `stage compose` rather than the shader declaring it.
+        // The root's callback writes into its compositions; nested levels pass the parent's along.
         var promoteCompositionToParentForCompositions = promoteCompositionToParent;
         if (promoteCompositionToParentForCompositions == null)
         {
@@ -311,16 +310,9 @@ public partial class ShaderMixer
 
             compositions[variableName] = variableValue;
 
-            // A `stage compose` slot belongs to the stage, and promoteToParent hoists the shader that
-            // declares it up to the root — but its value could stay behind, because the value may be
-            // supplied by a nested effect. Stride.Voxels does exactly that: MarchAttributes declares
-            // `stage compose IVoxelSampler AttributeSamplers[]` and LightVoxelEffect supplies it, while
-            // being itself the root's environmentLights[0]. The root then merged the declaration with no
-            // value to resolve. So send the value up with the shader.
-            //
-            // Only a supplied value travels. Every shader inheriting the declaring one passes through
-            // here too (VoxelMarchCone inherits MarchAttributes) and defaults to an empty array; promoting
-            // those would overwrite the real value with whichever default was evaluated last.
+            // The shader declaring a `stage compose` is hoisted to the root, so its value must follow,
+            // even when supplied by a nested effect. Only a supplied value is promoted: shaders inheriting
+            // the declaring one default to an empty array and would overwrite the real value.
             if (isSupplied && (variable.Flags & VariableFlagsMask.Stage) != 0)
                 promoteCompositionToParent?.Invoke(variableName, variableValue, compositionPath);
         }

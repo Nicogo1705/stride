@@ -3,16 +3,8 @@
 namespace Stride.Rendering.Voxels.Grid
 {
     /// How a ray finds the surface of a voxel grid.
-    ///
-    /// The seam that keeps the rest of the pipeline honest about what it depends on: everything
-    /// above only wants a hit, a distance, a normal and a material, and does not care how they were
-    /// found. The implementation beside this file walks the grid cell by cell, which needs nothing
-    /// but the samples and runs on every graphics API.
-    ///
-    /// The reason it is an interface rather than a function is what comes after it. A hardware ray
-    /// tracing path implements this same shader and everything above it is untouched; so does a
-    /// distance field tracer taking larger steps through empty space. They differ in how they skip
-    /// nothing, which is exactly what an interface should hide.
+    /// Callers only want a hit, a distance, a normal and a material. An implementation may walk the grid
+    /// cell by cell, march a distance field or use hardware ray tracing; the callers are unchanged.
     shader IVoxelGridTraversal
     {
         /// Picks the level of detail the next walks are made at, clamped to what the source holds.
@@ -60,22 +52,17 @@ namespace Stride.Rendering.Voxels.Grid
             return false;
         }
 
-        /// The same ray, asked only whether and where it meets the surface - for a shadow map,
-        /// which reads nothing but the depth. Free to stop within a fraction of a cell of the
-        /// surface, on its far side rather than its near one so a receiver at the true surface
-        /// is never behind its own shadow. No normal, none of the reads it costs.
-        /// Not named after Trace: a method whose name begins with another's was resolved to the
-        /// wrong body by the shader mixer, and a shadow ray then found nothing.
+        /// The same ray, asked only whether and where it meets the surface, for a shadow map. May stop within
+        /// a fraction of a cell of the surface, on its far side so a receiver at the surface never shadows itself.
+        /// Not named after Trace: the shader mixer resolves a method whose name begins with another's to the wrong body.
         bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
         {
             hitDistance = 0;
             return false;
         }
 
-        /// The material a point of the surface is drawn with: one id, chosen among the eight
-        /// samples round the point by their trilinear weight. A pixel is drawn by one material,
-        /// as a pixel of a mesh is; dither picks how a boundary between two is shared out between
-        /// pixels (see VoxelGridDither), and 0 gives every pixel to the heaviest.
+        /// The material a point of the surface is drawn with: one id chosen among the eight surrounding samples by
+        /// trilinear weight. Dither shares a boundary between two materials out between pixels (see VoxelGridDither); 0 gives the heaviest.
         int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)
         {
             return 0;

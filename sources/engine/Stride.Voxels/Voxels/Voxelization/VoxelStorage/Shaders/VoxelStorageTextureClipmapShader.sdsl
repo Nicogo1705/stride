@@ -49,20 +49,13 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
     }
 
     /// <summary>
-    /// The finest map that actually holds <paramref name="pos"/>, searching from <paramref name="from"/>
-    /// outwards. clipCountT when nothing does.
+    /// The finest map containing <paramref name="pos"/>, searching from <paramref name="from"/> outwards;
+    /// clipCountT when none does.
     /// </summary>
     /// <remarks>
-    /// A ring only answers for its own box: outside it every fetch below is multiplied by zero. The
-    /// map to read is picked from the cone's diameter alone, which is fine while the cone grows -
-    /// but a tight cone never does. Its diameter stays at one voxel, so it asks for map 0 at every
-    /// step and reads black from the moment it leaves the innermost box, however much geometry sits
-    /// out there. That is a mirror: aperture is roughness times the cone ratio, so the more polished
-    /// the surface, the smaller the box it can see, and a true mirror sees only the finest ring.
-    /// Rings are nested and concentric, so the first one containing the position is the finest one
-    /// that can answer at all - reading it costs sharpness, which is the correct thing to lose here,
-    /// rather than the reflection itself.
-    /// X and Z bound a ring; Y is clamped rather than bordered, exactly as OutsideVolume has it.
+    /// A ring answers only inside its own box. A tight cone keeps asking for map 0 and would read zero
+    /// past the innermost ring, so the map index is raised to the first ring containing the position.
+    /// X and Z bound a ring; Y is clamped, as in OutsideVolume.
     /// </remarks>
     float MapContaining(float3 pos, int from)
     {
@@ -75,34 +68,20 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
             float edge = max(abs(volumePos.x - 0.5), abs(volumePos.z - 0.5)) * 2.0;
             if (edge <= 1.0)
             {
-                // Fractional, and that is the whole point. Sample already blends between the map it
-                // lands on and the next one by the fraction of mipmap, so handing back i + a ramp
-                // over the ring's outer band makes the crossing fade instead of snap - for free, in
-                // the code that is already there. An integer here is what put a hard seam through
-                // the middle of the room: rings are concentric boxes centred on the volume, so a
-                // boundary crossing traces a rectangle across a floor, and a reflection walks
-                // through several of them. Losing resolution gradually reads as depth; losing it in
-                // one step reads as a bug, which is why a coarser volume with fewer rings can look
-                // better than a fine one with many.
+                // Fractional: Sample blends by the fraction of mipmap, so a ramp over the ring's outer
+                // band makes the crossing fade instead of snap.
                 return (float)i + saturate((edge - RingFadeStart) / (1.0 - RingFadeStart));
             }
         }
 
-        // Outside every ring, stop at the coarsest one rather than falling through to the mipmap
-        // chain. Those levels collapse the volume vertically - height shrinks by a factor of two
-        // per level and the position is clamped to the middle slice - so what they hold is the room
-        // flattened into a plate: the floor, the runner and the sky, with every wall averaged away.
-        // A cone that lands there does not get a blurrier answer, it gets a diorama of the level
-        // seen from above, and a sharp cone renders it recognisably. The largest ring covers the
-        // whole volume anyway, so it is the right last resort.
+        // Outside every ring, stop at the coarsest one: the mipmap levels collapse the volume
+        // vertically and would return the level flattened into a plate.
         return clipCountT - 1;
     }
 
-    // The mipmaps are downsampled from the largest clipmap, so that clipmap's extent bounds the
-    // whole structure. X and Z address in Border mode, so past them every fetch returns zero - and
-    // a straight ray never re-enters. Y is deliberately left out: it is clamped rather than
-    // bordered (to keep a sample from bleeding into the neighbouring axis slice of the atlas), so
-    // a position above or below the volume still reads the boundary plane.
+    // The mipmaps are downsampled from the largest clipmap, so its extent bounds the whole structure.
+    // X and Z address in Border mode. Y is clamped (to keep a sample out of the neighbouring axis
+    // slice of the atlas), so it is left out here.
     override bool OutsideVolume(float3 pos)
     {
         float4 offsetScale = perMapOffsetScale[(int)clipCountT - 1];
@@ -117,7 +96,7 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
         float mipmap = log2(max(1, diameter));
         return SampleByMipNearestMip(pos, mipmap, axis);
     }
-    /// <summary>One map, no blending: the body this shader has always had, addressed explicitly.</summary>
+    /// <summary>Fetches one map without blending.</summary>
     float4 FetchNearestMip(float3 pos, float mipmap, int axis)
     {
         //Clipmaps: the atlas holds one ring per column along X and one direction per row along Y,
@@ -158,14 +137,12 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
         }
         else
         {
-            // Outside this ring the answer is nothing, as it always was - but X now neighbours the
-            // next ring instead of the border, so the zero has to be spelled out rather than left
-            // to the sampler's addressing mode.
+            // Outside this ring the answer is zero; X neighbours the next ring in the atlas, so the
+            // sampler's border mode cannot provide it.
             float inside = (pos.x >= 0.0 && pos.x <= 1.0) ? 1.0 : 0.0;
 
-            // Bilinear filtering reaches half a texel past the sample point, and past a ring's last
-            // texel now sits the next ring's first. Hold the position that half texel inside its
-            // own column so the filter cannot cross the seam.
+            // Bilinear filtering reaches half a texel past the sample point, into the next ring's
+            // column; hold the position that half texel inside.
             float halfTexelX = 0.25 / mipHeightT;
             pos.x = clamp(pos.x, halfTexelX, 1.0 - halfTexelX);
             pos.y = saturate(pos.y);
@@ -176,19 +153,12 @@ shader VoxelStorageTextureClipmapShader<float voxelSizeT, float clipCountT, floa
         }
     }
     /// <summary>
-    /// The diffuse cones come through here, and they used to land on one map with nothing either
-    /// side of it: mipmap arrives as a whole step index, floor() keeps it whole, and the ring
-    /// changes between one sample and the next. That edge is visible on a floor as a step in
-    /// brightness rather than a gradient, because a coarser ring is a downsample - eight voxels
-    /// where one held a lit wall average to an eighth of its radiance, and alpha compositing does
-    /// not give all of that back. Each level is therefore slightly darker than the last, and
-    /// without a blend the whole loss lands on one line across the room.
-    /// <para>
-    /// So fade over the outer fifth of whichever ring answers, into the one behind it. The second
-    /// fetch is real cost on the hottest path in the shader, so it is taken only inside that band -
-    /// away from a boundary this costs one comparison.
-    /// </para>
+    /// Nearest-mip sample of one map, cross-faded into the next over the outer band of the ring.
     /// </summary>
+    /// <remarks>
+    /// A coarser ring is a downsample and slightly darker, so a hard ring change shows as a step in
+    /// brightness. The second fetch is taken only inside the fade band.
+    /// </remarks>
     override float4 SampleByMipNearestMip(float3 pos, float mipmap, int axis)
     {
         // Never ask a ring for somewhere it does not cover - it would answer zero. See MapContaining.

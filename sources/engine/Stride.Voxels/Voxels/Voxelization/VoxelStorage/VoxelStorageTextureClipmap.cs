@@ -28,8 +28,8 @@ namespace Stride.Rendering.Voxels
         public Vector3[] MippingOffset = new Vector3[20];
 
         /// <summary>
-        /// The ring voxelized this frame, or -1 when every ring was. A ring's downsample into the
-        /// next only goes stale when one of the two was rewritten, so the others are skipped.
+        /// The ring voxelized this frame, or -1 when every ring was. Only downsamples involving a
+        /// rewritten ring are redone.
         /// </summary>
         public int RingUpdated = -1;
 

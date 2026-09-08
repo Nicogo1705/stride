@@ -29,13 +29,8 @@ namespace Stride.Rendering.Voxels.Grid
         public float Bounce;
     }
 
-    /// <summary>
-    /// The colour and emission of each material id, as the injector reads them.
-    /// </summary>
-    /// <remarks>
-    /// Read off the materials' constant parameters, two float4 per id, and uploaded again only
-    /// when a value changed - so a material edited at runtime reaches the GI on the next frame.
-    /// </remarks>
+    /// <summary>The colour and emission of each material id, as the injector reads them.</summary>
+    /// <remarks>Read off the materials' constant parameters, two float4 per id, and uploaded only when a value changed.</remarks>
     public sealed class VoxelGridInjectionTable : IDisposable
     {
         /// <summary>Material ids are a byte: this many entries.</summary>
@@ -94,15 +89,8 @@ namespace Stride.Rendering.Voxels.Grid
         public readonly List<VoxelGridInjectionEntry> Entries = [];
     }
 
-    /// <summary>
-    /// Writes voxel fields into the GI's fragment buffer straight from their samples, where the
-    /// voxelizer would have rasterised their proxy boxes. See <c>VoxelGridInjectShader</c>.
-    /// </summary>
-    /// <remarks>
-    /// One per <see cref="VoxelRenderer"/>, which owns its shader; the fields to inject reach it
-    /// through the visibility group, listed there by the grid processor each frame, the way the
-    /// volumes themselves reach the renderer.
-    /// </remarks>
+    /// <summary>Writes voxel fields into the GI's fragment buffer straight from their samples. See <c>VoxelGridInjectShader</c>.</summary>
+    /// <remarks>One per <see cref="VoxelRenderer"/>; the fields to inject are listed on the visibility group by the grid processor each frame.</remarks>
     public sealed class VoxelGridInjector : IDisposable
     {
         /// <summary>The fields to inject this frame, listed by the grid processor on the visibility group.</summary>
@@ -113,10 +101,7 @@ namespace Stride.Rendering.Voxels.Grid
         private ComputeEffectShader shader;
         private bool warnedPacker;
 
-        /// <summary>
-        /// Injects every listed field into the rings a voxelization pass just rasterised, so the
-        /// arrangement that follows finds them in the buffer beside the meshes' fragments.
-        /// </summary>
+        /// <summary>Injects every listed field into the rings a voxelization pass just rasterised, before the arrangement that follows.</summary>
         public void Inject(RenderDrawContext context, VoxelizationPass pass, IReadOnlyList<VoxelGridInjectionEntry> entries)
         {
             if (entries == null || entries.Count == 0 || pass.storer is not VoxelStorerClipmap storer || storer.FragmentsBuffer == null)

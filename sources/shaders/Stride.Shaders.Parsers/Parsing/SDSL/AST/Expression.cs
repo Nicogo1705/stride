@@ -370,21 +370,13 @@ public partial class MethodCall(Identifier name, ShaderExpressionList arguments,
     }
 
     /// <summary>
-    /// Whether an argument is handed to the callee as the caller's own pointer instead of being
-    /// copied into a function-local temporary.
-    /// <list type="bullet">
-    /// <item>ref: atomic intrinsics (InterlockedAdd, etc.) need the actual memory pointer
-    /// (Workgroup, StorageBuffer, ...).</item>
-    /// <item>Opaque resources (see <see cref="SymbolTypeExtensions.IsOpaqueResource"/>): Vulkan
-    /// forbids OpStore to them, so they cannot live in a Function variable.</item>
-    /// <item>Geometry streams: appending goes through OpEmitVertexSDSL and the stage's output
-    /// variables, so the object holds nothing to copy - and the copy outlived the parameter, which
-    /// the interface processor removes from the signature, leaving SPIR-V reading an id that no
-    /// longer exists.</item>
-    /// </list>
-    /// The input and output sides both consult this: copying a result back out of something that
-    /// was never copied in would write through a pointer the callee already holds.
+    /// Whether an argument is passed as the caller's pointer instead of being copied into a function-local temporary.
     /// </summary>
+    /// <remarks>
+    /// Applies to <c>ref</c> parameters (atomics need the actual memory pointer), opaque resources
+    /// (Vulkan forbids OpStore to them) and geometry streams (nothing to copy, and the parameter is
+    /// removed later by the interface processor). Used for both input and output arguments.
+    /// </remarks>
     private static bool IsPassedByPointer(FunctionParameter parameter)
         => parameter.Type is PointerType pointerType
             && (parameter.Modifiers == ParameterModifiers.Ref
@@ -698,17 +690,13 @@ public partial class AccessorChainExpression(Expression source, TextLocation inf
     private SpirvValue[]? intermediateValues;
 
     /// <summary>
-    /// Compiles a trailing <c>buffer[i]</c> into an <c>OpImageTexelPointer</c> - a pointer to that
-    /// one texel - rather than the image read indexing normally produces. Returns false when the
-    /// chain is not an atomic-capable buffer index, leaving the caller to compile it normally.
-    /// <para>
-    /// A typed buffer is not memory the shader can point into: it is a storage image, so SDSL
-    /// compiles <c>buffer[i]</c> to an OpImageRead and <c>buffer[i] = x</c> to an OpImageWrite,
-    /// both of which deal in values. An atomic needs the memory itself, and OpImageTexelPointer is
-    /// the only instruction that hands it over. Its result may only be consumed by atomics, which
-    /// is why this is offered to the `ref` argument path instead of being how every index compiles.
-    /// </para>
+    /// Compiles a trailing <c>buffer[i]</c> into an <c>OpImageTexelPointer</c> for use by atomics.
     /// </summary>
+    /// <remarks>
+    /// A typed buffer is a storage image, so normal indexing produces an image read/write; atomics
+    /// need a pointer, and OpImageTexelPointer results may only be consumed by atomics, hence this
+    /// is only used on the <c>ref</c> argument path. Returns false when the chain is not a buffer index.
+    /// </remarks>
     public bool TryCompileAsTexelPointer(SymbolTable table, CompilerUnit compiler, out SpirvValue texelPointer)
     {
         texelPointer = default;
@@ -1355,13 +1343,9 @@ public partial class AccessorChainExpression(Expression source, TextLocation inf
                         }
                     }
                     break;
-                // Array indexer for shader compositions.
-                // Nothing is resolved here: the composition array has no runtime existence, so this
-                // only has to leave an OpAccessChain whose base is the composition variable and whose
-                // index is a constant. ShaderMixer.ProcessMemberAccessAndForeach recognises exactly
-                // that shape, reads the constant, maps the result id to compositions[index] and NOPs
-                // the chain out. Hence the IntegerLiteral guard: a dynamic index has no composition
-                // to resolve to at mix time.
+                // Array indexer for shader compositions: emit an OpAccessChain with a constant index,
+                // which ShaderMixer.ProcessMemberAccessAndForeach resolves to compositions[index] at
+                // mix time. A dynamic index has no composition to resolve to, hence the IntegerLiteral guard.
                 case (PointerType { BaseType: ArrayType { BaseType: ShaderSymbol compositionType } } p, IndexerExpression { Index: IntegerLiteral } indexer):
                     {
                         if (compiler == null)

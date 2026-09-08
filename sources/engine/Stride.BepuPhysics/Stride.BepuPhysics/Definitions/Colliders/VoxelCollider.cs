@@ -21,32 +21,17 @@ namespace Stride.BepuPhysics.Definitions.Colliders;
 /// Collides against a voxel density field directly, generating contacts from the field as the narrow
 /// phase asks for them instead of from a mesh built ahead of time.
 /// </summary>
-/// <typeparam name="TSource">
-/// How the samples are packed - see <see cref="IVoxelDensitySource"/>. A game whose voxels are a
-/// byte, a float, a packed <see cref="ushort"/> or something of its own supplies the matching source
-/// rather than converting its data.
-/// </typeparam>
+/// <typeparam name="TSource">How the samples are packed, see <see cref="IVoxelDensitySource"/>.</typeparam>
 /// <remarks>
 /// <para>
-/// This is the collider for a game whose world is already voxels. The usual arrangement - mesh the
-/// chunk, read the vertices back from the GPU, keep a CPU copy so a <see cref="MeshCollider"/> can
-/// build a bounding volume tree over it, and redo all three whenever the terrain is edited - exists
-/// only because Bepu needs triangles. Here the field is the collidable: no mesh, no readback, no
-/// per-chunk tree and no rebuild. Editing a voxel is a store into the field.
+/// No mesh, readback or bounding volume tree is built; editing a voxel is a store into the field.
+/// <see cref="Form"/> selects what a cell presents to the narrow phase. The triangle forms run the
+/// same marching-cubes table and interpolation a renderer would on the same samples.
 /// </para>
 /// <para>
-/// Pick what a cell presents to the narrow phase with <see cref="Form"/>. The triangle forms
-/// reproduce the iso-surface a renderer meshes from the same field, running the same marching-cubes
-/// table and the same interpolation on the same samples.
-/// </para>
-/// <para>
-/// One caveat before choosing a triangle form. Bepu smooths away the bumps a character feels
-/// crossing the internal edges of a triangle mesh with a MeshReduction, and that machinery is bound
-/// to Bepu's concrete Mesh type in this version, so a voxel shape cannot use it - Bepu's own voxel
-/// sample has the same limitation. Expect some catching on edges when sliding fast across a triangle
-/// surface. <see cref="VoxelChildForm.TriangleSurfaceNets"/> suffers least, having far fewer and
-/// larger triangles, and <see cref="VoxelChildForm.Sphere"/> not at all, at the cost of a rounded
-/// surface.
+/// Triangle forms cannot use Bepu's MeshReduction (bound to the concrete Mesh type), so fast sliding
+/// across internal edges may catch. <see cref="VoxelChildForm.TriangleSurfaceNets"/> suffers least,
+/// <see cref="VoxelChildForm.Sphere"/> not at all.
 /// </para>
 /// </remarks>
 [DataContract(Inherited = true)]
@@ -90,14 +75,8 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         }
     }
 
-    /// <summary>
-    /// Density at or above which a sample counts as solid. Must match the value the renderer meshes
-    /// with, or the collision surface will sit beside the visible one.
-    /// </summary>
-    /// <remarks>
-    /// Compared against whatever the source returns, so a field centred on zero - a signed distance
-    /// field, say - simply takes zero here.
-    /// </remarks>
+    /// <summary>Density at or above which a sample counts as solid.</summary>
+    /// <remarks>Must match the renderer's iso level. Compared against the raw source value, so a signed distance field uses zero.</remarks>
     public float IsoLevel
     {
         get => _isoLevel;
@@ -108,15 +87,8 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         }
     }
 
-    /// <summary>
-    /// Reverses the winding of generated triangles.
-    /// </summary>
-    /// <remarks>
-    /// Bepu triangles collide on one side only, so a field whose density runs the other way - or a
-    /// renderer emitting the opposite winding - produces a surface that pushes bodies into the
-    /// ground instead of out of it. This is the one-line correction; it has no effect on the box and
-    /// sphere forms.
-    /// </remarks>
+    /// <summary>Reverses the winding of generated triangles.</summary>
+    /// <remarks>Bepu triangles are one-sided; set this when bodies are pushed into the ground instead of out. No effect on the box and sphere forms.</remarks>
     public bool InvertWinding
     {
         get => _invertWinding;
@@ -127,19 +99,10 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         }
     }
 
-    /// <summary>
-    /// Reads the samples on the outer faces of the grid as air, so the volume closes on itself.
-    /// </summary>
+    /// <summary>Reads the samples on the outer faces of the grid as air, so the volume closes on itself.</summary>
     /// <remarks>
-    /// <para>
-    /// On by default, because a lone grid with a solid edge is otherwise a body with no walls and no
-    /// floor: a surface exists only where the field crosses the iso level, and the edge never
-    /// crosses. Sealing gives up the outermost layer of samples to buy a closed body.
-    /// </para>
-    /// <para>
-    /// Turn it off where the field continues into a neighbouring chunk. Those samples are shared
-    /// with data that does exist, and reading them as air walls every chunk off from the next.
-    /// </para>
+    /// On by default; a grid with a solid edge has no surface there otherwise. Turn it off when the
+    /// field continues into a neighbouring chunk, or every chunk is walled off from the next.
     /// </remarks>
     public bool SealBorder
     {
@@ -153,16 +116,10 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         }
     }
 
-    /// <summary>
-    /// Radius of one sphere child, as a multiple of half a cell. Only the sphere form reads it.
-    /// </summary>
+    /// <summary>Radius of one sphere child, as a multiple of half a cell. Only the sphere form reads it.</summary>
     /// <remarks>
-    /// At 1 a sphere is inscribed in its cell, so two neighbours are exactly tangent and the
-    /// diagonals between them are open: a small body moving fast can pass between two solid cells.
-    /// Raising it closes that at the cost of a surface that bulges out of the field - the sphere
-    /// that reaches the corner of its own cell is at the square root of three, about 1.73, and
-    /// overlaps its neighbours heavily. Around 1.4 covers the face diagonals, which is where things
-    /// actually slip through, without the surface standing far off the drawn one.
+    /// At 1 neighbouring spheres are tangent and small fast bodies can slip between them along
+    /// diagonals. Around 1.4 covers the face diagonals without bulging far out of the field.
     /// </remarks>
     public float SphereRadiusScale
     {
@@ -177,14 +134,8 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         }
     }
 
-    /// <summary>
-    /// Mass used for the inertia of a dynamic body carrying this collider.
-    /// </summary>
-    /// <remarks>
-    /// Approximated from the grid's bounding box rather than from the occupied cells, which would
-    /// mean walking the whole field. A voxel collidable is normally static terrain, where inertia is
-    /// never read at all.
-    /// </remarks>
+    /// <summary>Mass used for the inertia of a dynamic body carrying this collider.</summary>
+    /// <remarks>Inertia is approximated from the grid's bounding box, not from the occupied cells.</remarks>
     public float Mass
     {
         get => _mass;
@@ -196,34 +147,20 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         }
     }
 
-    /// <summary>
-    /// Produces the density source describing the field as it stands. Called on attach, so it must
-    /// hand back a view of memory that outlives the collidable, never a temporary.
-    /// </summary>
+    /// <summary>Produces the density source describing the current field.</summary>
+    /// <remarks>Called on attach; the returned view must outlive the collidable, never a temporary.</remarks>
     /// <returns>False when there is no field yet, which leaves the collidable unattached.</returns>
     protected abstract bool TryGetSource(out TSource source);
 
-    /// <summary>
-    /// Tells anything holding geometry derived from this field that the field has moved on.
-    /// </summary>
+    /// <summary>Tells anything holding geometry derived from this field that the field has changed.</summary>
     /// <remarks>
-    /// Physics does not need it: the narrow phase reads the samples as it goes, so an edit is
-    /// visible to it immediately. What does need it is anything that asked for a <em>copy</em> of the
-    /// surface and kept it - the physics debug view builds a wireframe once and would go on drawing
-    /// the terrain as it was before it was dug.
-    /// <para>
-    /// Cheap here, unlike on a mesh collider: reattaching this collidable swaps a shape slot whose
-    /// contents point at the same memory, with no tree to rebuild.
-    /// </para>
+    /// Physics reads the samples live and does not need it; the physics debug view, which keeps a
+    /// copy of the surface, does. Cheap: the shape slot is swapped, no tree is rebuilt.
     /// </remarks>
     public void NotifyFieldChanged() => InvalidateShape();
 
     /// <summary>Rebuilds the collidable after something other than a sample value changed.</summary>
-    /// <remarks>
-    /// Not needed for ordinary edits: the narrow phase reads the field on demand, so writing a
-    /// sample is visible immediately and changes neither the child layout nor the bounds. Call this
-    /// only when the grid is resized or replaced.
-    /// </remarks>
+    /// <remarks>Only needed when the grid is resized or replaced; sample edits are read live.</remarks>
     protected void InvalidateShape() => _component?.TryUpdateFeatures();
 
     private bool TryBuildGrid(out VoxelGridData<TSource> grid)
@@ -323,15 +260,8 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         buffer.Add(new BasicMeshBuffers { Vertices = vertices.ToArray(), Indices = indices.ToArray() });
     }
 
-    /// <summary>
-    /// A box per solid cell on the surface, or an icosahedron at the sphere form's own radius.
-    /// </summary>
-    /// <remarks>
-    /// Only cells with an empty neighbour. Drawing every solid cell means drawing the whole inside
-    /// of the body - hundreds of thousands of solids for a modest grid, a mesh too large to build,
-    /// and nothing on screen to show for it. The shell is what there is to look at anyway: it is
-    /// where the narrow phase ever meets anything.
-    /// </remarks>
+    /// <summary>A box per exposed solid cell, or an icosahedron at the sphere form's own radius.</summary>
+    /// <remarks>Only cells with an empty neighbour are drawn; interior cells are never seen and would make the mesh huge.</remarks>
     private static void AppendCellSolids(ref VoxelGridData<TSource> grid, List<VertexPosition3> vertices, List<int> indices, bool sphere)
     {
         var half = grid.CellSize * 0.5f;
@@ -419,17 +349,8 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         1, 3, 5, 3, 7, 5, // +X
     ];
 
-    /// <summary>
-    /// A unit icosahedron, standing in for a sphere child.
-    /// </summary>
-    /// <remarks>
-    /// An octahedron was here, and it reads as far smaller than the sphere it stands for: its faces
-    /// sit at 0.58 of the radius, so a field of tangent spheres is drawn as a field of separated
-    /// diamonds with wide gaps that are not there. An icosahedron's faces sit at 0.79, close enough
-    /// that what is drawn touching is what is touching. Twelve vertices and twenty faces per cell,
-    /// against six and eight - the shell of a modest grid is a few hundred thousand triangles either
-    /// way.
-    /// </remarks>
+    /// <summary>A unit icosahedron, standing in for a sphere child.</summary>
+    /// <remarks>Its faces sit at 0.79 of the radius, so tangent spheres are drawn touching.</remarks>
     private static readonly NVector3[] IcosahedronVertices = BuildIcosahedron();
 
     private static NVector3[] BuildIcosahedron()
@@ -447,11 +368,7 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
         return vertices;
     }
 
-    /// <summary>
-    /// Wound the same way round as the box above. The debug view culls back faces, so a solid wound
-    /// the other way is built, uploaded and then drawn as nothing at all - which looks exactly like
-    /// a collider form that produces no geometry.
-    /// </summary>
+    /// <summary>Wound the same way round as the box above; the debug view culls back faces.</summary>
     private static ReadOnlySpan<int> IcosahedronIndices =>
     [
         0, 5, 11, 0, 1, 5, 0, 7, 1, 0, 10, 7, 0, 11, 10,
@@ -463,14 +380,11 @@ public abstract unsafe class VoxelColliderBase<TSource> : ICollider
 
 /// <summary>
 /// A <see cref="VoxelColliderBase{TSource}"/> over samples packed one per <see cref="ushort"/>,
-/// density in bits 0-7 and material in bits 8-15 - the layout a voxel game commonly uploads to the
-/// GPU, so one array serves rendering and collision.
+/// density in bits 0-7 and material in bits 8-15.
 /// </summary>
 /// <remarks>
-/// Owns its samples in native memory, so they survive attach and detach cycles and are freed on
-/// <see cref="Dispose"/> or finalization. A game that already keeps its field in unmanaged memory
-/// can avoid the copy by deriving from <see cref="VoxelColliderBase{TSource}"/> itself and pointing
-/// a source at what it has.
+/// Owns a native copy of its samples, freed on <see cref="Dispose"/> or finalization. A game keeping
+/// its field in unmanaged memory can derive from <see cref="VoxelColliderBase{TSource}"/> instead.
 /// </remarks>
 [DataContract]
 public sealed unsafe class VoxelCollider : VoxelColliderBase<PackedVoxelSource>, IDisposable
@@ -490,13 +404,10 @@ public sealed unsafe class VoxelCollider : VoxelColliderBase<PackedVoxelSource>,
     [DataMemberIgnore]
     public bool HasData => _samples != null;
 
-    /// <summary>
-    /// Supplies the density field, laid out x-major with z varying fastest.
-    /// </summary>
+    /// <summary>Supplies the density field, laid out x-major with z varying fastest.</summary>
     /// <remarks>
-    /// A grid of n cells per axis needs n+1 samples per axis: a cell reads the eight samples at its
-    /// corners. The data is copied into native memory this collider owns, so the caller's array is
-    /// free to move or be reused afterwards.
+    /// A grid of n cells per axis needs n+1 samples per axis. The data is copied into native memory
+    /// owned by this collider, so the caller's array can be reused afterwards.
     /// </remarks>
     public void SetData(int samplesX, int samplesY, int samplesZ, ReadOnlySpan<ushort> samples)
     {
@@ -521,14 +432,8 @@ public sealed unsafe class VoxelCollider : VoxelColliderBase<PackedVoxelSource>,
             InvalidateShape();
     }
 
-    /// <summary>
-    /// Overwrites one sample. This is the whole cost of a terrain edit: the narrow phase reads the
-    /// field on demand, so nothing is rebuilt and the collidable's bounds do not change.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately does not reattach the collidable - that would defeat the purpose. Call it
-    /// between simulation steps; a write racing the narrow phase is a data race like any other.
-    /// </remarks>
+    /// <summary>Overwrites one sample. Nothing is rebuilt; the narrow phase reads the field on demand.</summary>
+    /// <remarks>Does not reattach the collidable. Call between simulation steps; a write racing the narrow phase is a data race.</remarks>
     public void SetVoxel(int x, int y, int z, ushort packedDensityAndMaterial)
         => _samples[SampleIndex(x, y, z)] = packedDensityAndMaterial;
 

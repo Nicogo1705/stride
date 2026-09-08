@@ -3,11 +3,8 @@
 namespace Stride.Rendering.Voxels.Grid
 {
     /// The grid's shadow: a material that walks the field only in the shadow caster passes.
-    ///
-    /// The resolve pass finds the surface for the camera; the shadow maps are other views, one per
-    /// cascade or face, and each walks the field on its own from the light. This runs on a proxy
-    /// box of the grid that casts shadows and draws nothing else: in every pass but a caster it
-    /// discards, and in a caster it asks the traversal only where the ray meets the field.
+    /// Shadow maps are separate views, one per cascade or face, each walking the field from the light.
+    /// Runs on a proxy box of the grid: a caster pass asks the traversal where the ray meets the field, every other pass discards.
     shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, ShadowMapCasterPassInfo, VoxelizationPassInfo
     {
         // The traversal and its source are inherited, not composed, so all three share one scope
@@ -23,23 +20,17 @@ namespace Stride.Rendering.Voxels.Grid
 
         override void Compute()
         {
-            // One exit, no early return: a return from inside a material's Compute comes out of
-            // the SPIR-V to HLSL step as a one-iteration loop round everything after it, and FXC,
-            // asked to unroll that round the walk's own loop, gives up with an internal error.
-            // A caster pass, and not the voxelizer's - the two flags are set by different passes
-            // and only the caster one may be stale where a geometry shader dropped it.
+            // One exit, no early return: FXC fails to unroll a return inside a material's Compute around the walk's loop.
+            // A caster pass and not the voxelizer's: only the caster flag may be stale where a geometry shader dropped it.
             if (streams.IsShadowMapCasterPass > 0.5 && streams.IsVoxelizationPass < 0.5)
             {
                 // The fragment, in the grid's own space.
                 float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
                 float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
 
-                // Orthographic when no world axis moves the projected w, read off ViewProjection with
-                // mul - the transform the depth below is written with - rather than off elements of
-                // Projection, which are one layout in Stride's Matrix and may be another in the HLSL
-                // the shader pipeline emits. The view axis is then the world direction that leaves
-                // clip x and y where they are - perpendicular to the rows that produce them - pointed
-                // the way clip depth grows, away from the light.
+                // Orthographic when no world axis moves the projected w, read off ViewProjection with mul
+                // rather than off Projection elements, whose layout differs between Matrix and the emitted HLSL.
+                // The view axis is the world direction perpendicular to the clip x and y rows, pointed where clip depth grows.
                 float4 axisX = mul(float4(1, 0, 0, 0), ViewProjection);
                 float4 axisY = mul(float4(0, 1, 0, 0), ViewProjection);
                 float4 axisZ = mul(float4(0, 0, 1, 0), ViewProjection);

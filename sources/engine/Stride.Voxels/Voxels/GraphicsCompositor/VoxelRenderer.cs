@@ -218,10 +218,7 @@ namespace Stride.Rendering.Voxels
             }
         }
 
-        /// <summary>
-        /// Gives back what a volume that is no longer in the scene held on the device: its rings
-        /// and mips, its fragment buffer, its shaders. A volume put back later makes them again.
-        /// </summary>
+        /// <summary>Releases the device resources of volumes that are no longer in the scene.</summary>
         private void ReleaseGoneVolumes()
         {
             if (renderVoxelVolumeData == null)

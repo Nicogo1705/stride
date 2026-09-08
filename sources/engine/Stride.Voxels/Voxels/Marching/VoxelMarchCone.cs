@@ -14,9 +14,8 @@ namespace Stride.Rendering.Voxels
     {
         [DataMember(0)]
         /// <summary>
-        /// Takes the step count, scale and cone ratio from a constant buffer rather than compiling
-        /// them in, so they can be changed without a new shader. Off by default: the compiled cone
-        /// is the one the presets are tuned on.
+        /// Reads step count, scale and cone ratio from a constant buffer instead of compiling them in,
+        /// so they can be tuned without a new shader.
         /// </summary>
         public bool EditMode = false;
         [DataMember(10)]
@@ -33,10 +32,7 @@ namespace Stride.Rendering.Voxels
         /// <summary>
         /// Furthest the cone may travel, in world units, or zero for no limit.
         /// </summary>
-        /// <remarks>
-        /// A uniform rather than a template argument, so changing it does not compile a new
-        /// permutation of the shader.
-        /// </remarks>
+        /// <remarks>A uniform rather than a template argument, so changing it compiles no new permutation.</remarks>
         [DataMember(60)]
         public float MaxDistance = 0.0f;
 

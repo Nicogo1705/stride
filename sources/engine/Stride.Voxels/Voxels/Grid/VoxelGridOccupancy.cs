@@ -15,26 +15,11 @@ namespace Stride.Rendering.Voxels.Grid
     /// leap over the bricks that hold no surface.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// A min/max pyramid: an octree with the pointers left out, since a mip chain of a 3D texture
-    /// already is one. Level 0 is bricks of two cells, each level above doubles the brick, the top
-    /// is one brick the size of the grid. A brick whose maximum is below the iso level holds no
-    /// surface and no solid, so a ray crosses it in one step; anything else is looked at one level
-    /// finer, down to the cells themselves. Empty space, which is most of a ray's life, is thereby
-    /// a handful of reads rather than a read per cell - and so is a shadow cascade's ray, and the
-    /// depth prepass's, since they all walk the same shader.
-    /// </para>
-    /// <para>
-    /// Bricks are one sample wider than the cells they cover, on purpose: a cell's surface depends
-    /// on its eight corners, and the last corner belongs to the next brick. The overlap makes a
-    /// brick's bounds cover every cell in it entirely, which is what makes skipping it safe.
-    /// </para>
-    /// <para>
-    /// Built from the samples on the CPU, and rebuilt for the box an edit touched and nothing
-    /// outside it - a brush stroke re-reads a few thousand samples and uploads a few hundred bytes
-    /// per level, well inside a frame. The sealed border is not baked in: sealing only lowers
-    /// densities, so a pyramid over the raw samples errs on the side of looking, never of skipping.
-    /// </para>
+    /// A min/max pyramid held as the mip chain of a 3D texture: level 0 is bricks of two cells, each level doubles
+    /// the brick. A brick whose maximum is below the iso level holds no surface and is crossed in one step.
+    /// Bricks overlap by one sample, since a cell's surface depends on its eight corners; the overlap is what makes
+    /// skipping safe. Built on the CPU from the raw samples and rebuilt only for the box an edit touched. The sealed
+    /// border is not baked in: sealing only lowers densities, so the pyramid errs towards looking, never skipping.
     /// </remarks>
     public sealed class VoxelGridOccupancy : IDisposable
     {
@@ -82,10 +67,7 @@ namespace Stride.Rendering.Voxels.Grid
         public void Update(CommandList commandList, VoxelDensityReader density)
             => Update(commandList, density, Int3.Zero, SampleCount - Int3.One);
 
-        /// <summary>
-        /// Rebuilds the bricks that cover the samples in a box, inclusive, at every level, and
-        /// uploads only those.
-        /// </summary>
+        /// <summary>Rebuilds the bricks that cover the samples in a box, inclusive, at every level, and uploads only those.</summary>
         public void Update(CommandList commandList, VoxelDensityReader density, Int3 minSample, Int3 maxSample)
         {
             var samples = SampleCount;

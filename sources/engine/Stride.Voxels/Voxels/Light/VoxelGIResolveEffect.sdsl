@@ -5,8 +5,7 @@ using Stride.Rendering.Data;
 namespace Stride.Rendering.Voxels.VoxelGI
 {
     /// <summary>
-    /// The reduced-resolution GI pass, composed with the same marcher and samplers the light itself
-    /// would have used inline.
+    /// Reduced-resolution GI pass, composed with the same marcher and samplers as the light.
     /// </summary>
     effect VoxelGIResolveEffect
     {

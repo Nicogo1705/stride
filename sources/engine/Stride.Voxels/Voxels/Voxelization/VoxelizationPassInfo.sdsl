@@ -6,24 +6,16 @@ namespace Stride.Rendering.Voxels
     /// Lets a material shader ask whether it is being run to voxelize the scene.
     /// </summary>
     /// <remarks>
-    /// The voxelizer rasterises every model through its own view, one per dominant axis, and runs
-    /// the material chain on the fragments to know what each voxel is made of. A material whose
-    /// surface is not where its mesh is - a voxel field drawn through a proxy box, resolved once
-    /// for the camera - has nothing resolved for that view and must find its surface itself.
-    ///
-    /// A stream, as ShadowMapCasterPassInfo is: whoever asks writes it to 0 in the vertex stage,
-    /// so that it is defined in every pass, and VoxelizeToFragments writes 1 before the material
-    /// chain runs.
+    /// A material whose surface is not where its mesh is (a volume drawn through a proxy) has no
+    /// resolved surface for the voxelizer's views and must find it itself. A stream, like
+    /// ShadowMapCasterPassInfo: the user writes 0 in the vertex stage, VoxelizeToFragments writes 1.
     /// </remarks>
     shader VoxelizationPassInfo
     {
         stage stream float IsVoxelizationPass;
 
         /// 1 when the material has nothing at this fragment and the voxelizer must store nothing.
-        /// Said in a stream rather than left to discard: a discard ends the pixel's outputs, not
-        /// the unordered access writes that follow it, and the fragment store is one of those - a
-        /// discarded fragment was still written into the volume, as a black voxel on the face of
-        /// the mesh that carried it.
+        /// A stream rather than discard: discard does not stop the unordered access writes that follow it.
         stage stream float VoxelizationSkip;
     };
 }

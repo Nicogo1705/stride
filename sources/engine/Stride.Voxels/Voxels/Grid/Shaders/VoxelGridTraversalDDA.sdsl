@@ -2,34 +2,12 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// Walks the cells a ray crosses, in order, and stops where the surface actually is.
-    ///
-    /// Two steps, and the split is the whole design. A three dimensional DDA skips cells: clip the
-    /// ray to the grid box, then step along whichever axis reaches its next boundary first. That
-    /// needs nothing but the field - no acceleration structure to build, no distance field to
-    /// precompute, nothing to rebuild when a voxel changes - and it visits exactly the cells the ray
-    /// meets, because a regular grid already is the structure a ray wants.
-    ///
-    /// Then, inside the one cell that contains the surface, the crossing is solved on the trilinear
-    /// field. Stopping at the cell instead would draw the grid rather than the surface, which reads
-    /// as a staircase however fine the cells are - and it would disagree with the mesh a renderer or
-    /// a collider builds from the same samples, which interpolate exactly this way.
-    ///
-    /// A sphere tracer would take larger steps through empty space, but it needs a distance correct
-    /// everywhere; a marching cubes density field only guarantees the sign, and sphere tracing across
-    /// one walks through walls. Empty space is crossed instead on a min/max pyramid of the field: the
-    /// walk starts on the coarsest brick, leaps over a brick whose maximum is under the iso level,
-    /// and descends a level into any other, down to the cell. What counts as a hit is decided at
-    /// the cell, exactly as without the pyramid; the pyramid only decides which cells are worth
-    /// reaching.
-    ///
-    /// TSurface is which surface the walk stops on, and it is a permutation rather than a parameter:
-    /// 0 the cells themselves, a world of cubes; 1 the crossing on the trilinear field, where marching
-    /// cubes puts its vertices; 2 the quads surface nets stitches between cell vertices. All three
-    /// walk the same cells and only what counts as a hit differs, so a collider can be asked for the
-    /// same surface and the body drawn and the body collided against are one body. Compiling only
-    /// the form asked for keeps the other two - surface nets alone is several hundred reads - out of
-    /// the shader entirely.
+    /// Walks the cells a ray crosses, in order, and stops where the surface is.
+    /// A 3D DDA clips the ray to the grid box and steps along whichever axis reaches its next boundary first;
+    /// it needs nothing but the field. Empty space is skipped on a min/max pyramid of the field, and the
+    /// crossing is solved on the trilinear field inside the cell, so the traced surface matches a meshed one.
+    /// TSurface is a compile-time permutation picking which surface the walk stops on: 0 the cells themselves
+    /// (cubes), 1 the trilinear crossing (marching cubes), 2 the quads surface nets stitches between cell vertices.
     shader VoxelGridTraversalDDA<int TSurface> : IVoxelGridTraversal, IVoxelGridSource, VoxelGridDither
     {
         // The source is inherited rather than composed, so that it shares this scope: a composition
@@ -74,13 +52,6 @@ namespace Stride.Rendering.Voxels.Grid
         /// what a pixel resolves.
         static const int RefineSteps = 6;
 
-        /// Density of one sample, with the border read as air when the grid is sealed - so the
-        /// volume closes on real surface rather than on the flat faces of its own box.
-        ///
-        /// A select rather than an early return: an early return in a function inlined into the
-        /// walk comes out of the SPIR-V to HLSL step as a one-iteration loop, and FXC, unrolling
-        /// dozens of them inside a real loop, gives up with an internal error. A load past the
-        /// edge of the field is defined and comes back zero, so the read can be unconditional.
         /// The cell size at the level in force: the field's, doubled per level.
         float CellSize()
         {
@@ -150,11 +121,8 @@ namespace Stride.Rendering.Voxels.Grid
             return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
         }
 
-        /// The four corners of a cell on its near z face, then on its far one: (000, 100, 010,
-        /// 110) and (001, 101, 011, 111). Eight loads, held in registers by whoever needs the
-        /// field at several points of one cell - the straddle test, the probes along the ray, the
-        /// bisection and the normal all do, and reloading the same eight for each was the cost
-        /// of a hit.
+        /// The four corners of a cell on its near z face, then on its far one: (000, 100, 010, 110) and
+        /// (001, 101, 011, 111). Eight loads, held in registers by whoever needs the field at several points of one cell.
         float4 CornersNear(int3 cell)
         {
             return float4(
@@ -276,11 +244,8 @@ namespace Stride.Rendering.Voxels.Grid
             return clamp((int3)floor(localPosition / CellSize()), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
         }
 
-        /// The material of the point: cubes take the cell's own, which is the point of cubes; a
-        /// smooth surface weighs the eight samples round the point as the field itself does, adds
-        /// up the weight of each id, and picks one - the heaviest, or one drawn by the dither
-        /// threshold against the running total, so that two materials share a boundary out
-        /// between pixels in the proportion the field gives them.
+        /// The material of the point: cubes take the cell's own; a smooth surface weighs the eight samples round the
+        /// point trilinearly, sums the weight per id, and picks the heaviest or the one the dither threshold draws.
         override int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)
         {
             int3 cell = CellOf(localPosition);
@@ -469,22 +434,17 @@ namespace Stride.Rendering.Voxels.Grid
         /// Where a ray meets the quad four cell vertices span, as two triangles.
         float4 MeetQuad(float4 v0, float4 v1, float4 v2, float4 v3, float3 origin, float3 direction)
         {
-            // No early return, for the reason SealedDensity gives; a quad with a corner missing
-            // is tested and then discarded.
+            // No early return (FXC fails to unroll it inside the walk's loop): an incomplete quad is tested, then discarded.
             bool complete = v0.w > 0 && v1.w > 0 && v2.w > 0 && v3.w > 0;
             float4 first = MeetTriangle(v0.xyz, v1.xyz, v2.xyz, origin, direction);
             float4 second = MeetTriangle(v0.xyz, v2.xyz, v3.xyz, origin, direction);
             return complete ? Nearer(first, second) : float4(0, 1, 0, 0);
         }
 
-        /// The walk of Trace with the hit left coarse: a shadow map wants a depth within a fraction
-        /// of a cell, past the surface rather than short of it, and nothing else. The bisection, the
-        /// gradient and the colour - some hundred reads on every texel that lands on the field, and
-        /// a shadow map has several times the texels the screen has - are not spent.
-        ///
-        /// A copy of the walk rather than a flag through it: the compiler folds a constant branch,
-        /// and the two walks then differ only where they should. Surface nets settles for the
-        /// trilinear crossing here, which is within a cell of its own facets.
+        /// The walk of Trace with the hit left coarse: a shadow map wants a depth within a fraction of a cell, past
+        /// the surface rather than short of it. No bisection, gradient or material reads.
+        /// A copy of the walk rather than a flag through it, so the compiler folds the constant branches. Surface nets
+        /// settles for the trilinear crossing here, within a cell of its own facets.
         override bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
         {
             hitDistance = 0;
@@ -535,17 +495,9 @@ namespace Stride.Rendering.Voxels.Grid
                 float3 brickMin = (float3)(brick * size) * cellSize;
                 float3 brickMax = brickMin + (float)size * cellSize;
                 float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
-                // A plane met at or behind the position walked from is not an exit: a ray lying on a
-                // brick's plane, its direction along that axis all but zero, had that plane as its
-                // nearest far side at distance zero, left the brick where it stood, and spent every
-                // step going nowhere - a column of pixels with no surface, down the middle of a
-                // view along a grid axis.
-                // Only where the direction has all but no component on that axis: it is the ray
-                // lying on the plane that this guards against. Taken for every axis, a far side
-                // legitimately met at the position - the walk clamped to the box's edge, a brick
-                // just descended into - was thrown away too, the segment ran on to the far plane
-                // of some other axis, and the probes across it found a surface that was not
-                // there: a dark sliver hanging in the air across the scene.
+                // A plane met at or behind the walked-from position is not an exit where the direction has almost no
+                // component on that axis, so a ray lying on a brick's plane does not leave the brick where it stands.
+                // Restricted to that axis: a far side legitimately met at the position on another axis stays an exit.
                 farSide += (farSide <= t + nudge && abs(safeDirection) < 1e-5) * 1e30;
                 float tLeave = min(min(farSide.x, farSide.y), farSide.z);
 
@@ -616,11 +568,8 @@ namespace Stride.Rendering.Voxels.Grid
             return hit;
         }
 
-        /// Where the ray meets the field's box, along the ray from its origin: zero from inside,
-        /// and past the box when it misses. A walk's reach is measured from its origin, and the
-        /// reach a field is drawn with is its own extent; from a camera farther from the box than
-        /// that, the walk ended before it arrived, and the field was clipped away at a distance
-        /// every mesh was still drawn at. The reach is meant from here.
+        /// Where the ray meets the field's box, along the ray from its origin: zero from inside, past the box when it
+        /// misses. Callers count their reach from here, so a field is walked whole from any camera distance.
         override float EnterDistance(float3 origin, float3 direction)
         {
             int3 cells = SampleCount() - int3(1, 1, 1);
@@ -664,9 +613,7 @@ namespace Stride.Rendering.Voxels.Grid
             bool hit = false;
             float tHit = 0;
 
-            // Which face of the box the ray entered through. It is the normal to use when the first
-            // cell is already solid - without it that case falls back on a fixed axis, and the
-            // result is a wrongly lit band that slides about as the camera moves.
+            // Which face of the box the ray entered through: the normal to use when the first cell is already solid.
             int axis = nearest.x >= nearest.y && nearest.x >= nearest.z ? 0 : (nearest.y >= nearest.z ? 1 : 2);
 
             // A ray that starts inside matter - the camera in the volume, in solid - has the box face
@@ -680,11 +627,8 @@ namespace Stride.Rendering.Voxels.Grid
                 tHit = tEnter;
             }
 
-            // The walk holds a distance along the ray and a level of the pyramid, and every step
-            // looks at the brick of that level the ray is in just past that distance. An empty brick
-            // is left through its far face in one step, and the next look is a level coarser; any
-            // other brick is looked at again a level finer; at level zero the brick is a cell and
-            // the surface is settled there. With no pyramid at all the walk stays at the cell.
+            // The walk holds a distance along the ray and a pyramid level. An empty brick is left through its far face
+            // and the next look is a level coarser; any other brick is looked at a level finer; at level zero the cell settles the surface.
             int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
             int level = levels;
             float t = tEnter;
@@ -705,10 +649,8 @@ namespace Stride.Rendering.Voxels.Grid
             float4 hitNear = float4(0, 0, 0, 0);
             float4 hitFar = float4(0, 0, 0, 0);
 
-            // The walk ends by clearing its condition, never by break or return, which miscompile
-            // inside a loop on some targets. The step count is clamped, not trusted: an unbound
-            // constant buffer member reads as leftover memory, and a loop that never ends takes the
-            // graphics device down with it.
+            // The walk ends by clearing its condition, never by break or return, which miscompile inside a loop on some
+            // targets. The step count is clamped: an unbound constant buffer member reads as leftover memory.
             int steps = clamp(VoxelGridMaxSteps, 0, 4096);
             for (int i = 0; i < steps && running; i++)
             {
@@ -721,17 +663,9 @@ namespace Stride.Rendering.Voxels.Grid
                 float3 brickMin = (float3)(brick * size) * cellSize;
                 float3 brickMax = brickMin + (float)size * cellSize;
                 float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
-                // A plane met at or behind the position walked from is not an exit: a ray lying on a
-                // brick's plane, its direction along that axis all but zero, had that plane as its
-                // nearest far side at distance zero, left the brick where it stood, and spent every
-                // step going nowhere - a column of pixels with no surface, down the middle of a
-                // view along a grid axis.
-                // Only where the direction has all but no component on that axis: it is the ray
-                // lying on the plane that this guards against. Taken for every axis, a far side
-                // legitimately met at the position - the walk clamped to the box's edge, a brick
-                // just descended into - was thrown away too, the segment ran on to the far plane
-                // of some other axis, and the probes across it found a surface that was not
-                // there: a dark sliver hanging in the air across the scene.
+                // A plane met at or behind the walked-from position is not an exit where the direction has almost no
+                // component on that axis, so a ray lying on a brick's plane does not leave the brick where it stands.
+                // Restricted to that axis: a far side legitimately met at the position on another axis stays an exit.
                 farSide += (farSide <= t + nudge && abs(safeDirection) < 1e-5) * 1e30;
                 float tLeave = min(min(farSide.x, farSide.y), farSide.z);
                 int leaveAxis = farSide.x <= farSide.y && farSide.x <= farSide.z ? 0 : (farSide.y <= farSide.z ? 1 : 2);
@@ -753,11 +687,8 @@ namespace Stride.Rendering.Voxels.Grid
 
                     bool solidCube = atCell && !smooth && CellIsSolid(cell);
 
-                    // Only a cell whose corners straddle the iso level can hold surface, and almost
-                    // none do: eight loads decide it, and the same eight then answer every question
-                    // asked of this cell - the probes below, the bisection, the normal - with no
-                    // load at all. An explicit branch, because && is not guaranteed to
-                    // short-circuit in a shader.
+                    // Only a cell whose corners straddle the iso level can hold surface: eight loads decide it and then
+                    // answer the probes, the bisection and the normal. An explicit branch, since && need not short-circuit in a shader.
                     bool crosses = false;
                     float insideAt = tSegmentEnd;
                     float outsideAt = t;
@@ -770,12 +701,8 @@ namespace Stride.Rendering.Voxels.Grid
                         far = CornersFar(cell);
                         if (CornersStraddle(near, far))
                         {
-                            // Four points across the segment this cell gives the ray: testing only
-                            // where it leaves misses a surface that enters and leaves within one
-                            // cell, which is what a shallow silhouette does, and the ray then lands
-                            // one cell too far - a staircase along every such edge. Flat rather than
-                            // a loop, since the bisection below is one already and the parser takes
-                            // no third level.
+                            // Four points across the segment this cell gives the ray: testing only where it leaves misses
+                            // a surface that enters and leaves within one cell. Flat rather than a loop: the bisection below is one already.
                             float t1 = lerp(t, tSegmentEnd, 0.25);
                             float t2 = lerp(t, tSegmentEnd, 0.50);
                             float t3 = lerp(t, tSegmentEnd, 0.75);
@@ -851,10 +778,8 @@ namespace Stride.Rendering.Voxels.Grid
 
                 if (nets)
                 {
-                    // Every quad surface nets stitches that can cover a point in this cell, not just
-                    // the three the cell owns: a quad spans the vertices of the four cells round a
-                    // grid edge, so the one covering a pixel usually belongs to a neighbour. Nineteen
-                    // cell vertices, twelve quads, once per pixel - the same reach the collider has.
+                    // Every quad surface nets stitches that can cover a point in this cell, not just the three the cell
+                    // owns: a quad spans the four cells round a grid edge. Nineteen cell vertices, twelve quads.
                     int3 c = netsCell;
 
                     float4 vP00 = CellVertex(c + int3( 1,  0,  0));
@@ -912,12 +837,8 @@ namespace Stride.Rendering.Voxels.Grid
                 }
                 else if (smooth)
                 {
-                    // The gradient of the trilinear field at the hit, from the corners already held:
-                    // the exact normal of the surface drawn. Density rises into matter, so the
-                    // outward normal is the gradient reversed. A region flat enough to have no
-                    // gradient has no orientation either; the face just crossed is then the only
-                    // answer available. A hit that started inside matter has no cell held; its
-                    // normal is the box face.
+                    // The gradient of the trilinear field at the hit, from the corners already held; density rises into
+                    // matter, so the outward normal is the gradient reversed. No gradient, or a hit that started inside matter, takes the face just crossed.
                     float3 hitF = saturate((position - (float3)netsCell * cellSize) / cellSize);
                     float3 gradient = TrilinearGradient(hitNear, hitFar, hitF);
                     hitNormal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : faceNormal;

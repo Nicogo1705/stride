@@ -347,10 +347,9 @@ public partial class ShaderMixer(IExternalShaderLoader shaderLoader)
                         var localKey = variable.Key;
                         if (isCompositionArray)
                             localKey += $"[{i}]";
-                        // A `stage compose` supplied by a nested effect was hoisted here with its declaring
-                        // shader, so currentCompositionPath is null even though the caller addresses it by
-                        // the path it was supplied at. Put that path back, or the resources underneath get
-                        // root-relative link names that no parameter key ever matches.
+                        // A `stage compose` supplied by a nested effect is hoisted to the root, so
+                        // currentCompositionPath is null; restore the path it was supplied at so the
+                        // resources underneath get the link names the parameter keys use.
                         var basePath = currentCompositionPath;
                         if (basePath == null)
                             mixinSource.StageCompositionPaths?.TryGetValue(variable.Key, out basePath);

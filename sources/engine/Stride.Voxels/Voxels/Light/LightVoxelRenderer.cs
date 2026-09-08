@@ -192,11 +192,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
                     if (((LightVoxel)Light.Type).SpecularMarcher != null)
                         renderEffect.EffectValidator.ValidateParameter(specularMarcherKey, ((LightVoxel)Light.Type).SpecularMarcher.GetMarchingShader(0));
 
-                    // The composition exists whether or not the light has a bounce marcher: a
-                    // compose with nothing in it does not compile. With none set, the diffuse
-                    // marcher's own shader fills the slot and BounceMarchEnabled stays at zero, so
-                    // the branch that would read it is never taken - and its parameters, which
-                    // nobody writes, are never read either.
+                    // The bounce composition must always be filled: an empty compose does not compile.
+                    // With no bounce marcher the diffuse marcher fills it and BounceMarchEnabled stays zero.
                     var bounce = ((LightVoxel)Light.Type).BounceMarcher ?? ((LightVoxel)Light.Type).DiffuseMarcher;
                     if (bounce != null)
                         renderEffect.EffectValidator.ValidateParameter(bounceMarcherKey, bounce.GetMarchingShader(0));
@@ -254,19 +251,12 @@ namespace Stride.Rendering.Voxels.VoxelGI
             }
 
             /// <summary>
-            /// Asks <see cref="VoxelGIResolver"/> for a reduced-resolution trace this frame and
-            /// fills its parameters, returning the state to read from when one is ready.
+            /// Requests a reduced-resolution trace from <see cref="VoxelGIResolver"/> for this frame and fills its parameters.
+            /// Returns the state to read from, or null when marching inline.
             /// </summary>
             /// <remarks>
-            /// The marcher and the attribute each hold one set of composed parameter keys, and
-            /// whoever calls Update last owns them - so the pass cannot fill its own parameters
-            /// from its own Draw, a phase later. Both are done from here, in order, leaving the
-            /// light's own layout in place for the Apply that follows.
-            /// <para>
-            /// The texture handed back is the one the pass wrote last frame: Prepare runs before
-            /// Draw. It is the same instance every frame, so this only shows on the first frame
-            /// and after a resize, as one frame without indirect light.
-            /// </para>
+            /// The marcher and attribute hold one set of composed keys, so the resolver's parameters are filled here
+            /// and the light's own layout restored afterwards. The texture returned is the one written last frame.
             /// </remarks>
             private static bool warnedNoResolver;
 

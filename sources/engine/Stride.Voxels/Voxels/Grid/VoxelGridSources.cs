@@ -9,14 +9,8 @@ using GraphicsBuffer = Stride.Graphics.Buffer;
 
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// <summary>
-    /// A grid held in an R8G8 3D texture: density in red, material id in green.
-    /// </summary>
-    /// <remarks>
-    /// The form a generator writing straight from a compute shader tends to produce, and the one
-    /// that costs least to sample. A single channel texture works too - every sample then points at
-    /// the first material of the palette.
-    /// </remarks>
+    /// <summary>A grid held in an R8G8 3D texture: density in red, material id in green.</summary>
+    /// <remarks>A single channel texture works too; every sample then points at the first material of the palette.</remarks>
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
     [Display("3D texture")]
     public class VoxelGridSourceTexture3D : IVoxelGridSource
@@ -25,10 +19,7 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberIgnore]
         public Texture Texture { get; set; }
 
-        /// <summary>
-        /// Samples per axis, one more than the cells per axis. Taken from the texture when left at
-        /// zero, which is right unless the texture is larger than the grid it carries.
-        /// </summary>
+        /// <summary>Samples per axis, one more than the cells per axis. Taken from the texture when left at zero.</summary>
         public Int3 SampleCount { get; set; }
 
         /// <summary>The SDSL side of this source.</summary>
@@ -50,10 +41,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// A grid held in a structured buffer, one value per sample, density in bits 0-7 and material in
     /// bits 8-15, laid out x-major with z varying fastest.
     /// </summary>
-    /// <remarks>
-    /// The packing a voxel game commonly keeps its chunks in, where uploading is a widen from 16 to
-    /// 32 bits and nothing else. The material byte is the palette index as it stands.
-    /// </remarks>
+    /// <remarks>The material byte is the palette index.</remarks>
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
     [Display("Packed buffer")]
     public class VoxelGridSourcePackedBuffer : IVoxelGridSource

@@ -107,18 +107,12 @@ Console.WriteLine("\nBuilding + packing fresh packages...");
 // ->GenerateNuspec->Pack circular dependency and fail every engine project.
 // StrideDevPackages=false: forces engine projects through normal build (not the dev-redirect path)
 // regardless of the caller's Stride.Local.props.
-// StridePackAssets=false: skip the asset/.sdpkg packing step here - turning it on fails the pack
-// outright on the editor projects (Stride.Editor, Stride.GameStudio), which takes the whole feed
-// down with it. It does not skip shaders: _StridePrepareAssetsForPack also fires for any project
-// holding .sdsl, precisely so a global -p: here cannot strip the shaders the runtime effect
-// compiler reads off disk from the extracted package.
+// StridePackAssets=false: skip the asset/.sdpkg packing step, which fails on the editor projects.
+// Shaders are unaffected: _StridePrepareAssetsForPack still runs for any project holding .sdsl.
 // Output -> tempPackDir (not NugetDev); we deploy stubs there explicitly in step 3.
 // No --no-build: self-bootstraps a fresh checkout in one go.
-// Worker nodes from an earlier build outlive it by a quarter of an hour and keep handles on the
-// packages they wrote, so the next run cannot delete them, fails halfway, and leaves the feeds in a
-// state where every project compiles against a different mix of old and new - CS0117 errors that
-// point at nothing wrong in the code. No node reuse for this run, and the leftovers of any other are
-// shut down first.
+// Lingering MSBuild worker nodes keep handles on the packages they wrote and block their deletion,
+// so shut them down first and disable node reuse for this run.
 RunProcess("dotnet", "build-server shutdown", silent: true, onLine: _ => { });
 foreach (var node in Process.GetProcessesByName("MSBuild"))
 {

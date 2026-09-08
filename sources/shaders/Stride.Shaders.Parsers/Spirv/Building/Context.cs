@@ -143,10 +143,9 @@ public interface IExternalShaderLoader
     bool SuppressSourceHash { get; set; }
 
     /// <summary>
-    /// The source hash to stamp on the next compilation from code, in place of the code's own:
-    /// an instantiation of a generic or MemberName shader is compiled from expanded code, and
-    /// the hash the cache must validate against is the original file's. Consumed by that
-    /// compilation.
+    /// The source hash to stamp on the next compilation from code, in place of the code's own.
+    /// Used by generic and MemberName instantiations, whose cache entry must validate against the
+    /// original file. Consumed by that compilation.
     /// </summary>
     ObjectId? SourceHashOverride { get; set; }
 }

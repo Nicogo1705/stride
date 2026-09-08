@@ -15,13 +15,11 @@ using NRigidPose = BepuPhysics.RigidPose;
 namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 
 /// <summary>
-/// What the shared voxel machinery needs from each of the shapes below.
+/// What the shared voxel machinery needs from each voxel shape.
 /// </summary>
 /// <remarks>
-/// The shapes differ only in what a cell contributes to the narrow phase. Everything else - bounds,
-/// bounding box queries, ray traversal - is the same grid walk, written once in
-/// <see cref="VoxelShapeHelpers"/> and reached through this interface. Deliberately not generic over
-/// the density source: the walk needs the cell layout and never a sample.
+/// Bounds, bounding box queries and ray traversal are the same grid walk for every shape, written
+/// once in <see cref="VoxelShapeHelpers"/>. Not generic over the density source: the walk only needs the cell layout.
 /// </remarks>
 public unsafe interface IVoxelShape
 {
@@ -31,16 +29,8 @@ public unsafe interface IVoxelShape
     /// <summary>Upper bound on what <see cref="GetCellChildren"/> can report for one cell.</summary>
     static abstract int MaxChildrenPerCell { get; }
 
-    /// <summary>
-    /// How many cells beyond the one that owns a child that child may reach.
-    /// </summary>
-    /// <remarks>
-    /// Zero for a shape whose children sit inside their own cell. One for surface nets, whose quads
-    /// are built from the vertices of four neighbouring cells and therefore lie mostly outside the
-    /// cell that owns them - a query that looks only at the cells it touches misses the triangle
-    /// covering the very point it is asking about, which is a hole that opens and closes as the
-    /// query moves by a fraction of a cell.
-    /// </remarks>
+    /// <summary>How many cells beyond its owning cell a child may reach.</summary>
+    /// <remarks>Zero when children sit inside their own cell; one for surface nets, whose quads span four neighbouring cells.</remarks>
     static abstract int ChildReach { get; }
 
     /// <summary>Cells along X.</summary>
@@ -52,24 +42,17 @@ public unsafe interface IVoxelShape
     /// <summary>Edge length of one cell, in world units.</summary>
     float CellSize { get; }
 
-    /// <summary>
-    /// Children this cell contributes, as child indices.
-    /// </summary>
+    /// <summary>Children this cell contributes, as child indices.</summary>
     /// <remarks>
-    /// Decides existence without building geometry - a handful of sample reads - because a query is
-    /// mostly cells that contribute nothing. The geometry is built later, in
-    /// <c>GetLocalChild</c> and <see cref="RayTestChild"/>, only for children that are actually
-    /// tested.
+    /// Decides existence from a few sample reads without building geometry; <c>GetLocalChild</c> and
+    /// <see cref="RayTestChild"/> build it only for children actually tested.
     /// </remarks>
     int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices);
 
     /// <summary>Tests one child against a ray already expressed in the shape's local space.</summary>
     bool RayTestChild(int childIndex, Vector3 origin, Vector3 direction, out float t, out Vector3 normal);
 
-    /// <summary>
-    /// Writes a child's convex shape data to <paramref name="destination"/> and reports where that
-    /// child sits in local space. Returns the number of bytes written.
-    /// </summary>
+    /// <summary>Writes a child's convex shape data to <paramref name="destination"/> and its local position. Returns the byte count written.</summary>
     int WriteChildShapeData(int childIndex, out Vector3 localPosition, void* destination);
 }
 
@@ -77,12 +60,8 @@ public unsafe interface IVoxelShape
 /// The grid walks every voxel shape shares: bounds, bounding box queries, and ray traversal.
 /// </summary>
 /// <remarks>
-/// None of this uses an acceleration structure, and that is the point. Bepu's own <see cref="Mesh"/>
-/// - and the voxel collidable in Bepu's demos - build a bounding volume tree over the children,
-/// because a triangle soup has no structure to exploit. A regular grid already is the structure: a
-/// bounding box maps to a range of cell indices by division, and a ray walks the cells it crosses in
-/// order. So there is no tree to build when the collidable is created and none to refit when a voxel
-/// is edited.
+/// No acceleration structure: a bounding box maps to a cell range by division and a ray walks the
+/// cells it crosses in order, so there is no tree to build or refit when a voxel is edited.
 /// </remarks>
 public static unsafe class VoxelShapeHelpers
 {
@@ -106,10 +85,7 @@ public static unsafe class VoxelShapeHelpers
         }
     }
 
-    /// <summary>
-    /// Clamps a local space bounding box to the range of cells it can touch. False when the box
-    /// misses the grid entirely.
-    /// </summary>
+    /// <summary>Clamps a local space bounding box to the cells it can touch. False when it misses the grid.</summary>
     public static bool GetCellRange<TShape>(ref TShape shape, Vector3 min, Vector3 max, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1)
         where TShape : unmanaged, IVoxelShape
     {
@@ -138,10 +114,7 @@ public static unsafe class VoxelShapeHelpers
         return true;
     }
 
-    /// <summary>
-    /// Reports every child overlapping a local space bounding box to a breakable enumerator. The
-    /// other two overloads are written in terms of this same loop.
-    /// </summary>
+    /// <summary>Reports every child overlapping a local space bounding box to a breakable enumerator.</summary>
     public static void EnumerateOverlaps<TShape, TEnumerator>(ref TShape shape, Vector3 min, Vector3 max, ref TEnumerator enumerator)
         where TShape : unmanaged, IVoxelShape
         where TEnumerator : IBreakableForEach<int>
@@ -184,9 +157,8 @@ public static unsafe class VoxelShapeHelpers
     }
 
     /// <summary>
-    /// The swept query used by sweep tests. The sweep is handled by expanding the box to cover the
-    /// whole swept volume rather than walking it - conservative, so it can report a child the sweep
-    /// would have missed, which costs a narrow phase test and never a wrong answer.
+    /// The swept query used by sweep tests. The box is expanded to cover the whole swept volume,
+    /// which is conservative: it may report a child the sweep misses, never the reverse.
     /// </summary>
     public static void FindLocalOverlaps<TShape, TOverlaps>(Vector3 min, Vector3 max, Vector3 sweep, float maximumT, BufferPool pool, void* overlaps, ref TShape shape)
         where TShape : unmanaged, IVoxelShape
@@ -213,14 +185,10 @@ public static unsafe class VoxelShapeHelpers
         }
     }
 
-    /// <summary>
-    /// Walks the cells a ray crosses, in order, testing the children of each.
-    /// </summary>
+    /// <summary>Walks the cells a ray crosses, in order, testing the children of each.</summary>
     /// <remarks>
-    /// A three dimensional DDA: clip the ray to the grid box, then step from cell to cell along
-    /// whichever axis reaches its next boundary first. Cells are visited in increasing distance, so
-    /// a handler that narrows <paramref name="maximumT"/> on a hit stops the walk almost
-    /// immediately - which is what makes this cheap for the short probes a game actually casts.
+    /// A 3D DDA: clip the ray to the grid box, then step along the axis whose boundary is nearest.
+    /// Cells come in increasing distance, so a handler narrowing <paramref name="maximumT"/> stops the walk early.
     /// </remarks>
     public static void RayTest<TShape, TRayHitHandler>(ref TShape shape, in NRigidPose pose, in RayData ray, ref float maximumT, ref TRayHitHandler hitHandler)
         where TShape : unmanaged, IVoxelShape
@@ -252,10 +220,8 @@ public static unsafe class VoxelShapeHelpers
         var t = tEnter;
         while (t <= tExit && t <= maximumT)
         {
-            // The block around this cell, not the cell alone: a child owned by a neighbour can be
-            // the one covering the point the ray is passing through. Without this the surface has
-            // holes that open and close as the ray moves a fraction of a cell - it aims at nothing,
-            // then at something, for no visible reason.
+            // Test the block around this cell, not the cell alone: a child owned by a neighbour can
+            // cover the point the ray is passing through (see ChildReach).
             for (int ox = -reach; ox <= reach; ++ox)
             {
                 for (int oy = -reach; oy <= reach; ++oy)
@@ -551,14 +517,10 @@ public unsafe struct VoxelSphereShape<TSource> : IHomogeneousCompoundShape<Spher
 }
 
 /// <summary>
-/// A voxel grid presented to the narrow phase as the triangles of its iso-surface, generated by
-/// either marching cubes or surface nets from the same field a renderer would mesh.
+/// A voxel grid presented to the narrow phase as the triangles of its iso-surface, from either
+/// marching cubes or surface nets.
 /// </summary>
-/// <remarks>
-/// One shape covers both algorithms: they differ only in how a cell turns into triangles, and both
-/// address at most six children per cell. Marching cubes uses five of those six slots and leaves the
-/// last empty, which costs nothing - slots are an indexing convention, never storage.
-/// </remarks>
+/// <remarks>Both algorithms address at most six children per cell; marching cubes uses five slots. Slots are an indexing convention, not storage.</remarks>
 public unsafe struct VoxelTriangleShape<TSource> : IHomogeneousCompoundShape<Triangle, TriangleWide>, IVoxelShape
     where TSource : unmanaged, IVoxelDensitySource
 {
@@ -567,10 +529,7 @@ public unsafe struct VoxelTriangleShape<TSource> : IHomogeneousCompoundShape<Tri
     public static int ChildShapeTypeId => Triangle.Id;
     public static int MaxChildrenPerCell => SlotsPerCell;
 
-    /// <summary>
-    /// One. A surface-nets quad is built from the vertices of the four cells around an edge, and a
-    /// marching-cubes triangle can touch any face of its cell, so both reach a cell out.
-    /// </summary>
+    /// <summary>One: surface-nets quads span the four cells around an edge, and marching-cubes triangles can touch any face of the cell.</summary>
     public static int ChildReach => 1;
 
     /// <summary>Child index granularity: childIndex = cellIndex * SlotsPerCell + slot.</summary>
@@ -591,15 +550,8 @@ public unsafe struct VoxelTriangleShape<TSource> : IHomogeneousCompoundShape<Tri
     public static ShapeBatch CreateShapeBatch(BufferPool pool, int initialCapacity, Shapes shapeBatches)
         => new HomogeneousCompoundShapeBatch<VoxelTriangleShape<TSource>, Triangle, TriangleWide>(pool, initialCapacity);
 
-    /// <summary>
-    /// Which slots of a cell carry a triangle, without building any of them.
-    /// </summary>
-    /// <remarks>
-    /// Marching cubes classifies the cell once and reads the length off the case table. Surface nets
-    /// tests three edges for a sign change - two sample reads each - and never touches a vertex.
-    /// Either way a cell that contributes nothing, which is nearly all of them, costs eight sample
-    /// reads or six.
-    /// </remarks>
+    /// <summary>Which slots of a cell carry a triangle, without building any of them.</summary>
+    /// <remarks>Marching cubes classifies the cell and reads the case table; surface nets tests three edges for a sign change.</remarks>
     public readonly int GetCellChildren(int cx, int cy, int cz, Span<int> childIndices)
     {
         var cellIndex = GridData.CellIndex(cx, cy, cz) * SlotsPerCell;

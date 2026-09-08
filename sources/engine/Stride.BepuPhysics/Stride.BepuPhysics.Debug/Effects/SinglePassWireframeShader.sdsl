@@ -130,15 +130,8 @@
             lengthsWS[1] = length(edgesWS[1]);
             lengthsWS[2] = length(edgesWS[2]);
 
-            // A quad split into two triangles leaves a diagonal down the middle of every face, and
-            // hiding it is what this is for. It is recognised by being much the longest edge - at
-            // least the square root of two times the sides it spans, and that only for a square.
-            //
-            // Recognised, not assumed. Excluding whichever edge happens to be longest hides a real
-            // edge of every triangle in a mesh that is not made of quads, and comparing each length
-            // against the maximum instead excludes all three of an equilateral triangle, so the mesh
-            // draws as nothing: an icosahedron, or a marching-cubes surface, is built, uploaded and
-            // rendered blank - which reads as geometry that was never generated at all.
+            // Hide the diagonal of a quad split into two triangles. It is detected as an edge much
+            // longer than the other two (sqrt(2) for a square), so non-quad meshes keep all their edges.
             float longest = max(max(lengthsWS[0], lengthsWS[1]), lengthsWS[2]);
             float shortest = min(min(lengthsWS[0], lengthsWS[1]), lengthsWS[2]);
             float middle = lengthsWS[0] + lengthsWS[1] + lengthsWS[2] - longest - shortest;

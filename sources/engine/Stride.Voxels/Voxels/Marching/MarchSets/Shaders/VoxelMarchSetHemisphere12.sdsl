@@ -23,13 +23,8 @@ shader VoxelMarchSetHemisphere12 : VoxelMarchSet
 
         float4 reflLighting = float4(0, 0, 0, 0);
         
-        // Twelve cones, walked from a table rather than written out twelve times. Each call to
-        // Marcher.March inlines the whole cone - its step loop and the clipmap sampler behind it -
-        // so twelve copies were most of a pixel shader FXC took half a minute to compile, and the
-        // wait every time a material's permutation changed. One copy in a loop is the same
-        // arithmetic per pixel and a twelfth of the code. [loop] keeps FXC from unrolling it back.
-        //
-        // Dot products of rays: four central cones at 0.84, eight outer at 0.22.
+        // Twelve cones from a table in a [loop]: each Marcher.March call inlines the whole cone, so one
+        // copy keeps the shader small. Dot products of rays: four central cones at 0.84, eight outer at 0.22.
         static const float central = 0.84 / (0.84 * 4 + 0.22 * 8);
         static const float outer = 0.22 / (0.84 * 4 + 0.22 * 8);
         static const float3 directions[12] =

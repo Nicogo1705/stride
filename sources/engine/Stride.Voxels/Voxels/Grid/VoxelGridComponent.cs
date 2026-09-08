@@ -30,17 +30,10 @@ namespace Stride.Rendering.Voxels.Grid
     /// Draws a voxel field as a body of the scene, with the materials of the scene.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The field is walked once per pixel by a resolve pass, which leaves where the surface is,
-    /// which way it faces and which material it carries. Each material in <see cref="Materials"/>
-    /// is then drawn as itself: an ordinary material, taken as compiled, put over the pixels that
-    /// are its own. Lights, shadows, fog, screen space effects and the depth test against other
-    /// geometry are not reimplemented for the field; the field simply goes down the same path.
-    /// </para>
-    /// <para>
-    /// The samples come from <see cref="Traversal"/>'s source; a sample's material byte is an index
-    /// into <see cref="Materials"/>.
-    /// </para>
+    /// A resolve pass walks the field once per pixel and leaves the surface's position, normal and material id.
+    /// Each material in <see cref="Materials"/> is then drawn as an ordinary material over the pixels that are its
+    /// own, so lighting, shadows, fog and depth testing take their usual path. The samples come from
+    /// <see cref="Traversal"/>'s source; a sample's material byte indexes <see cref="Materials"/>.
     /// </remarks>
     [DataContract("VoxelGridComponent")]
     [Display("Voxel Grid", Expand = ExpandRule.Once)]
@@ -53,25 +46,15 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMember(10)]
         public IVoxelGridTraversal Traversal { get; set; } = new VoxelGridTraversalDDA();
 
-        /// <summary>
-        /// One material for the whole field, whatever the samples say. Leave empty to draw each
-        /// id with the material of the same index in <see cref="Materials"/>.
-        /// </summary>
+        /// <summary>One material for the whole field. Leave empty to draw each id with the material of the same index in <see cref="Materials"/>.</summary>
         /// <userdoc>One material for the whole field. Leave empty to use the list of materials by id.</userdoc>
         [DataMember(15)]
         public Material Material { get; set; }
 
-        /// <summary>
-        /// The materials the samples point at, by id: a sample whose material byte is 3 is drawn
-        /// with the fourth material here. Up to 256, authored like any other material and drawn as
-        /// themselves - every feature of the material, not a copy of its numbers.
-        /// </summary>
+        /// <summary>The materials the samples point at, by id: a sample whose material byte is 3 is drawn with the fourth material here. Up to 256.</summary>
         /// <remarks>
-        /// Each material is one draw of the field's proxy box over the pixels the resolve pass gave
-        /// to its id, so the count of materials is the count of draws; each is cheap, a read and a
-        /// compare per pixel for the pixels that are not its own. Texture coordinates are the proxy
-        /// box's, which a texture in a material will show; a material meant for a field maps by
-        /// world position.
+        /// Each material is one draw of the proxy box over the pixels the resolve pass gave to its id. Texture
+        /// coordinates are the proxy box's; a material meant for a field maps by world position.
         /// </remarks>
         /// <userdoc>The materials the samples point at, by id. A sample's material byte is an index into this list.</userdoc>
         [DataMember(17)]
@@ -82,34 +65,22 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMember(18)]
         public VoxelMaterialDither Dither { get; set; } = VoxelMaterialDither.InterleavedGradientNoise;
 
-        /// <summary>
-        /// Whether a voxel GI volume takes the field straight from its samples, instead of
-        /// rasterising the field's proxy box through the voxelizer, walking a ray per fragment.
-        /// </summary>
-        /// <remarks>
-        /// What reaches the GI this way is what the field's materials emit, and its occlusion; the
-        /// voxelizer would also carry the sun's light off the field. A world lit by what emits loses
-        /// nothing and saves the walks.
-        /// </remarks>
+        /// <summary>Whether a voxel GI volume takes the field straight from its samples, instead of voxelizing its proxy box.</summary>
+        /// <remarks>Carries what the field's materials emit and its occlusion, not the direct light off the field.</remarks>
         /// <userdoc>Let a voxel GI volume read the field's samples directly, rather than voxelizing the field like a mesh. Carries emission and occlusion; not direct light.</userdoc>
         [DataMember(19)]
         public bool InjectIntoGI { get; set; } = true;
 
         /// <summary>
-        /// With <see cref="InjectIntoGI"/>, how much of the previous frame's indirect light the
-        /// field's colour sends back into the GI; 0 injects emission alone. The GI reads this back
-        /// next frame, so with the volume's own bounce the product must stay under one or the
-        /// field lights itself up without end.
+        /// With <see cref="InjectIntoGI"/>, how much of the previous frame's indirect light the field's colour sends back
+        /// into the GI; 0 injects emission alone. Its product with the volume's own bounce must stay under one.
         /// </summary>
         /// <userdoc>How much indirect light the field bounces back into the GI when injected. 0 carries only what it emits.</userdoc>
         [DataMember(20)]
         [DataMemberRange(0.0, 4.0, 0.05, 0.25, 2)]
         public float InjectBounce { get; set; } = 0.5f;
 
-        /// <summary>
-        /// Whether the camera walks a coarser level of the field where a pixel covers more than
-        /// one cell. Needs a source with coarser levels, such as a 3D texture with mips.
-        /// </summary>
+        /// <summary>Whether the camera walks a coarser level of the field where a pixel covers more than one cell. Needs a source with coarser levels, such as a 3D texture with mips.</summary>
         /// <userdoc>Walk a coarser level of the field far from the camera, where its source holds one.</userdoc>
         [DataMember(21)]
         public bool LevelOfDetail { get; set; } = true;
@@ -129,10 +100,7 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberIgnore]
         public float DebugView { get; set; }
 
-        /// <summary>
-        /// Counts the times the field's extent changed, so the model can be rebuilt on an extent
-        /// change that the sample count alone would not show.
-        /// </summary>
+        /// <summary>Counts the times the field's extent changed, so the model is rebuilt when the sample count alone would not show it.</summary>
         [DataMemberIgnore]
         public int ExtentRevision { get; private set; }
 

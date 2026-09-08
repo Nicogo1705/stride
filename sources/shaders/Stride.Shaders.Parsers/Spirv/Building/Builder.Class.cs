@@ -31,10 +31,8 @@ public record class ShaderMixinInstantiation(List<ShaderClassInstantiation> Mixi
     /// it was supplied at, keyed by composition variable name.
     /// </summary>
     /// <remarks>
-    /// The declaring shader and its value are both hoisted to the root, since a stage slot belongs to
-    /// the whole stage. Merging them there would name their resources as if they had been supplied at
-    /// the root, dropping the path the caller actually addresses them by - so the path travels with the
-    /// value and is put back when the root merges it.
+    /// The declaring shader and its value are hoisted to the root; the path travels with the value so
+    /// the root can name the resources underneath by the path the caller addresses them with.
     /// </remarks>
     public Dictionary<string, string>? StageCompositionPaths { get; set; }
 }
@@ -619,10 +617,8 @@ public partial class SpirvBuilder
                     shaderName = cacheKey;
                 }
 
-                // Use original filename for debug info (OpString/OpSource), and the original file's
-                // hash for the cache stamp: the expanded code's would match nothing on disk, and no
-                // stamp at all left an edited generic or MemberName shader served stale from the
-                // cache for as long as the cache lived.
+                // Use the original filename for debug info (OpString/OpSource) and the original file's
+                // hash for the cache stamp, since the expanded code's hash matches nothing on disk.
                 if (originalHash is { } known)
                     shaderLoader.SourceHashOverride = known;
                 else

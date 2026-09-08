@@ -3,9 +3,8 @@
 namespace Stride.Rendering.Voxels.VoxelGI
 {
     /// <summary>
-    /// Traces the diffuse cones once per pixel of a reduced-resolution target, off the depth buffer
-    /// a Z prepass has already filled. <see cref="LightVoxelShader"/> then reads the result instead
-    /// of marching, which is what takes the cost off the shaded pixel count.
+    /// Traces the diffuse cones once per pixel of a reduced-resolution target from the depth buffer.
+    /// <see cref="LightVoxelShader"/> reads the result instead of marching.
     /// </summary>
     shader VoxelGIResolveShader : ImageEffectShader, DepthBase, Transformation, MarchAttributes
     {
@@ -38,10 +37,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
             float3 worldPosition = WorldPositionFromUV(uv, zProj);
 
-            // The geometric normal, taken from how the reconstructed surface tilts across the
-            // pixel. A forward renderer has no normal buffer to read, and this pass runs at a
-            // fraction of the resolution, where per-pixel normal detail is gone either way. The
-            // sign of a cross product depends on winding, so face it back towards the camera.
+            // Geometric normal from the reconstructed surface: a forward renderer has no normal buffer.
+            // The cross product sign depends on winding, so face it towards the camera.
             float3 normal = normalize(cross(ddy(worldPosition), ddx(worldPosition)));
             if (dot(normal, Eye.xyz - worldPosition) < 0.0)
                 normal = -normal;
@@ -49,10 +46,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
             float4 light = diffuseMarcher.March(worldPosition, normal);
             light.rgb += SkyLight * saturate(1.0 - light.a);
 
-            // The raw projected depth rides in alpha, not a linearized one: linearizing needs the
-            // camera's ZProjection, and the shaded pixel that reads this back has its own copy of
-            // that constant. Passing the value through untouched leaves one source for it, the one
-            // the light shader is sure of.
+            // Alpha carries the raw projected depth; the light shader linearizes it with its own ZProjection.
             return float4(light.rgb, zProj);
         }
     };

@@ -388,10 +388,8 @@ namespace Stride.Rendering.Images
                 currentInput = aoOutput;
             }
 
-            // InputCount, not just the null checks below: those handle a buffer that was bound and
-            // is empty, while a render path that produced no G-buffer at all - a scene with no
-            // meshes in it - leaves the inputs shorter than the indices, and asking for one throws
-            // rather than returning null. The effect already knows how to do without them.
+            // A render path that produced no G-buffer leaves fewer inputs than indices, and GetInput
+            // throws rather than returning null; check InputCount before the null checks below.
             if (LocalReflections.Enabled && inputDepthTexture != null && InputCount > 3)
             {
                 var normalsBuffer = GetInput(2);

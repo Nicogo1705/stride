@@ -30,11 +30,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// Walks every grid once per pixel and keeps the nearest surface: its normal, its material and
     /// grid, its position and depth, in three textures the grids' materials then read.
     /// </summary>
-    /// <remarks>
-    /// The targets are kept from frame to frame and remade when the view changes size; a material
-    /// binds them by key and is told, through <see cref="TargetsVersion"/>, when to bind them
-    /// again.
-    /// </remarks>
+    /// <remarks>The targets are kept across frames and remade when the view changes size; <see cref="TargetsVersion"/> tells a material when to bind them again.</remarks>
     public sealed class VoxelGridResolveRenderer : ImageEffect
     {
         private readonly ImageEffectShader shader = new("VoxelGridResolveEffect");
@@ -85,8 +81,7 @@ namespace Stride.Rendering.Voxels.Grid
                 return;
 
             var commandList = context.CommandList;
-            // Zero in every channel: the normal's w is what says "resolved", and Color4.Black
-            // carries a 1 there - which made every pixel of the sky the first grid's id 0.
+            // Zero in every channel: the normal's w is what says "resolved", and Color4.Black carries a 1 there.
             commandList.Clear(depth, DepthStencilClearOptions.DepthBuffer);
             commandList.Clear(Normal, new Color4(0, 0, 0, 0));
             commandList.Clear(Material, new Color4(0, 0, 0, 0));
@@ -159,10 +154,7 @@ namespace Stride.Rendering.Voxels.Grid
         }
     }
 
-    /// <summary>
-    /// The compositor's slot for the resolve: runs the renderer over the grids its owner listed,
-    /// before the scene is drawn, inside the camera's renderer so it has the camera's view.
-    /// </summary>
+    /// <summary>The compositor's slot for the resolve: runs the renderer over the listed grids before the scene is drawn, inside the camera's renderer so it has its view.</summary>
     public sealed class VoxelGridResolvePass : SceneRendererBase
     {
         /// <summary>The renderer this pass drives; grids register with it each frame.</summary>

@@ -11,31 +11,19 @@ namespace Stride.BepuPhysics.Definitions.Colliders.Voxels;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every game packs its voxels differently - a byte of density, a float, a density byte and a
-/// material byte in one <see cref="ushort"/>, or separate arrays for each - and none of those
-/// choices concern collision, which only ever asks one question: how solid is this sample. So the
-/// packing is a type parameter, and the three built-in sources below are examples rather than a
-/// closed set. A game with two parallel arrays supplies only the density one.
-/// </para>
-/// <para>
-/// Implementations live in unmanaged memory alongside the shape - Bepu keeps shapes in its own
-/// pools and hands them back as raw pointers - so a source may hold a <see cref="Buffer{T}"/> or a
-/// raw pointer, and nothing managed. Density is read on the physics thread, once per sample per
+/// The sample packing is a type parameter; the built-in sources below are examples, not a closed set.
+/// Implementations live in unmanaged memory next to the shape and may hold a <see cref="Buffer{T}"/>
+/// or a raw pointer, nothing managed. Density is read on the physics thread once per sample per
 /// query, so keep it to an index and a load.
 /// </para>
 /// <para>
-/// Each source reserves three consecutive Bepu shape type ids through
-/// <see cref="ShapeTypeIdBase"/>, one for each of the box, sphere and triangle shapes built over it.
-/// Bepu's built-in ids end at 8 (Mesh), the sources here take 12 through 20, and a game defining its
-/// own picks anything free and unique within its simulation.
+/// Each source reserves three consecutive Bepu shape type ids from <see cref="ShapeTypeIdBase"/>.
+/// Bepu's built-in ids end at 8; the sources here use 12 through 20.
 /// </para>
 /// </remarks>
 public interface IVoxelDensitySource
 {
-    /// <summary>
-    /// First of three consecutive shape type ids reserved for this source: base + 0 for the box
-    /// shape, + 1 for the sphere shape, + 2 for the triangle shape.
-    /// </summary>
+    /// <summary>First of three consecutive shape type ids: base + 0 box, + 1 sphere, + 2 triangle.</summary>
     static abstract int ShapeTypeIdBase { get; }
 
     /// <summary>Samples along X. One more than the number of cells.</summary>
@@ -45,10 +33,8 @@ public interface IVoxelDensitySource
     /// <summary>Samples along Z. One more than the number of cells.</summary>
     int SamplesZ { get; }
 
-    /// <summary>
-    /// Density of one sample, normalized so that the collider's iso level is comparable against it.
-    /// Coordinates are clamped in range before this is called, so implementations do not check.
-    /// </summary>
+    /// <summary>Density of one sample, comparable against the collider's iso level.</summary>
+    /// <remarks>Coordinates are clamped in range before this is called; implementations do not check.</remarks>
     float Density(int x, int y, int z);
 }
 
@@ -56,10 +42,7 @@ public interface IVoxelDensitySource
 /// Density and material packed one per <see cref="ushort"/>, density in bits 0-7 and material in
 /// bits 8-15, laid out x-major with z varying fastest.
 /// </summary>
-/// <remarks>
-/// The layout a voxel game commonly uses to upload a chunk to the GPU, so the same array can serve
-/// rendering and collision. The material half is ignored here; collision has no use for it.
-/// </remarks>
+/// <remarks>The material half is ignored by collision.</remarks>
 public struct PackedVoxelSource : IVoxelDensitySource
 {
     public static int ShapeTypeIdBase => 12;
@@ -81,13 +64,8 @@ public struct PackedVoxelSource : IVoxelDensitySource
         => (byte)(Samples[(x * SamplesY + y) * SamplesZ + z] >> 8);
 }
 
-/// <summary>
-/// One byte of density per sample, x-major with z varying fastest.
-/// </summary>
-/// <remarks>
-/// Also the source to use for a game keeping density and material in two parallel arrays: hand over
-/// the density one and leave the other out of physics entirely.
-/// </remarks>
+/// <summary>One byte of density per sample, x-major with z varying fastest.</summary>
+/// <remarks>Also fits a game keeping density and material in two parallel arrays.</remarks>
 public struct ByteVoxelSource : IVoxelDensitySource
 {
     public static int ShapeTypeIdBase => 15;
@@ -103,14 +81,8 @@ public struct ByteVoxelSource : IVoxelDensitySource
         => Samples[(x * SamplesY + y) * SamplesZ + z] * (1f / 255f);
 }
 
-/// <summary>
-/// One float of density per sample, x-major with z varying fastest, used as is.
-/// </summary>
-/// <remarks>
-/// The natural source for a signed distance field or any generator working in continuous values.
-/// Whatever range it produces, the collider's iso level is compared against it directly, so a field
-/// centred on zero simply takes an iso level of zero.
-/// </remarks>
+/// <summary>One float of density per sample, x-major with z varying fastest, used as is.</summary>
+/// <remarks>Suits a signed distance field; a field centred on zero takes an iso level of zero.</remarks>
 public struct FloatVoxelSource : IVoxelDensitySource
 {
     public static int ShapeTypeIdBase => 18;

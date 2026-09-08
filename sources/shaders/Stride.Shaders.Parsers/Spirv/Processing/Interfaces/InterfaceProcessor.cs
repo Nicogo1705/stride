@@ -60,13 +60,8 @@ namespace Stride.Shaders.Spirv.Processing.Interfaces
         /// through their composition variable and so can never be the shader's entry point.
         /// </summary>
         /// <remarks>
-        /// A composition that happens to inherit the same base as the shader it is composed into
-        /// inherits that base's entry point too, and lands in the same method group. Picking the
-        /// group's last member then picks the composition's copy: Stride.Voxels' Voxel2x2x2Mipmap
-        /// composes a Voxel2x2x2Mipmapper and both derive from ComputeShaderBase, so CSMain
-        /// resolved to the composition's, which calls the empty base Compute(). The real body -
-        /// and, once dead code was removed, the mipmap textures with it - disappeared, and voxel
-        /// GI silently contributed nothing.
+        /// A composition inheriting the same base as its host inherits the base's entry point too and
+        /// lands in the same method group, so it must be excluded when picking the entry point.
         /// </remarks>
         static HashSet<int> CollectCompositionFunctions(SpirvBuffer buffer)
         {
@@ -347,20 +342,12 @@ namespace Stride.Shaders.Spirv.Processing.Interfaces
         /// <summary>
         /// Drops geometry stream output parameters from every method that still has one, and the
         /// matching argument from every call to them.
-        /// <para>
-        /// A <c>TriangleStream&lt;Output&gt;</c> parameter carries no data - appending goes through
-        /// OpEmitVertexSDSL and the stage's output variables - but it cannot be dropped earlier:
-        /// EntryPointWrapperGenerator reads the output topology off it to emit the OutputPoints /
-        /// OutputLineStrip / OutputTriangleStrip execution mode. So it survives until here, where
-        /// the entry point has already been stripped of it and everything else still has to be.
-        /// </para>
-        /// <para>
-        /// The function type is rewritten through GetOrRegister rather than in place: a method and
-        /// the entry point calling it share one OpTypeFunction when their signatures match, and
-        /// mutating it for one silently rewrites the other - which is how the entry point's own
-        /// removal left such a method with more parameters than its type declared.
-        /// </para>
         /// </summary>
+        /// <remarks>
+        /// The parameter carries no data (appending goes through OpEmitVertexSDSL) but must survive
+        /// until EntryPointWrapperGenerator has read the output topology off it. Function types are
+        /// rewritten through GetOrRegister, not in place, since several functions may share one OpTypeFunction.
+        /// </remarks>
         private static void RemoveGeometryStreamParameters(SpirvBuffer buffer, SpirvContext context)
         {
             // Which parameter index each function loses.

@@ -10,9 +10,8 @@ using Stride.Rendering.Images;
 namespace Stride.Rendering.Voxels.VoxelGI
 {
     /// <summary>
-    /// What the reduced-resolution GI pass and the light shader share. The light group fills the
-    /// request during Prepare, the pass answers it during Draw, and the shader reads the texture on
-    /// the frame after it was written.
+    /// State shared between the reduced-resolution GI pass and the light shader. The light group fills
+    /// the request during Prepare, the pass draws during Draw, and the shader reads the texture the next frame.
     /// </summary>
     public class VoxelGIResolveState
     {
@@ -33,20 +32,11 @@ namespace Stride.Rendering.Voxels.VoxelGI
     }
 
     /// <summary>
-    /// Traces the diffuse cones into a reduced-resolution buffer, once per pixel of that buffer
-    /// rather than once per shaded pixel.
+    /// Traces the diffuse cones into a reduced-resolution buffer, once per pixel of that buffer rather than per shaded pixel.
     /// </summary>
     /// <remarks>
-    /// The cones are the whole cost of the voxel light - on a static scene they are the whole cost
-    /// of the frame - and they are the one part of it that does not need the shading resolution:
-    /// bounced light is low frequency by nature. Quartering the pixel count quarters the cones; the
-    /// shader that used to march them samples this buffer instead, weighting its taps by depth so
-    /// the reduction does not bleed light across silhouettes.
-    /// <para>
-    /// The pass runs off the depth buffer, which means it needs a Z prepass to have filled it -
-    /// <see cref="ForwardRendererVoxels"/> runs one, and falls back to marching inline when the
-    /// compositor has no depth-only stage to run.
-    /// </para>
+    /// Reads the depth buffer, so a Z prepass must have filled it: <see cref="ForwardRendererVoxels"/> runs one,
+    /// and the light falls back to marching inline when the compositor has no depth-only stage.
     /// </remarks>
     public class VoxelGIResolver : IDisposable
     {
@@ -58,8 +48,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
         private Texture target;
 
         /// <summary>
-        /// Publishes the shared state so the light group can find it during Prepare. The buffer
-        /// itself is allocated on the first Draw, once the depth buffer has given us a size.
+        /// Publishes the shared state for the light group. The buffer itself is allocated on the first Draw.
         /// </summary>
         public void Initialize(RenderContext context)
         {
@@ -74,8 +63,8 @@ namespace Stride.Rendering.Voxels.VoxelGI
         public bool Requested => state.Requested && state.Divisor > 1;
 
         /// <summary>
-        /// Traces the cones into the buffer. <paramref name="depth"/> is the depth buffer as a
-        /// shader resource, and <paramref name="screenSize"/> the resolution being shaded.
+        /// Traces the cones into the buffer. <paramref name="depth"/> is the depth buffer as a shader resource,
+        /// <paramref name="screenSize"/> the resolution being shaded.
         /// </summary>
         public void Draw(RenderDrawContext drawContext, Texture depth, Size2 screenSize)
         {
@@ -99,10 +88,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
             state.Texture = target;
             state.Sizes = new Vector4(1.0f / screenSize.Width, 1.0f / screenSize.Height, 1.0f / width, 1.0f / height);
 
-            // An image effect is a draw of its own: it gets none of the view's constants, and the
-            // ones this pass needs are exactly the ones that turn a depth sample back into a world
-            // position. Without them every pixel rebuilds to roughly the same place, the cones all
-            // start there, and the buffer comes out a flat dim wash with no bounce in it.
+            // An image effect gets none of the view's constants; set the ones needed to rebuild a world position from depth.
             var renderView = drawContext.RenderContext.RenderView;
             Matrix.Invert(ref renderView.Projection, out var projectionInverse);
             Matrix.Invert(ref renderView.View, out var viewInverse);

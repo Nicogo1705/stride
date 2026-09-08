@@ -3,12 +3,8 @@
 namespace Stride.Rendering.Voxels.Grid
 {
     /// Thresholds for sharing a boundary between two materials out between pixels.
-    ///
-    /// A pixel of the grid is drawn by one material, but the field says a point is seventy percent
-    /// one and thirty the other. Handing each pixel to the heavier material draws a hard line that
-    /// follows the cells; handing it to either in those proportions, decided by a fixed pattern
-    /// over the screen, draws a blend at any distance and a fine stipple up close - which the
-    /// antialiasing that follows takes off. The numbers match VoxelMaterialDither.
+    /// A pixel is drawn by one material; an ordered dither over the screen hands it to either material in the
+    /// field's proportions, which reads as a blend after antialiasing. The numbers match VoxelMaterialDither.
     shader VoxelGridDither
     {
         /// The 4x4 Bayer matrix, in the order it is usually written.

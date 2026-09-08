@@ -125,9 +125,7 @@ public record struct SDSLC(IExternalShaderLoader ShaderLoader)
             else if (declaration is UsingShaderNamespace)
             {
                 // Ignore: shader classes are resolved by name across every loaded namespace, so a
-                // `using` at the top of an .sdsl file carries no information the compiler needs.
-                // Erroring on it took down every shader that has one — Stride.Voxels'
-                // LightVoxelShader among them, which made voxel GI unusable.
+                // `using` declaration carries no information the compiler needs.
             }
             else
             {

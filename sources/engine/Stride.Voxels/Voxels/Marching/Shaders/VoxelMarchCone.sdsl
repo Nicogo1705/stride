@@ -9,19 +9,9 @@ shader VoxelMarchCone<int steps, float stepScale, float coneRatio, float offset>
 
     cbuffer PerView.Lighting
     {
-        // How far the cone may travel, in world units. Zero keeps the old behaviour: no limit.
-        //
-        // A cone stops on saturation or on leaving the volume, and neither fires for a ray that
-        // escapes a building. Walls stop occluding once the cone reads them from a coarse mip, so a
-        // reflection ray passes through one a few metres out; and OutsideVolume only tests X and Z,
-        // over a volume far larger than the rooms inside it. The ray then flies on through the
-        // empty space around the geometry for the rest of its step budget and brings back the
-        // outside of the building - which lands in the reflection as a small, legible copy of the
-        // whole level, sitting wherever the view direction puts it. A tight cone makes it sharp
-        // enough to recognise; a wide one only hides it in an average.
-        //
-        // Range is the honest fix, because the artefact is not what the ray found - it is that the
-        // ray was still travelling at all.
+        // Maximum cone travel distance in world units; zero means no limit. Neither saturation nor
+        // OutsideVolume (X and Z only) stops a ray that escapes a building through a coarse mip, so
+        // without a limit it keeps travelling and brings back geometry from outside.
         float maxTraceDistance;
     }
 
@@ -39,18 +29,9 @@ shader VoxelMarchCone<int steps, float stepScale, float coneRatio, float offset>
         float4 light = float4(0.0, 0.0, 0.0, 0.0);
         rayPos += offset * voxelSize * rayDir;
 
-        // Stagger the start by a fraction of a step, hashed from where the ray begins.
-        //
-        // While the max above holds the diameter at one voxel the march advances by a fixed amount,
-        // so its samples land on evenly spaced shells along the ray. Neighbouring pixels on a smooth
-        // surface have smoothly varying ray lengths, so those shells come out as bands - and on a
-        // sphere, whose reflected rays fan out around the view axis, as rings centred on it. The
-        // spacing is the artefact, so breaking the spacing is the fix: offsetting each ray inside
-        // its own first step turns a band into high-frequency noise, which reads as grain rather
-        // than as structure and disappears under any blur.
-        //
-        // Hashed from the world position rather than from a frame counter, so it is stable: the
-        // same point gets the same offset every frame and the grain does not crawl.
+        // Stagger the start by a fraction of a step, hashed from the ray origin. Fixed-size steps put
+        // samples on evenly spaced shells that show as bands (rings on a sphere); the jitter turns them
+        // into stable grain. Hashed from position rather than a frame counter so it does not crawl.
         float jitter = frac(sin(dot(rayPos, float3(12.9898, 78.233, 37.719))) * 43758.5453);
         dist += voxelSize * stepScale * jitter;
 
@@ -63,9 +44,7 @@ shader VoxelMarchCone<int steps, float stepScale, float coneRatio, float offset>
             float diameter = max(voxelSize, finalRatio * dist);
             float3 pos = rayPos + rayDir * dist;
 
-            // Left the volume: from here every sample returns nothing, and a straight ray never
-            // comes back in. Without this a cone aimed at open space paid its full step count -
-            // fetches, mip arithmetic and all - to accumulate zero.
+            // Left the volume: every further sample returns nothing and a straight ray never comes back in.
             if (AttributeSamplers[AttributeID].OutsideVolume(pos))
                 break;
 

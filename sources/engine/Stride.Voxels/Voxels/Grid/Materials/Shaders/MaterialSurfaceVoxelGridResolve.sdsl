@@ -3,14 +3,9 @@
 namespace Stride.Rendering.Voxels.Grid
 {
     /// Puts a resolved voxel surface under an ordinary material.
-    ///
-    /// Mixed in at the front of any material's pixel stage - the user's own material, taken as
-    /// compiled, with nothing regenerated - this replaces the proxy box's surface with the one the
-    /// resolve pass found for the pixel, and steps aside for every pixel that belongs to another
-    /// material or to no grid. Everything after it is the material as its author wrote it: its
-    /// diffuse, its normal map on the tangent frame built here, its emission, and then the lights
-    /// and shadows of the renderer. Which is the point: a voxel drawn with a material is that
-    /// material, not a copy of its numbers.
+    /// Mixed in at the front of a material's pixel stage, it replaces the proxy box's surface with the one
+    /// the resolve pass found for the pixel and discards pixels that belong to another material or grid.
+    /// The rest of the material (diffuse, normal map on the tangent frame built here, emission, lighting) runs unchanged.
     shader MaterialSurfaceVoxelGridResolve : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, VoxelizationPassInfo
     {
         // The traversal and its source are mixed in beside this, not composed, so the field's
@@ -69,10 +64,8 @@ namespace Stride.Rendering.Voxels.Grid
 
             if (streams.IsVoxelizationPass > 0.5)
             {
-                // The voxelizer's view: nothing was resolved for it, so the field is walked from
-                // here, along the view axis - its projections are orthographic - and the pixel is
-                // this material's if the heaviest id at the hit is. No dither: a voxel takes one
-                // material, and noise in the volume would be noise in the light.
+                // The voxelizer's view has nothing resolved, so the field is walked here along the orthographic view axis;
+                // the pixel is this material's if the heaviest id at the hit is. No dither: a voxel takes one material.
                 float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
                 float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
                 float3 forwardWS = normalize(mul(float4(0, 0, -1, 0), ViewInverse).xyz);
@@ -122,14 +115,8 @@ namespace Stride.Rendering.Voxels.Grid
                 streams.Depth = positionDepth.w;
                 streams.PositionWS = float4(positionDepth.xyz, 1);
 
-                // The surface's view depth too. DepthVS is written in the vertex stage from the proxy
-                // box, and the box's back face is what rasterizes here, so it read as the far side
-                // of the box however close the surface was. The shadow receiver picks its cascade by
-                // it, and a near surface put in a far cascade sits on texels several times too
-                // coarse for the offset that keeps it off its own shadow map: a lattice of dark
-                // specks on every lit face, and a sawtooth along anything seen at a grazing angle,
-                // whenever the field casts shadows. The vertex stage writes ShadingPosition.w, so
-                // this is the same number for the surface.
+                // The surface's view depth too: DepthVS comes from the proxy box's back face in the vertex stage,
+                // and the shadow receiver picks its cascade from it, so it must be the surface's own.
                 float4 surfaceClip = mul(float4(positionDepth.xyz, 1), ViewProjection);
                 streams.DepthVS = surfaceClip.w;
 

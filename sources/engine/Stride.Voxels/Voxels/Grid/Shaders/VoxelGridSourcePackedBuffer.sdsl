@@ -3,16 +3,11 @@
 namespace Stride.Rendering.Voxels.Grid
 {
     /// A grid held in a structured buffer, one value per sample, density in bits 0-7 and material in
-    /// bits 8-15, laid out x-major with z varying fastest.
-    ///
-    /// This is the packing a voxel game commonly keeps its chunks in, where uploading is a widen
-    /// from 16 to 32 bits and nothing else. The material byte is the palette index as it stands.
+    /// bits 8-15, laid out x-major with z varying fastest. The material byte is the palette index.
     shader VoxelGridSourcePackedBuffer : IVoxelGridSource
     {
-        // Linked to fixed keys, whatever this shader is mixed into. An unlinked member takes the path
-        // it was reached by into its parameter name - through a material, layers[N].materialPixelStage
-        // with an N nothing outside the generator knows - and a value set under any other name binds
-        // nothing. Linking is how the engine's own material textures reach a shader at any depth.
+        // Linked to fixed keys: an unlinked member takes its mixin path (layers[N].materialPixelStage) into its
+        // parameter name, and a value set under any other name binds nothing.
         rgroup PerMaterial
         {
             [Link("VoxelGridField.Data")]

@@ -12,11 +12,9 @@ namespace Stride.Rendering.Voxels.Grid
     /// Makes a material walk a voxel grid in the shadow caster passes, and draw nothing elsewhere.
     /// </summary>
     /// <remarks>
-    /// The camera's view of a grid is resolved once by <see cref="VoxelGridResolveRenderer"/> and
-    /// drawn by the grid's own materials; the shadow maps are other views, one per cascade or
-    /// face, and each has to find the field's surface from the light. This feature is what the
-    /// grid's shadow model carries: in a caster pass it asks the traversal only where the ray meets
-    /// the field, and in every other pass it discards.
+    /// The camera's view is resolved by <see cref="VoxelGridResolveRenderer"/>; shadow maps are other
+    /// views, each finding the surface from the light. In a caster pass this asks the traversal where
+    /// the ray meets the field, in every other pass it discards.
     /// </remarks>
     [DataContract("MaterialVoxelSurfaceFeature")]
     [Display("Voxel Grid Shadow")]
@@ -26,10 +24,7 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberIgnore]
         public IVoxelGridTraversal Traversal { get; set; }
 
-        /// <summary>
-        /// How far along a ray the surface is still looked for, in grid local units. Zero lets the
-        /// traversal run to the far side of the grid.
-        /// </summary>
+        /// <summary>How far along a ray the surface is looked for, in grid local units. Zero reaches the far side of the grid.</summary>
         /// <userdoc>How far a ray looks for the surface, in the grid's own units. Leave at zero to reach the far side of the grid.</userdoc>
         [DataMember(10)]
         [DataMemberRange(0.0, 3)]
@@ -60,13 +55,8 @@ namespace Stride.Rendering.Voxels.Grid
             ApplyParameters(context.Parameters);
         }
 
-        /// <summary>
-        /// Writes the field's parameters under the fixed names the shaders link to.
-        /// </summary>
-        /// <remarks>
-        /// Called at generation and then every frame on the material pass, which is the collection
-        /// the mesh render feature copies from; a value that is not there is not bound.
-        /// </remarks>
+        /// <summary>Writes the field's parameters under the fixed names the shaders link to.</summary>
+        /// <remarks>Called at generation and then every frame on the material pass; a value that is not there is not bound.</remarks>
         public void ApplyParameters(ParameterCollection parameters)
         {
             if (Traversal?.Source == null)

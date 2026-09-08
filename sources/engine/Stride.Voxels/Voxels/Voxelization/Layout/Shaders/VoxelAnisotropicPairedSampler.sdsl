@@ -10,12 +10,8 @@ namespace Stride.Rendering.Voxels
             float maxBrightness;
         }
         
-        // An axis whose weight is this small contributes under a percent of the sum, which never
-        // shows up in the image - and skipping it saves a whole set of Texture3D fetches, two of
-        // them per axis in the quadrilinear path. A cone running along a cardinal direction has two
-        // of its three weights at zero, so this is the common case rather than the exception.
-        // Directions come from the shaded surface's tangent frame, so neighbouring pixels take the
-        // same branch.
+        // An axis weighted below this contributes under a percent of the sum; skipping it saves a set
+        // of Texture3D fetches. Cones along a cardinal direction have two zero weights, so this is common.
         static const float AxisWeightCutoff = 0.01;
 
         float4 applyMaxBrightness(float4 col)

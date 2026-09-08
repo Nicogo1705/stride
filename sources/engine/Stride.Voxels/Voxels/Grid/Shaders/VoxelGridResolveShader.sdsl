@@ -2,14 +2,9 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels.Grid
 {
-    /// Finds the surface of a grid once per pixel, and leaves what a material needs to draw it:
-    /// where it is, which way it faces, and which material it is.
-    ///
-    /// The walk is the expensive part of drawing a field, and a field is drawn by as many materials
-    /// as it has ids - each an ordinary Stride material with its own shader, so each must be its own
-    /// draw. Walking once here, and letting every material's draw read the answer for the pixels
-    /// that are its own, is what keeps the count of materials from multiplying the cost of the
-    /// walk. Depth is written too, so several grids resolve against one another.
+    /// Finds the surface of a grid once per pixel and writes what a material needs to draw it: position, normal and material id.
+    /// A field is drawn by one draw per material; walking once here and letting each draw read the answer keeps the
+    /// material count from multiplying the cost of the walk. Depth is written too, so several grids resolve against one another.
     shader VoxelGridResolveShader : ImageEffectShader, VoxelGridDither, VoxelGridLodStream
     {
         compose IVoxelGridTraversal Traversal;
@@ -54,14 +49,8 @@ namespace Stride.Rendering.Voxels.Grid
             float hitDistance;
             float3 localNormal;
             bool found;
-            // The walk starts where the ray enters the box, not at the near plane. Two reasons. The
-            // reach a field is walked with is its own extent - enough to cross it, not to get to
-            // it from wherever the camera is, and from farther than that the field was clipped
-            // away. And the walk keeps its distance along the ray in a float: measured from a
-            // camera far off, that float no longer resolves the thousandth of a cell the walk
-            // nudges itself by, so it stood still, spent its steps, and the surface it was walking
-            // to - the far side of an arch, the pillars at the back - was not found. From here
-            // its precision is the box's, however far the camera.
+            // The walk starts where the ray enters the box, not at the near plane: the reach is the field's own extent,
+            // and the walk's float distance keeps the box's precision however far the camera is.
             float enter = Traversal.EnterDistance(localOrigin, localDirection);
             localOrigin += localDirection * enter;
             float reach = VoxelGridMaxDistance;
@@ -72,13 +61,9 @@ namespace Stride.Rendering.Voxels.Grid
             float farthest = Traversal.LodAt((enter + reach) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
             if (levels > 0 && VoxelGridLodPixel > 0 && farthest >= 1.0)
             {
-                // Coarse first: the coarsest level finds roughly where the surface is, cheaply, and
-                // the distance decides which level this pixel deserves. That level is then walked
-                // from a little before the coarse hit, so the fine walk is short. The level is
-                // fractional and dithered, so the band where two levels meet is a pattern the
-                // antialiasing folds away rather than a line.
-                // The coarse pass stops four levels short of the last: sixteen samples a side
-                // still place a surface; the last levels are a handful and lose whole features.
+                // Coarse first: the coarsest level finds roughly where the surface is, the hit distance picks the level this
+                // pixel wants, and that level is walked from a little before the coarse hit. The level is fractional and dithered.
+                // The coarse pass stops four levels short of the last: sixteen samples a side still place a surface.
                 int coarse = max(levels - 4, 0);
                 Traversal.SetLod(coarse);
                 found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);

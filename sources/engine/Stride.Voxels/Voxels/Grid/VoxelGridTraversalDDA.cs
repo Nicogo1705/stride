@@ -10,29 +10,16 @@ namespace Stride.Rendering.Voxels.Grid
     /// <summary>
     /// How a ray finds the surface of a voxel grid.
     /// </summary>
-    /// <remarks>
-    /// An interface rather than a function because of what comes after it: a hardware ray tracing
-    /// path implements the same shader and everything above stays as it is, and so does a distance
-    /// field tracer taking larger steps through empty space. They differ only in how they skip
-    /// nothing, which is exactly what an interface should hide.
-    /// </remarks>
+    /// <remarks>An interface so that other tracers (a distance field, hardware ray tracing) can implement the same shader with the callers unchanged.</remarks>
     public interface IVoxelGridTraversal
     {
         /// <summary>Where the samples come from. Its shader is mixed in beside the traversal's.</summary>
         IVoxelGridSource Source { get; set; }
 
         /// <summary>Edge length of one cell, in the grid's own space.</summary>
-        /// <remarks>
-        /// On the interface because it is the field's extent rather than a detail of how a ray finds
-        /// the surface: whatever draws or bounds the grid needs it, and every traversal has one.
-        /// </remarks>
         float CellSize { get; }
 
-        /// <summary>
-        /// The shader implementing <c>IVoxelGridTraversal</c> together with its source, as mixins to
-        /// add beside whatever consumes them. It changes with anything that is a permutation rather
-        /// than a parameter - the surface form is one - so a consumer compares it frame to frame.
-        /// </summary>
+        /// <summary>The shader implementing <c>IVoxelGridTraversal</c> together with its source, as mixins. It changes with any permutation, such as the surface form, so a consumer compares it frame to frame.</summary>
         ShaderSource GetShaderSource();
 
         /// <summary>Writes this traversal's parameters, and its source's, under <see cref="VoxelGridFieldKeys"/>.</summary>
@@ -45,35 +32,17 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The cells themselves. A world that is meant to look like cubes.</summary>
         Cubes,
 
-        /// <summary>
-        /// The crossing on the trilinear field, which is where marching cubes puts its vertices - so
-        /// this is the surface a marching-cubes mesh or collider has.
-        /// </summary>
+        /// <summary>The crossing on the trilinear field, where marching cubes puts its vertices: the surface a marching-cubes mesh or collider has.</summary>
         MarchingCubes,
 
-        /// <summary>
-        /// The facet about the cell's surface-nets vertex, which is what surface nets meshes. It
-        /// smooths the crossings rather than sitting on them, so it is a different surface from
-        /// <see cref="MarchingCubes"/> - which is exactly why it is worth being able to ask for it.
-        /// </summary>
+        /// <summary>The facet about the cell's surface-nets vertex, as surface nets meshes it. A different surface from <see cref="MarchingCubes"/>.</summary>
         SurfaceNets,
     }
 
-    /// <summary>
-    /// Walks the cells a ray crosses, in order, and stops at the first solid one.
-    /// </summary>
+    /// <summary>Walks the cells a ray crosses, in order, and stops at the first solid one.</summary>
     /// <remarks>
-    /// <para>
-    /// It needs nothing but the occupancy - no acceleration structure to build, no distance field to
-    /// precompute, nothing to rebuild when a voxel changes - and it is exact, because a regular grid
-    /// already is the structure a ray wants. It also runs on every graphics API, which a hardware
-    /// traced path cannot claim.
-    /// </para>
-    /// <para>
-    /// Not sphere tracing, deliberately: that wants a distance correct everywhere, and a marching
-    /// cubes density field only guarantees the sign. Empty space is skipped instead by the min/max
-    /// pyramid in <see cref="Occupancy"/>, brick by brick, without changing what a hit is.
-    /// </para>
+    /// Needs nothing but the samples and runs on every graphics API. Not sphere tracing: a density field only
+    /// guarantees the sign. Empty space is skipped by the min/max pyramid in <see cref="Occupancy"/>, brick by brick.
     /// </remarks>
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
     [Display("DDA")]
@@ -85,46 +54,22 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>Edge length of one cell, in the grid's local space.</summary>
         public float CellSize { get; set; } = 1.0f;
 
-        /// <summary>
-        /// Density at or above which a sample counts as solid. Match the value the rest of the game
-        /// meshes and collides with, or the surfaces will not agree.
-        /// </summary>
+        /// <summary>Density at or above which a sample counts as solid. Match the value the game meshes and collides with.</summary>
         public float IsoLevel { get; set; } = 0.5f;
 
-        /// <summary>
-        /// Reads the samples on the outer faces of the grid as air, so the volume closes on itself
-        /// with real surface rather than with the faces of its own bounding box.
-        /// </summary>
-        /// <remarks>
-        /// Match it to the collider's setting of the same name, or the drawn body and the solid one
-        /// disagree at their edges. Turn both off where the field continues into a neighbour.
-        /// </remarks>
+        /// <summary>Reads the samples on the outer faces of the grid as air, so the volume closes with real surface rather than the faces of its box.</summary>
+        /// <remarks>Match the collider's setting of the same name. Turn both off where the field continues into a neighbour.</remarks>
         public bool SealBorder { get; set; } = true;
 
-        /// <summary>
-        /// Which surface the walk stops on. All three walk the same cells.
-        /// </summary>
-        /// <remarks>
-        /// Worth matching to the collider's form: cubes with a box collider, and marching cubes with
-        /// a marching-cubes collider, are the same surface. Surface nets is a different one, so
-        /// pairing it with either of the others draws one body and collides with another.
-        /// </remarks>
+        /// <summary>Which surface the walk stops on. All three walk the same cells.</summary>
+        /// <remarks>Match the collider's form: surface nets is a different surface from cubes and marching cubes.</remarks>
         public VoxelSurfaceForm Surface { get; set; } = VoxelSurfaceForm.MarchingCubes;
 
-        /// <summary>
-        /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to corner
-        /// touches on the order of 768, so this bounds the worst case rather than the common one.
-        /// </summary>
+        /// <summary>Ceiling on the cells one ray may visit; bounds the worst case, not the common one.</summary>
         public int MaxSteps { get; set; } = 512;
 
-        /// <summary>
-        /// The min/max pyramid over the field, which lets a ray leap over bricks that hold no
-        /// surface. Optional: without it every cell on the ray is visited.
-        /// </summary>
-        /// <remarks>
-        /// Owned by whoever owns the samples, since it is rebuilt from them - the region an edit
-        /// touched, in the same call that writes the edit.
-        /// </remarks>
+        /// <summary>The min/max pyramid over the field, letting a ray leap over bricks that hold no surface. Optional: without it every cell on the ray is visited.</summary>
+        /// <remarks>Owned by whoever owns the samples, since it is rebuilt from them for the region an edit touched.</remarks>
         [DataMemberIgnore]
         public VoxelGridOccupancy Occupancy { get; set; }
 
@@ -132,10 +77,8 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The traversal shader with its source mixed in, generic on the surface mode.</summary>
         public ShaderSource GetShaderSource()
         {
-            // Mixed beside its source rather than composing it, so both share one scope and the
-            // field's resource is declared once. The surface form is a generic argument, not a
-            // parameter: only the branch asked for is compiled, and the other two - surface nets
-            // alone is several hundred reads - never reach the shader at all.
+            // Mixed beside its source rather than composing it, so both share one scope and the field's resource is
+            // declared once. The surface form is a generic argument, so only the branch asked for is compiled.
             var mixin = new ShaderMixinSource();
             mixin.Mixins.Add(new ShaderClassSource("VoxelGridTraversalDDA", (int)Surface));
             if (Source.GetShaderSource() is ShaderClassSource sourceClass)

@@ -35,15 +35,13 @@ namespace Stride.Rendering.Voxels
         public bool DownsampleFinerClipMaps { get; set; } = true;
 
         /// <summary>
-        /// How many maps the offset tables here and <c>perMapOffsetScale</c> in the sampler can
-        /// describe. Rings and the mipmaps built off the coarsest one share the budget.
+        /// Maximum number of maps the offset tables and <c>perMapOffsetScale</c> describe; rings and mipmaps share it.
         /// </summary>
         public const int MaxMaps = 20;
 
         /// <summary>
-        /// The most rings a given ring resolution can have. Two limits meet here: the atlas gives
-        /// each ring a column of the 3D texture, whose side Direct3D11 caps at 2048, and the rings
-        /// share the offset tables with the mipmaps that follow them.
+        /// The most rings a ring resolution allows: each ring takes a column of a 3D texture capped at 2048
+        /// by Direct3D11, and rings share the offset tables with the mipmaps.
         /// </summary>
         public static int MaxClipMapCount(Resolutions clipResolution)
         {
@@ -60,10 +58,8 @@ namespace Stride.Rendering.Voxels
         int storageUints;
 
         /// <summary>
-        /// Slots the fragment buffer keeps. Voxelizing one ring per frame only ever has two in
-        /// flight - the one being filled and the one being cleared for next frame - so sizing the
-        /// buffer for every ring, as this did, wastes the rest outright: seven eighths of it at
-        /// eight rings. The other update methods do fill every ring in a frame and keep all of them.
+        /// Fragment buffer slots. Voxelizing one ring per frame needs only two (filling and clearing);
+        /// the other update methods fill every ring per frame.
         /// </summary>
         int FragmentSlots => UpdatesPerFrame == UpdateMethods.SingleClipmap ? Math.Min(2, ClipMapCount) : ClipMapCount;
 
@@ -198,11 +194,8 @@ namespace Stride.Rendering.Voxels
                 clipmap = new VoxelStorageTextureClipmap();
             }
 
-            // One ring per column along X, one direction per row along Y. Stacking both down Y, as
-            // this did, multiplies them together against Direct3D11's 2048 cap on a 3D texture's
-            // side: at 128^3 with six directions it left room for two rings, and the rings are what
-            // buy voxel size. Split across two axes, each is capped on its own - 2048 / resolution
-            // rings, and 2048 / resolution directions - for exactly the same number of texels.
+            // One ring per column along X, one direction per row along Y, so each is capped separately
+            // by Direct3D11's 2048 limit on a 3D texture side.
             Vector3 ClipMapTextureResolution = new Vector3(ClipMapResolution.X * ClipMapCount, ClipMapResolution.Y * LayoutSize, ClipMapResolution.Z);
             Vector3 MipMapResolution = new Vector3(ClipMapResolution.X / 2, ClipMapResolution.Y / 2 * LayoutSize, ClipMapResolution.Z / 2);
             if (VoxelUtils.DisposeTextureBySpecs(clipmap.ClipMaps, ClipMapTextureResolution, pixelFormat))
@@ -309,14 +302,11 @@ namespace Stride.Rendering.Voxels
 
 
         /// <summary>
-        /// Thread group counts for clearing <paramref name="elementCount"/> buffer elements, spread
-        /// over two dimensions.
+        /// Thread group counts for clearing <paramref name="elementCount"/> buffer elements, spread over two dimensions.
         /// </summary>
         /// <remarks>
-        /// Direct3D11 rejects a dispatch with more than 65535 groups in any one dimension, which
-        /// caps a one-dimensional clear at about 67 million elements. A 256^3 clipmap storing six
-        /// directions needs 201 million, so it failed outright. ClearBuffer recomposes the linear
-        /// index from X and Y, using <paramref name="rowLength"/> as the width of one row of groups.
+        /// Direct3D11 allows at most 65535 groups per dimension. ClearBuffer recomposes the linear index
+        /// from X and Y using <paramref name="rowLength"/> as the width of one row of groups.
         /// </remarks>
         static Int3 ClearDispatch(int elementCount, out int rowLength)
         {
@@ -400,14 +390,8 @@ namespace Stride.Rendering.Voxels
             if (everyClipMap)
                 processYSize *= ClipMapCount;
 
-            // The ring count belongs in the number of groups dispatched, not in the size of one.
-            //
-            // ThreadNumbers is what numthreads() declares, and D3D caps its product at 1024. Y was
-            // carrying the extra rings, so a run over all of them asked for numthreads(8, 8 x rings,
-            // 8): fine at one ring, exactly 1024 at two, and a shader that refuses to compile at
-            // three or more. Nothing hit it because the single-ring path - the default - leaves the
-            // factor at one. Multiplying the group count instead dispatches the same total threads
-            // in more, smaller groups, which is the same work with a legal declaration.
+            // The ring count goes into the group count, not the group size: numthreads() is capped at
+            // 1024 threads, and multiplying Y by the ring count would exceed it from three rings on.
             var groups = VoxelsAreIndependent ? new Int3(32, 32, 32) : new Int3(32, 1, 32);
             if (everyClipMap)
                 groups.Y *= ClipMapCount;
@@ -459,26 +443,15 @@ namespace Stride.Rendering.Voxels
 
             if (UpdatesPerFrame != UpdateMethods.SingleClipmap)
             {
-                // Clear all: the whole buffer is being zeroed, so hand it to the driver's native
-                // UAV clear instead of dispatching a compute shader that stores zero per element -
-                // at 256^3 anisotropic that shader was writing 800MB a frame.
+                // Clear all: the whole buffer is zeroed, so use the native UAV clear.
                 drawContext.CommandList.ClearReadWrite(FragmentsBuffer, UInt4.Zero);
             }
             else
             {
-                // Clear next clipmap buffer. Only a slice of the buffer is cleared, and a native
-                // UAV clear has no offset - so this one stays a compute dispatch.
-                //
-                // Which slice: the one the ring voxelized *next* frame will write into. That ring is
-                // ClipMapCurrent + 1 wrapped by the ring count, and it is the wrap that matters -
-                // taking (ClipMapCurrent + 1) % FragmentSlots instead assumes the successor of the
-                // last ring is the last ring plus one, which is only the same slot when the ring
-                // count is even. With an odd count the cycle ends on slot 0, clears slot 1, and then
-                // fills slot 0 again over fragments the coarsest ring left there - so once per cycle
-                // the finest ring is voxelized on top of the largest one's leftovers and hands back
-                // the whole volume under the finest ring's addressing. In a reflection that reads as
-                // a small copy of the entire level, centred on the camera, and it appears at three
-                // and five rings while four and two are clean.
+                // Clear next clipmap buffer. Only a slice is cleared, and a native UAV clear has no
+                // offset, so this stays a compute dispatch. The slice is the one the ring voxelized next
+                // frame writes into: wrap by the ring count first, then map to a slot, since the two
+                // differ when the ring count is odd.
                 var clipMapElements = (int)(ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints);
                 var nextClipMap = (ClipMapCurrent + 1) % ClipMapCount;
                 ClearBuffer.Parameters.Set(ClearBufferKeys.buffer, FragmentsBuffer);

@@ -21,19 +21,10 @@ namespace Stride.Rendering.Voxels.Grid
     /// and the resolve pass in the compositor.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// A grid is drawn by several models, all the same twelve-triangle box the size of the grid:
-    /// one per material, each carrying that material wrapped so that a resolve layer runs at the
-    /// front of its pixel stage and hands the material the resolved surface; and one that casts
-    /// the shadows, carrying a material that walks the field only in the caster passes. The box
-    /// is what the renderer culls, sorts and rasterises, and its far faces are kept so the volume
-    /// is drawn from inside as well.
-    /// </para>
-    /// <para>
-    /// The resolve pass is put at the front of the camera's renderer the first time a grid exists,
-    /// from the update and never from a draw, since a compositor being drawn is a list being
-    /// walked.
-    /// </para>
+    /// A grid is drawn by several models, all the same box the size of the grid: one per material, carrying that
+    /// material wrapped so a resolve layer runs at the front of its pixel stage, and one shadow caster whose material
+    /// walks the field in the caster passes. The far faces are kept so the volume is drawn from inside as well.
+    /// The resolve pass is inserted at the front of the camera's renderer from the update, never from a draw.
     /// </remarks>
     public sealed class VoxelGridProcessor : EntityProcessor<VoxelGridComponent, VoxelGridProcessor.State>
     {
@@ -264,10 +255,7 @@ namespace Stride.Rendering.Voxels.Grid
             state.Table.Refresh(game.GraphicsContext.CommandList, materials);
         }
 
-        /// <summary>
-        /// Puts the resolve pass at the front of the camera's renderer, once. Inside the camera
-        /// renderer, not beside it: a renderer beside it runs with no view and resolves nothing.
-        /// </summary>
+        /// <summary>Puts the resolve pass at the front of the camera's renderer, once. Inside the camera renderer, since a renderer beside it runs with no view.</summary>
         private void EnsureResolvePass()
         {
             if (resolvePass != null)
@@ -378,10 +366,7 @@ namespace Stride.Rendering.Voxels.Grid
             state.Shadow.Model.IsShadowCaster = component.CastShadows;
         }
 
-        /// <summary>
-        /// One model per material, rebuilt when the list changes. A single <see cref="VoxelGridComponent.Material"/>
-        /// draws every id; an empty list draws every id in grey.
-        /// </summary>
+        /// <summary>One model per material, rebuilt when the list changes. A single <see cref="VoxelGridComponent.Material"/> draws every id; an empty list draws every id in grey.</summary>
         private static void EnsureMaterials(GraphicsDevice device, VoxelGridComponent component, State state)
         {
             var wanted = state.Wanted;
@@ -438,15 +423,8 @@ namespace Stride.Rendering.Voxels.Grid
             state.TargetsVersion = -1;
         }
 
-        /// <summary>
-        /// A material, taken as compiled, with the resolve layer at the front of its pixel stage.
-        /// </summary>
-        /// <remarks>
-        /// No descriptor is needed and none is used: a compiled material's pixel stage is a shader
-        /// source in its parameters, an array of layers, and a layer put in front of the others is
-        /// run before them. The parameters are copied, so the material the user holds is untouched
-        /// and each wrapped copy carries its own id.
-        /// </remarks>
+        /// <summary>A material, taken as compiled, with the resolve layer at the front of its pixel stage.</summary>
+        /// <remarks>The parameters are copied, so the user's material is untouched and each wrapped copy carries its own id.</remarks>
         private static Material Wrap(Material source, int id, int gridIndex, ShaderSource traversal)
         {
             var wrapped = new Material();
@@ -517,12 +495,7 @@ namespace Stride.Rendering.Voxels.Grid
             return wrapped;
         }
 
-        /// <summary>
-        /// A child entity of its own, rather than a ModelComponent on the grid's entity. That
-        /// entity is the user's - it commonly already carries a collider, and may carry a model the
-        /// user put there - and quietly taking over its ModelComponent is both a collision and a
-        /// thing that is hard to see from the outside.
-        /// </summary>
+        /// <summary>A child entity of its own, rather than a ModelComponent on the grid's entity, which is the user's and may already carry a model.</summary>
         private static Draw Attach(Entity entity, string name, State state, Material source, Material wrapped)
         {
             var carrier = new Entity(name);
@@ -559,11 +532,7 @@ namespace Stride.Rendering.Voxels.Grid
             return model;
         }
 
-        /// <summary>
-        /// The volume's bounds, as twelve triangles for the resolve to be read through. Built the
-        /// way a procedural model is built - tangents generated, bounding sphere computed - so the
-        /// mesh path treats it like any other mesh.
-        /// </summary>
+        /// <summary>The volume's bounds as twelve triangles, built like a procedural model (tangents, bounding sphere) so the mesh path treats it as any other mesh.</summary>
         private static void BuildBox(GraphicsDevice device, State state)
         {
             var extent = state.Extent;
