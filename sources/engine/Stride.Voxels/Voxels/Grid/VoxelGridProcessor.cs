@@ -241,6 +241,7 @@ namespace Stride.Rendering.Voxels.Grid
                         GridIndex = state.GridIndex,
                         LodBias = component.LevelOfDetail ? component.LodBias : float.NaN,
                         Box = state.Box,
+                        BeamBlockSize = component.BeamBlockSize,
                     });
                 }
             }

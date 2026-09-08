@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering.Compositing;
+using Stride.Rendering.Images;
 
 namespace Stride.Rendering.Voxels.Grid
 {
@@ -26,6 +27,8 @@ namespace Stride.Rendering.Voxels.Grid
         public float LodBias;
         /// <summary>The grid's proxy box, in its own space, whose pixels are the ones that march.</summary>
         public MeshDraw Box;
+        /// <summary>Pixels along a side of the block one beam ray walks ahead of the resolve; 0 walks every pixel from the box.</summary>
+        public int BeamBlockSize;
     }
 
     /// <summary>
@@ -43,6 +46,8 @@ namespace Stride.Rendering.Voxels.Grid
         private MutablePipelineState pipelineState;
         private Texture noSceneDepth;
         private bool cleared;
+        // The beam stays a full-screen pass: one texel per block, at a block-th of the view.
+        private readonly ImageEffectShader beamShader = new("VoxelGridBeamEffect");
 
         /// <summary>The grids to resolve this frame. Filled by whoever owns the grids before the pass draws.</summary>
         public List<VoxelGridResolveEntry> Grids { get; } = [];
@@ -57,6 +62,7 @@ namespace Stride.Rendering.Voxels.Grid
         public Texture Position { get; private set; }
 
         private Texture depth;
+        private Texture beam;
 
         /// <summary>Counts the times the targets were remade; a reader binds them again when it changes.</summary>
         public int TargetsVersion { get; private set; }
@@ -137,10 +143,11 @@ namespace Stride.Rendering.Voxels.Grid
 
             var viewProjection = renderView.ViewProjection;
             Matrix.Invert(ref viewProjection, out var viewProjectionInverse);
+            var viewSize = new Vector2(Normal.Width, Normal.Height);
             var parameters = effect.Parameters;
             parameters.Set(VoxelGridResolveShaderKeys.VoxelGridViewProjection, viewProjection);
-            parameters.Set(VoxelGridResolveShaderKeys.VoxelGridViewProjectionInverse, viewProjectionInverse);
-            parameters.Set(VoxelGridResolveShaderKeys.VoxelGridViewSize, new Vector2(Normal.Width, Normal.Height));
+            parameters.Set(VoxelGridRayKeys.VoxelGridViewProjectionInverse, viewProjectionInverse);
+            parameters.Set(VoxelGridRayKeys.VoxelGridViewSize, viewSize);
             parameters.Set(VoxelGridResolveShaderKeys.VoxelGridSceneDepth, sceneDepth ?? noSceneDepth);
             parameters.Set(VoxelGridResolveShaderKeys.VoxelGridSceneDepthBound, sceneDepth != null ? 1f : 0f);
 
@@ -154,11 +161,31 @@ namespace Stride.Rendering.Voxels.Grid
                 Matrix.Invert(ref world, out var worldInverse);
                 Matrix.Multiply(ref world, ref viewProjection, out var worldViewProjection);
 
+                var block = grid.BeamBlockSize;
+                if (block > 0)
+                {
+                    // One conservative ray per block, into a texture a block-th the view's size, before the box draws.
+                    EnsureBeam(device, (Normal.Width + block - 1) / block, (Normal.Height + block - 1) / block);
+                    grid.Traversal.ApplyParameters(beamShader.Parameters);
+                    beamShader.Parameters.Set(VoxelGridBeamShaderKeys.Traversal, grid.Traversal.GetShaderSource());
+                    beamShader.Parameters.Set(VoxelGridRayKeys.VoxelGridViewProjectionInverse, viewProjectionInverse);
+                    beamShader.Parameters.Set(VoxelGridRayKeys.VoxelGridWorldInverse, worldInverse);
+                    beamShader.Parameters.Set(VoxelGridRayKeys.VoxelGridViewSize, viewSize);
+                    beamShader.Parameters.Set(VoxelGridBeamShaderKeys.VoxelGridBeamBlock, block);
+                    beamShader.SetOutput(beam);
+                    beamShader.Draw(context, name: "VoxelGridBeam");
+                    // The beam's draw took the targets; the box draws into the resolve's again.
+                    commandList.ResourceBarrierTransition(beam, BarrierLayout.ShaderResource);
+                    commandList.SetRenderTargetsAndViewport(depth, Normal, Material, Position);
+                }
+
                 grid.Traversal.ApplyParameters(parameters);
                 parameters.Set(VoxelGridResolveShaderKeys.Traversal, grid.Traversal.GetShaderSource());
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridWorld, world);
-                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridWorldInverse, worldInverse);
+                parameters.Set(VoxelGridRayKeys.VoxelGridWorldInverse, worldInverse);
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridWorldViewProjection, worldViewProjection);
+                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridBeam, block > 0 ? beam : noSceneDepth);
+                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridBeamBlock, block);
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridMaxDistance, grid.MaxDistance);
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridDither, (int)grid.Dither);
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridIndex, grid.GridIndex);
@@ -202,6 +229,15 @@ namespace Stride.Rendering.Voxels.Grid
             TargetsVersion++;
         }
 
+        private void EnsureBeam(GraphicsDevice device, int width, int height)
+        {
+            if (beam != null && beam.Width == width && beam.Height == height)
+                return;
+
+            beam?.Dispose();
+            beam = Texture.New2D(device, width, height, PixelFormat.R32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
+        }
+
         private void ReleaseTargets()
         {
             Normal?.Dispose();
@@ -218,6 +254,9 @@ namespace Stride.Rendering.Voxels.Grid
             effect = null;
             noSceneDepth?.Dispose();
             noSceneDepth = null;
+            beam?.Dispose();
+            beam = null;
+            beamShader.Dispose();
         }
     }
 
