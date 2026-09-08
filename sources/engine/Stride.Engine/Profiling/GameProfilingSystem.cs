@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -149,9 +149,7 @@ namespace Stride.Profiling
             var availableDisplayHeight = viewportHeight - 2 * TextRowHeight - 3 * TopRowHeight;
             var elementsPerPage = (int)Math.Floor(availableDisplayHeight / TextRowHeight);
             numberOfPages = (uint)Math.Ceiling(profilingResults.Count / (float)elementsPerPage);
-            // Never clamp below page 1: on the first frames after profiling is enabled there are
-            // no results yet, so numberOfPages is 0 - and a page clamped to 0 stayed 0 forever,
-            // leaving the profiler showing "PAGE 0 OF N" and an empty list once results arrived.
+            // numberOfPages is 0 while there are no results yet; never clamp the page below 1.
             CurrentResultPage = Math.Max(1, Math.Min(CurrentResultPage, numberOfPages));
 
             char sortByTimeIndicator = SortingMode == GameProfilingSorting.ByTime ? 'v' : ' ';
