@@ -91,6 +91,12 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberRange(-2.0, 4.0, 0.1, 0.5, 1)]
         public float LodBias { get; set; } = 0f;
 
+        /// <summary>Pixels along a side of the block one beam ray walks ahead of the resolve, so the pixels skip the empty space it crossed. 0 turns the beam off.</summary>
+        /// <userdoc>Size in pixels of the blocks a coarse ray walks first, so each pixel skips the empty space in front of the field. 0 turns it off.</userdoc>
+        [DataMember(23)]
+        [DataMemberRange(0, 64, 1, 8, 0)]
+        public int BeamBlockSize { get; set; } = 8;
+
         /// <summary>Whether the field writes the shadow maps. It receives shadows either way.</summary>
         /// <userdoc>Whether the field casts shadows.</userdoc>
         [DataMember(20)]

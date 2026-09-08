@@ -61,6 +61,13 @@ namespace Stride.Rendering.Voxels.Grid
             return false;
         }
 
+        /// How far along a ray a ball around it, of a radius that grows per unit of distance, is known to hold no
+        /// surface. Negative when it leaves the field having met none; 0 when the walk cannot tell.
+        float BeamDistance(float3 origin, float3 direction, float radius, float radiusPerDistance)
+        {
+            return 0;
+        }
+
         /// The material a point of the surface is drawn with: one id chosen among the eight surrounding samples by
         /// trilinear weight. Dither shares a boundary between two materials out between pixels (see VoxelGridDither); 0 gives the heaviest.
         int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)

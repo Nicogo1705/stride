@@ -5,14 +5,16 @@ namespace Stride.Rendering.Voxels.Grid
     /// Finds the surface of a grid once per pixel and writes what a material needs to draw it: position, normal and material id.
     /// A field is drawn by one draw per material; walking once here and letting each draw read the answer keeps the
     /// material count from multiplying the cost of the walk. Depth is written too, so several grids resolve against one another.
-    shader VoxelGridResolveShader : ImageEffectShader, VoxelGridDither, VoxelGridLodStream
+    shader VoxelGridResolveShader : ImageEffectShader, VoxelGridRay, VoxelGridDither, VoxelGridLodStream
     {
         compose IVoxelGridTraversal Traversal;
 
-        float4x4 VoxelGridViewProjectionInverse;
         float4x4 VoxelGridViewProjection;
-        float4x4 VoxelGridWorldInverse;
         float4x4 VoxelGridWorld;
+
+        /// What VoxelGridBeamShader wrote, one texel per block of VoxelGridBeamBlock pixels a side; 0 pixels leaves it unread.
+        stage Texture2D<float> VoxelGridBeam;
+        int VoxelGridBeamBlock;
 
         /// How far along the ray the surface is looked for, in grid local units.
         float VoxelGridMaxDistance;
@@ -34,17 +36,11 @@ namespace Stride.Rendering.Voxels.Grid
             streams.VoxelGridLod = 0;
             // The ray through the pixel, from the near plane to the far one: right under any
             // projection, so an orthographic camera in the editor resolves as a perspective one.
-            float2 uv = streams.TexCoord;
-            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-            float4 nearPoint = mul(float4(ndc, 0.0, 1.0), VoxelGridViewProjectionInverse);
-            float4 farPoint = mul(float4(ndc, 1.0, 1.0), VoxelGridViewProjectionInverse);
-            float3 originWS = nearPoint.xyz / nearPoint.w;
-            float3 directionWS = normalize(farPoint.xyz / farPoint.w - originWS);
-
-            float3 localOrigin = mul(float4(originWS, 1), VoxelGridWorldInverse).xyz;
-            float3 localDirection = mul(float4(directionWS, 0), VoxelGridWorldInverse).xyz;
-            float directionScale = length(localDirection);
-            localDirection = localDirection / directionScale;
+            int2 pixel = (int2)streams.ShadingPosition.xy;
+            float3 localOrigin;
+            float3 localDirection;
+            float directionScale;
+            ViewRay(streams.ShadingPosition.xy, localOrigin, localDirection, directionScale);
 
             float hitDistance;
             float3 localNormal;
@@ -52,13 +48,24 @@ namespace Stride.Rendering.Voxels.Grid
             // The walk starts where the ray enters the box, not at the near plane: the reach is the field's own extent,
             // and the walk's float distance keeps the box's precision however far the camera is.
             float enter = Traversal.EnterDistance(localOrigin, localDirection);
-            localOrigin += localDirection * enter;
-            float reach = VoxelGridMaxDistance;
+            // Or further, where the beam of the pixel's block found nothing up to; negative says nothing along the block.
+            float start = enter;
+            if (VoxelGridBeamBlock > 0)
+            {
+                float beam = VoxelGridBeam.Load(int3(pixel / VoxelGridBeamBlock, 0));
+                if (beam < 0)
+                {
+                    discard;
+                }
+                start = max(enter, beam);
+            }
+            localOrigin += localDirection * start;
+            float reach = VoxelGridMaxDistance - (start - enter);
             int levels = Traversal.LodLevelCount();
             // Only when some pixel of the field can want a coarser level at all: the farthest
             // reach of the walk, at this pixel size, still under level one means every pixel walks
             // the finest level and the coarse pass would be a cost with no return.
-            float farthest = Traversal.LodAt((enter + reach) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+            float farthest = Traversal.LodAt((start + reach) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
             if (levels > 0 && VoxelGridLodPixel > 0 && farthest >= 1.0)
             {
                 // Coarse first: the coarsest level finds roughly where the surface is, the hit distance picks the level this
@@ -76,8 +83,8 @@ namespace Stride.Rendering.Voxels.Grid
                 }
                 else
                 {
-                    float wanted = Traversal.LodAt((enter + hitDistance) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
-                    int lod = clamp((int)floor(wanted + DitherThreshold((int2)streams.ShadingPosition.xy, VoxelGridDither)), 0, levels);
+                    float wanted = Traversal.LodAt((start + hitDistance) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+                    int lod = clamp((int)floor(wanted + DitherThreshold(pixel, VoxelGridDither)), 0, levels);
                     if (lod < coarse)
                     {
                         float coarseCell = Traversal.CellSizeAtLod();
@@ -119,7 +126,7 @@ namespace Stride.Rendering.Voxels.Grid
             float depth = hitClip.z / hitClip.w;
             streams.Depth = depth;
 
-            int material = Traversal.SurfaceMaterialId(localPosition, (int2)streams.ShadingPosition.xy, VoxelGridDither);
+            int material = Traversal.SurfaceMaterialId(localPosition, pixel, VoxelGridDither);
 
             // Three targets: the normal with a 1 in w that says "resolved"; the material id and
             // the grid index, a byte each; the world position with the depth in w.

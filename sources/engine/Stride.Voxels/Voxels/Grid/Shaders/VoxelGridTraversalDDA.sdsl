@@ -582,6 +582,94 @@ namespace Stride.Rendering.Voxels.Grid
             return max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
         }
 
+        /// A ball around the ray moved along it on the pyramid: the eight bricks nearest its centre, at the level whose
+        /// bricks span the ball twice over, are read at once, and the ball advances to where it would leave them.
+        /// The walk stops short of the first brick among the eight that reaches the iso level.
+        override float BeamDistance(float3 origin, float3 direction, float radius, float radiusPerDistance)
+        {
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
+
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float cellSize = CellSize();
+            float3 boundsMax = (float3)cells * cellSize;
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+
+            // Past the box's farthest point from the origin, ball included, no ray of the beam is in the box any more.
+            float3 center = boundsMax * 0.5;
+            float tLimit = length(center - origin) + length(center) + radius;
+
+            // The walk starts where the ball at its largest could first touch the box.
+            float largest = radius + radiusPerDistance * tLimit;
+            float3 toMin = (0.0 - largest - origin) * inverseDirection;
+            float3 toMax = (boundsMax + largest - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            float t = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+
+            float nudge = cellSize * 1e-3;
+            bool running = levels > 0 && t < tLimit;
+            bool blocked = false;
+            int lowest = 1;
+
+            int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            for (int i = 0; i < steps && running; i++)
+            {
+                float r = radius + radiusPerDistance * t;
+                // Bricks of twice the radius plus two cells: the centre then sits at least a cell inside the eight.
+                float cellsNeeded = (2.0 * r) / cellSize + 2.0;
+                int level = min(lowest, levels);
+                while (level < levels && (float)(1 << level) < cellsNeeded)
+                    level++;
+
+                float brickSize = (float)(1 << level) * cellSize;
+                float3 position = origin + safeDirection * t;
+                // The brick the centre is in and the neighbour it leans towards, on each axis.
+                int3 first = (int3)floor(position / brickSize - 0.5);
+                int mip = level - 1 + streams.VoxelGridLod;
+                bool empty = VoxelGridOccupancy.Load(int4(first + int3(0, 0, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 0, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(0, 1, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 1, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(0, 0, 1), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 0, 1), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(0, 1, 1), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 1, 1), mip)).g < VoxelGridIsoLevel;
+
+                // Where the ball leaves the eight: the box they make, shrunk by the radius the ball has when it gets there.
+                float3 unionMin = (float3)first * brickSize;
+                float3 unionMax = unionMin + 2.0 * brickSize;
+                float3 farSide = max((unionMin - origin) * inverseDirection, (unionMax - origin) * inverseDirection);
+                float tLeave = min(min(farSide.x, farSide.y), farSide.z);
+                float rLeave = radius + radiusPerDistance * tLeave;
+                float3 farShrunk = max((unionMin + rLeave - origin) * inverseDirection, (unionMax - rLeave - origin) * inverseDirection);
+                float tSafe = min(min(farShrunk.x, farShrunk.y), farShrunk.z);
+
+                if (!empty)
+                {
+                    blocked = true;
+                    running = false;
+                }
+                else if (tSafe > t + nudge)
+                {
+                    t = tSafe;
+                    lowest = 1;
+                    if (t >= tLimit)
+                        running = false;
+                }
+                else if (level < levels)
+                {
+                    // The ball grew faster than the room it had: coarser bricks give it more.
+                    lowest = level + 1;
+                }
+                else
+                {
+                    running = false;
+                }
+            }
+
+            return (!blocked && t >= tLimit) ? -1.0 : t;
+        }
+
         override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
         {
             hitDistance = 0;
