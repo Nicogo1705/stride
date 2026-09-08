@@ -76,6 +76,8 @@ namespace Stride.Rendering.Voxels.Grid
             public BoundingBox Bounds;
             /// <summary>The proxy box's bounding sphere, for culling.</summary>
             public BoundingSphere Sphere;
+            /// <summary>The proxy box as one draw, shared by every model and the resolve pass.</summary>
+            public MeshDraw Box;
 
             /// <summary>The materials, one draw each, in the order of the component's list.</summary>
             public List<Draw> Materials = [];
@@ -115,6 +117,7 @@ namespace Stride.Rendering.Voxels.Grid
         private IGraphicsDeviceService graphicsDeviceService;
         private SceneSystem sceneSystem;
         private IGame game;
+        private VoxelGridResolveRenderer resolveRenderer;
         private VoxelGridResolvePass resolvePass;
 
         // A grid's index is a byte in the resolve targets; one given back is given out again
@@ -151,8 +154,8 @@ namespace Stride.Rendering.Voxels.Grid
             if (device == null)
                 return;
 
-            EnsureResolvePass();
-            var renderer = resolvePass?.Renderer;
+            EnsureResolveRenderer();
+            var renderer = resolveRenderer;
             renderer?.Grids.Clear();
             injection.Entries.Clear();
 
@@ -237,6 +240,7 @@ namespace Stride.Rendering.Voxels.Grid
                         Dither = component.Dither,
                         GridIndex = state.GridIndex,
                         LodBias = component.LevelOfDetail ? component.LodBias : float.NaN,
+                        Box = state.Box,
                     });
                 }
             }
@@ -255,19 +259,56 @@ namespace Stride.Rendering.Voxels.Grid
             state.Table.Refresh(game.GraphicsContext.CommandList, materials);
         }
 
-        /// <summary>Puts the resolve pass at the front of the camera's renderer, once. Inside the camera renderer, since a renderer beside it runs with no view.</summary>
-        private void EnsureResolvePass()
+        /// <summary>
+        /// Finds the resolve renderer once: the one a <see cref="ForwardRendererVoxels"/> in the camera's renderer hosts, where the scene's depth
+        /// bounds the walk; otherwise a pass put at the front of the camera's renderer, inside it since a renderer beside it runs with no view.
+        /// </summary>
+        private void EnsureResolveRenderer()
         {
-            if (resolvePass != null)
+            if (resolveRenderer != null)
                 return;
 
             var compositor = sceneSystem?.GraphicsCompositor;
             if (compositor?.Game == null)
                 return;
 
+            var forward = FindForwardRenderer(compositor.Game);
+            if (forward != null)
+            {
+                resolveRenderer = forward.GridResolver;
+                return;
+            }
+
             var pass = new VoxelGridResolvePass();
             if (InsertFirst(compositor.Game, pass))
+            {
                 resolvePass = pass;
+                resolveRenderer = pass.Renderer;
+            }
+        }
+
+        private static ForwardRendererVoxels FindForwardRenderer(ISceneRenderer renderer)
+        {
+            switch (renderer)
+            {
+                case ForwardRendererVoxels forward:
+                    return forward;
+
+                case SceneCameraRenderer camera:
+                    return FindForwardRenderer(camera.Child);
+
+                case SceneRendererCollection collection:
+                    foreach (var child in collection.Children)
+                    {
+                        var found = FindForwardRenderer(child);
+                        if (found != null)
+                            return found;
+                    }
+                    return null;
+
+                default:
+                    return null;
+            }
         }
 
         private static bool InsertFirst(ISceneRenderer renderer, ISceneRenderer pass)
@@ -519,13 +560,7 @@ namespace Stride.Rendering.Voxels.Grid
                 MaterialIndex = 0,
                 BoundingBox = state.Bounds,
                 BoundingSphere = state.Sphere,
-                Draw = new MeshDraw
-                {
-                    PrimitiveType = PrimitiveType.TriangleList,
-                    DrawCount = state.IndexCount,
-                    IndexBuffer = new IndexBufferBinding(state.IndexBuffer, false, state.IndexCount),
-                    VertexBuffers = [new VertexBufferBinding(state.VertexBuffer, state.Layout, state.VertexCount)],
-                },
+                Draw = state.Box,
             });
             model.BoundingBox = state.Bounds;
             model.BoundingSphere = state.Sphere;
@@ -584,6 +619,13 @@ namespace Stride.Rendering.Voxels.Grid
             state.Layout = complete.Layout;
             state.VertexCount = vertices.Length;
             state.IndexCount = indices.Length;
+            state.Box = new MeshDraw
+            {
+                PrimitiveType = PrimitiveType.TriangleList,
+                DrawCount = state.IndexCount,
+                IndexBuffer = new IndexBufferBinding(state.IndexBuffer, false, state.IndexCount),
+                VertexBuffers = [new VertexBufferBinding(state.VertexBuffer, state.Layout, state.VertexCount)],
+            };
         }
     }
 }

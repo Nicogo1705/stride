@@ -5,7 +5,8 @@ namespace Stride.Rendering.Voxels.Grid
     /// Finds the surface of a grid once per pixel and writes what a material needs to draw it: position, normal and material id.
     /// A field is drawn by one draw per material; walking once here and letting each draw read the answer keeps the
     /// material count from multiplying the cost of the walk. Depth is written too, so several grids resolve against one another.
-    shader VoxelGridResolveShader : ImageEffectShader, VoxelGridDither, VoxelGridLodStream
+    /// Drawn as the grid's proxy box, so only the pixels under its footprint march; the ray comes from the pixel, not the box.
+    shader VoxelGridResolveShader : ShaderBase, PositionStream4, VoxelGridDither, VoxelGridLodStream
     {
         compose IVoxelGridTraversal Traversal;
 
@@ -13,6 +14,15 @@ namespace Stride.Rendering.Voxels.Grid
         float4x4 VoxelGridViewProjection;
         float4x4 VoxelGridWorldInverse;
         float4x4 VoxelGridWorld;
+        float4x4 VoxelGridWorldViewProjection;
+
+        /// The view's size in pixels, to place a pixel in the view from its position.
+        float2 VoxelGridViewSize;
+
+        /// The scene's depth where it is drawn already, and 1 when it is bound: a ray stops at the
+        /// opaque surface in front of the grid. Depth 1.0 is nothing drawn and bounds nothing.
+        Texture2D VoxelGridSceneDepth;
+        float VoxelGridSceneDepthBound;
 
         /// How far along the ray the surface is looked for, in grid local units.
         float VoxelGridMaxDistance;
@@ -28,13 +38,23 @@ namespace Stride.Rendering.Voxels.Grid
         float VoxelGridLodPixel;
         float VoxelGridLodBias;
 
-        stage override float4 Shading()
+        stage override void VSMain()
+        {
+            streams.ShadingPosition = mul(streams.Position, VoxelGridWorldViewProjection);
+        }
+
+        stage override void PSMain()
+        {
+            streams.ColorTarget = Shading();
+        }
+
+        stage float4 Shading()
         {
             // Written first, before any read of the field: the level the walks are made at.
             streams.VoxelGridLod = 0;
             // The ray through the pixel, from the near plane to the far one: right under any
             // projection, so an orthographic camera in the editor resolves as a perspective one.
-            float2 uv = streams.TexCoord;
+            float2 uv = streams.ShadingPosition.xy / VoxelGridViewSize;
             float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
             float4 nearPoint = mul(float4(ndc, 0.0, 1.0), VoxelGridViewProjectionInverse);
             float4 farPoint = mul(float4(ndc, 1.0, 1.0), VoxelGridViewProjectionInverse);
@@ -54,6 +74,14 @@ namespace Stride.Rendering.Voxels.Grid
             float enter = Traversal.EnterDistance(localOrigin, localDirection);
             localOrigin += localDirection * enter;
             float reach = VoxelGridMaxDistance;
+            // The scene's surface on this ray, in the grid's units from the entry: a ray behind it
+            // has a reach below zero and the walk ends before its first cell.
+            float sceneDepth = VoxelGridSceneDepth.Load(int3((int2)streams.ShadingPosition.xy, 0)).x;
+            float4 sceneClip = mul(float4(ndc, sceneDepth, 1.0), VoxelGridViewProjectionInverse);
+            float3 sceneWS = sceneClip.xyz / sceneClip.w;
+            float sceneReach = dot(sceneWS - originWS, directionWS) * directionScale - enter;
+            float bounded = VoxelGridSceneDepthBound * (1.0 - step(1.0, sceneDepth));
+            reach = lerp(reach, min(reach, sceneReach), bounded);
             int levels = Traversal.LodLevelCount();
             // Only when some pixel of the field can want a coarser level at all: the farthest
             // reach of the walk, at this pixel size, still under level one means every pixel walks
