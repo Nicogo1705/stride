@@ -499,7 +499,7 @@ public partial class MethodCall(Identifier name, ShaderExpressionList arguments,
             functionSymbol = accessibleMethods[0].First().Symbol;
         }
 
-        return true;
+        return functionSymbol.Type is FunctionType;
     }
 
     public override string ToString()
