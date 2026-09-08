@@ -939,11 +939,8 @@ new ShaderMacro("class", "shader"),
         Assert.True(reflection.ResourceBindings.Any(b => b.RawName.EndsWith("WriteTex")), disassembly);
         Assert.Contains("OpImageWrite", disassembly);
     }
-    // A stage method whose only cross-shader reference is a call to a `static` method used to be
-    // flagged as referencing non-stage members - the flag that forces the whole shader to be
-    // imported at root level when used in a composition. A static method reads no instance state,
-    // so the qualifier is not an instance access. LuminanceUtils.Luma is the engine's canonical
-    // case: every post effect calling it from a stage Shading() logged the info.
+
+    // A static call (Utils.Method(x)) from a stage method is not a non-stage member access.
     [Fact]
     public void StaticCallFromStageMethodDoesNotForceFullImport()
     {
@@ -959,9 +956,7 @@ new ShaderMacro("class", "shader"),
         }
     }
 
-    // [loop] and [unroll] on a loop must reach the SPIR-V as OpLoopMerge's loop control. SPIRV-Cross
-    // turns them back into the HLSL attributes; without them FXC unrolls every loop whose trip count
-    // it can see, and a voxel cone march of a few hundred steps took it half a minute per effect.
+    // [loop] and [unroll] must reach OpLoopMerge's loop control; SPIRV-Cross turns them back into HLSL attributes.
     [Fact]
     public void LoopAttributesReachSpirvLoopControl()
     {
