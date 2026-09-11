@@ -37,7 +37,12 @@ namespace Stride.Rendering.Voxels.Grid
         private readonly int[] sizes;
 
         /// <summary>Allocates the pyramid for a field of that many samples; nothing is built until the first update.</summary>
-        public VoxelGridOccupancy(GraphicsDevice device, Int3 sampleCount)
+        /// <param name="unorderedAccess">
+        /// Also creates the texture for unordered access, so a compute pass can rebuild the levels in place - for a
+        /// field that changes on the GPU, where the CPU has no samples to build from. Each mip is then a UAV target
+        /// through a single-mip view (<see cref="Texture.ToTextureView"/>); <see cref="Update"/> still works too.
+        /// </param>
+        public VoxelGridOccupancy(GraphicsDevice device, Int3 sampleCount, bool unorderedAccess = false)
         {
             SampleCount = sampleCount;
 
@@ -60,7 +65,8 @@ namespace Stride.Rendering.Voxels.Grid
                 levels[level] = new byte[sizes[level] * sizes[level] * sizes[level] * 2];
             }
 
-            Texture = Texture.New3D(device, baseSize, baseSize, baseSize, Levels, PixelFormat.R8G8_UNorm, TextureFlags.ShaderResource, GraphicsResourceUsage.Default);
+            var flags = unorderedAccess ? TextureFlags.ShaderResource | TextureFlags.UnorderedAccess : TextureFlags.ShaderResource;
+            Texture = Texture.New3D(device, baseSize, baseSize, baseSize, Levels, PixelFormat.R8G8_UNorm, flags, GraphicsResourceUsage.Default);
         }
 
         /// <summary>Rebuilds the whole pyramid from the samples.</summary>
