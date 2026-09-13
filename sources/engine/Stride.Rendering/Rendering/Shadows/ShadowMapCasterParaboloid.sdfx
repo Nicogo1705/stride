@@ -13,12 +13,10 @@ namespace Stride.Rendering.Shadows
         if(MaterialKeys.UseDitheredShadows)
         {
             mixin ShadowMapCasterAlphaDithered;
-            mixin ShadowMapCasterPassMarker;
         }
         else if(MaterialKeys.UsePixelShaderWithDepthPass)
         {
             mixin ShadowMapCasterAlphaDiscard;
-            mixin ShadowMapCasterPassMarker;
         }
         else
         {

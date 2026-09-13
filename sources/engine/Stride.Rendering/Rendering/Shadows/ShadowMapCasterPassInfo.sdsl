@@ -3,24 +3,19 @@
 namespace Stride.Rendering.Shadows
 {
     /// <summary>
-    /// Lets a material shader know whether it is being run to write a shadow map.
+    /// Tells a material shader whether the current view is a shadow map.
     /// </summary>
     /// <remarks>
     /// A material whose surface is computed in the pixel shader (a ray-marched volume, a parallax
-    /// search) can use it to settle for a depth good enough for a shadow and skip the rest.
-    /// The material must write the stream to 0 in the vertex stage so it is defined in every pass;
-    /// <see cref="ShadowMapCasterPassMarker"/> writes the view's flag in the pixel stage of the caster effects.
-    /// A float rather than a bool, so it can be carried from the vertex to the pixel stage.
+    /// search) can settle for a depth good enough for a shadow and skip the rest.
+    /// <see cref="ShadowCasterRenderFeature"/> writes the flag for every view.
     /// </remarks>
     shader ShadowMapCasterPassInfo
     {
         cbuffer PerView.ShadowMapView
         {
-            /// 1 in a shadow map view, 0 in every other view. The caster effect is also used by the
-            /// camera's depth-only prepass, so this cannot be a constant.
+            /// 1 in a shadow map view, 0 in every other view, the camera's depth-only prepass included.
             stage float ShadowMapViewFlag;
         }
-
-        stage stream float IsShadowMapCasterPass;
     };
 }

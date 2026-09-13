@@ -21,8 +21,8 @@ namespace Stride.Rendering.Voxels.Grid
         override void Compute()
         {
             // One exit, no early return: FXC fails to unroll a return inside a material's Compute around the walk's loop.
-            // A caster pass and not the voxelizer's: only the caster flag may be stale where a geometry shader dropped it.
-            if (streams.IsShadowMapCasterPass > 0.5 && streams.IsVoxelizationPass < 0.5)
+            // A shadow map view and not the voxelizer's pass.
+            if (ShadowMapViewFlag > 0.5 && streams.IsVoxelizationPass < 0.5)
             {
                 // The fragment, in the grid's own space.
                 float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;

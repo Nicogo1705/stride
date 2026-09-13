@@ -7,8 +7,8 @@ namespace Stride.Rendering.Voxels
     /// </summary>
     /// <remarks>
     /// A material whose surface is not where its mesh is (a volume drawn through a proxy) has no
-    /// resolved surface for the voxelizer's views and must find it itself. A stream, like
-    /// ShadowMapCasterPassInfo: the user writes 0 in the vertex stage, VoxelizeToFragments writes 1.
+    /// resolved surface for the voxelizer's views and must find it itself. A stream: the user
+    /// writes 0 in the vertex stage, VoxelizeToFragments writes 1.
     /// </remarks>
     shader VoxelizationPassInfo
     {
