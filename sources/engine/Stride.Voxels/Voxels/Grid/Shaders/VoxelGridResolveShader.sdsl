@@ -154,7 +154,10 @@ namespace Stride.Rendering.Voxels.Grid
             float depth = hitClip.z / hitClip.w;
             streams.Depth = depth;
 
-            int material = Traversal.SurfaceMaterialId(localPosition, pixel, VoxelGridDither);
+            // Read the material a little inside the surface: a hit on a cell face lands in either
+            // cell by rounding, and the one in front of a cube is air or a water ramp.
+            float3 materialPosition = localPosition - localNormal * (0.05 * Traversal.CellSizeAtLod());
+            int material = Traversal.SurfaceMaterialId(materialPosition, pixel, VoxelGridDither);
 
             // Three targets: the normal with a 1 in w that says "resolved"; the material id and
             // the grid index, a byte each; the world position with the depth in w.
