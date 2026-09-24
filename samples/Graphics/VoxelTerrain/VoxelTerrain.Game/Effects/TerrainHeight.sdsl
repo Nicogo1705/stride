@@ -8,9 +8,27 @@ namespace VoxelTerrain
     shader TerrainHeight : ComputeShaderBase, TerrainNoise
     {
         stage RWTexture2D<float4> HeightsOut;
+        /// The same columns at twice the minimum wavelength: what the next coarser ring sees, for the
+        /// outer band of this ring to blend towards, so the two agree where they meet.
+        stage RWTexture2D<float4> HeightsCoarseOut;
         stage int2 HeightSize;
         stage float2 WorldOriginXZ;
         stage float CellSize;
+
+        float4 Column(float2 xz, float minWavelength)
+        {
+            float h = Height(xz, minWavelength);
+            // The slope from the neighbouring columns, at the scale of the wavelength.
+            float step = minWavelength * 0.5;
+            float hx0 = Height(xz - float2(step, 0.0), minWavelength);
+            float hx1 = Height(xz + float2(step, 0.0), minWavelength);
+            float hz0 = Height(xz - float2(0.0, step), minWavelength);
+            float hz1 = Height(xz + float2(0.0, step), minWavelength);
+            float slope = length(float2(hx1 - hx0, hz1 - hz0)) / (2.0 * step);
+            float tint = Fbm2(xz + Seed + 300.0, 1.0 / 35.0, 3, minWavelength);
+            float caves = smoothstep(0.50, 0.65, Fbm2(xz + Seed + 4000.0, 1.0 / 300.0, 3, minWavelength));
+            return float4(h, slope, tint, caves);
+        }
 
         override void Compute()
         {
@@ -19,18 +37,8 @@ namespace VoxelTerrain
                 return;
 
             float2 xz = WorldOriginXZ + c * CellSize;
-            float minWavelength = CellSize * 2.0;
-            float h = Height(xz, minWavelength);
-            // The slope from the neighbouring columns, at this ring's own scale.
-            float hx0 = Height(xz - float2(CellSize, 0.0), minWavelength);
-            float hx1 = Height(xz + float2(CellSize, 0.0), minWavelength);
-            float hz0 = Height(xz - float2(0.0, CellSize), minWavelength);
-            float hz1 = Height(xz + float2(0.0, CellSize), minWavelength);
-            float slope = length(float2(hx1 - hx0, hz1 - hz0)) / (2.0 * CellSize);
-
-            float tint = Fbm2(xz + Seed + 300.0, 1.0 / 35.0, 3, minWavelength);
-            float caves = smoothstep(0.50, 0.65, Fbm2(xz + Seed + 4000.0, 1.0 / 300.0, 3, minWavelength));
-            HeightsOut[c] = float4(h, slope, tint, caves);
+            HeightsOut[c] = Column(xz, CellSize * 2.0);
+            HeightsCoarseOut[c] = Column(xz, CellSize * 4.0);
         }
     };
 }

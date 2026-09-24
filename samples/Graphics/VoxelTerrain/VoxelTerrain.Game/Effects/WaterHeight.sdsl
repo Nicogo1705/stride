@@ -1,0 +1,75 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The water height after a step: what flowed in from the four neighbours less what flowed out,
+    /// plus whatever is being poured; the flow's velocity beside it, for the foam. The border columns
+    /// stand at sea level, so the domain is open: a wave leaves, the sea comes in.
+    shader WaterHeight : ComputeShaderBase
+    {
+        stage Texture2D<float> Height;
+        stage Texture2D<float> Bed;
+        stage Texture2D<float4> Flux;
+        stage RWTexture2D<float> HeightOut;
+        stage RWTexture2D<float2> VelocityOut;
+
+        stage int2 SimSize;
+        stage float2 SimOriginXZ;
+        stage float Cell;
+        stage float Dt;
+        stage float SeaLevel;
+
+        /// A ball of water added this step: centre over XZ, radius, and height per second; radius 0 for none.
+        stage float3 Pour;
+        stage float PourRate;
+
+        float4 FluxAt(int2 c)
+        {
+            if (any(c < 0) || any(c >= SimSize))
+                return float4(0, 0, 0, 0);
+            return Flux[c];
+        }
+
+        override void Compute()
+        {
+            int2 c = int2(streams.DispatchThreadId.xy);
+            if (any(c >= SimSize))
+                return;
+
+            float4 outflow = Flux[c];
+            // What the neighbours send this way: the left one's flow to +x, the right one's to -x, and so on.
+            float fromLeft = FluxAt(c + int2(-1, 0)).y;
+            float fromRight = FluxAt(c + int2(1, 0)).x;
+            float fromFront = FluxAt(c + int2(0, 1)).w;
+            float fromBack = FluxAt(c + int2(0, -1)).z;
+            float inflow = fromLeft + fromRight + fromFront + fromBack;
+
+            float h = Height[c];
+            float area = Cell * Cell;
+            float next = h + Dt * (inflow - (outflow.x + outflow.y + outflow.z + outflow.w)) / area;
+
+            if (Pour.z > 0.0)
+            {
+                float2 xz = SimOriginXZ + c * Cell;
+                float d = distance(xz, Pour.xy);
+                if (d < Pour.z)
+                    next += PourRate * Dt * (1.0 - d / Pour.z);
+            }
+
+            // Open at the edges, at sea level.
+            if (c.x == 0 || c.y == 0 || c.x == SimSize.x - 1 || c.y == SimSize.y - 1)
+                next = max(SeaLevel - Bed[c], 0.0);
+
+            // A film thinner than a millimetre soaks away, so the ground dries rather than glistens forever.
+            if (next < 0.001)
+                next = 0.0;
+            HeightOut[c] = next;
+
+            // The mean flow through the column, in cells per second, for the foam.
+            float depth = max((h + next) * 0.5, 0.05);
+            float vx = (fromLeft - outflow.x + outflow.y - fromRight) * 0.5 / (depth * Cell);
+            float vz = (fromBack - outflow.w + outflow.z - fromFront) * 0.5 / (depth * Cell);
+            VelocityOut[c] = float2(vx, vz);
+        }
+    };
+}

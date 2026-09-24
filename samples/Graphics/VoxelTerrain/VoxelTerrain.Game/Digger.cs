@@ -11,7 +11,7 @@ using Stride.Input;
 namespace VoxelTerrain;
 
 /// <summary>
-/// Digs into the field with the left mouse button, fills it back with F.
+/// Digs into the field with the left mouse button, fills it back with F, pours water with T.
 /// </summary>
 /// <remarks>
 /// This is the point of the grid layer, made visible: a terrain edit is a write into the field.
@@ -72,10 +72,16 @@ public sealed class Digger : SyncScript
 
         var dig = Input.IsMouseButtonDown(MouseButton.Left);
         var fill = Input.IsKeyDown(Keys.F);
-        if ((!dig && !fill) || cooldown > 0f || terrain is not { } hit)
+        var pour = Input.IsKeyDown(Keys.T);
+        if ((!dig && !fill && !pour) || cooldown > 0f || terrain is not { } hit)
             return;
 
         cooldown = Interval;
+        if (pour)
+        {
+            VoxelTerrainScene.Pour(hit.Point);
+            return;
+        }
         var centre = hit.Point + (fill ? hit.Normal * (Radius * 0.6f) : Vector3.Zero);
         VoxelTerrainScene.Edit(centre, Radius, fill);
     }

@@ -3,11 +3,25 @@
 namespace VoxelTerrain
 {
     /// The terrain's diffuse colour at the pixel, from the resolved material id.
-    shader TerrainSurfaceColor : ComputeColor, TerrainSurface
+    shader TerrainSurfaceColor : ComputeColor, TerrainSurface, PositionStream4, NormalStream
     {
+        cbuffer PerMaterial
+        {
+            /// Above zero while the camera is under water: how much light a metre of water takes,
+            /// applied over the distance to the pixel, so the bottom fades with the length of the ray.
+            stage float TerrainUnderwaterAbsorb;
+        }
+
         override float4 Compute()
         {
-            return float4(Albedo(MaterialId()), 1.0);
+            float3 albedo = Albedo(MaterialId());
+            if (TerrainUnderwaterAbsorb > 0.0)
+            {
+                // Red goes first, then green, as through the surface from above.
+                float3 transmittance = exp(-streams.DepthVS * TerrainUnderwaterAbsorb * float3(1.0, 0.4, 0.22));
+                albedo = lerp(float3(0.015, 0.09, 0.15), albedo, transmittance);
+            }
+            return float4(albedo, 1.0);
         }
     };
 }

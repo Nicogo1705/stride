@@ -32,6 +32,9 @@ public sealed class VoxelField : IDisposable
     /// <summary>One column per (x, z): height, slope, tint, cave-proneness. Rebuilt whenever the ring moves.</summary>
     public Texture Heights { get; }
 
+    /// <summary>The columns as the next coarser ring sees them, for the outer band to blend towards.</summary>
+    public Texture HeightsCoarse { get; }
+
     private readonly IGame game;
     private readonly Texture[] fieldLevels;
     private readonly Texture[] occupancyLevels;
@@ -48,6 +51,8 @@ public sealed class VoxelField : IDisposable
             TextureFlags.ShaderResource | TextureFlags.UnorderedAccess, GraphicsResourceUsage.Default);
         Occupancy = new VoxelGridOccupancy(device, SampleCount, unorderedAccess: true);
         Heights = Texture.New2D(device, samples, samples, 1, PixelFormat.R32G32B32A32_Float,
+            TextureFlags.ShaderResource | TextureFlags.UnorderedAccess, 1, GraphicsResourceUsage.Default);
+        HeightsCoarse = Texture.New2D(device, samples, samples, 1, PixelFormat.R32G32B32A32_Float,
             TextureFlags.ShaderResource | TextureFlags.UnorderedAccess, 1, GraphicsResourceUsage.Default);
 
         // One view per mip: a compute pass reads one level and writes the next, and Direct3D wants
@@ -87,6 +92,7 @@ public sealed class VoxelField : IDisposable
         Prepare();
         height!.Parameters.Set(TerrainNoiseKeys.Seed, placement.Seed);
         height.Parameters.Set(TerrainHeightKeys.HeightsOut, Heights);
+        height.Parameters.Set(TerrainHeightKeys.HeightsCoarseOut, HeightsCoarse);
         height.Parameters.Set(TerrainHeightKeys.HeightSize, new Int2(Samples));
         height.Parameters.Set(TerrainHeightKeys.WorldOriginXZ, new Vector2(placement.WorldOrigin.X, placement.WorldOrigin.Z));
         height.Parameters.Set(TerrainHeightKeys.CellSize, placement.CellSize);
@@ -110,6 +116,7 @@ public sealed class VoxelField : IDisposable
         parameters.Set(VoxelFieldBoxKeys.Origin, lo);
         parameters.Set(VoxelFieldBoxKeys.TargetSize, SampleCount);
         parameters.Set(TerrainGenerateKeys.Heights, Heights);
+        parameters.Set(TerrainGenerateKeys.HeightsCoarse, HeightsCoarse);
         parameters.Set(TerrainGenerateKeys.Target, fieldLevels[0]);
         parameters.Set(TerrainGenerateKeys.WorldOrigin, placement.WorldOrigin);
         parameters.Set(TerrainGenerateKeys.CellSize, placement.CellSize);
@@ -232,6 +239,7 @@ public sealed class VoxelField : IDisposable
             view.Dispose();
         Occupancy.Dispose();
         Heights.Dispose();
+        HeightsCoarse.Dispose();
         Texture.Dispose();
     }
 }

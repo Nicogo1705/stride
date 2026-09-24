@@ -46,7 +46,12 @@ public sealed class TerrainClipmap : IDisposable
         /// <summary>World position of sample (0, 0, 0).</summary>
         public Vector3 Origin;
         public bool Placed;
+        /// <summary>The whole ring is to be generated again.</summary>
         public bool Dirty;
+        /// <summary>The next finer ring moved: only the hole is to be redone.</summary>
+        public bool HoleDirty;
+        /// <summary>The hole as generated, in world units.</summary>
+        public Vector3 HoleMin, HoleMax;
         public int Generations;
     }
 
@@ -62,6 +67,9 @@ public sealed class TerrainClipmap : IDisposable
 
     public int BrushCount => brushes.Count / 2;
 
+    /// <summary>A ring changed: generated again, its hole moved, or dug into. The level of the ring.</summary>
+    public event Action<int>? Changed;
+
     private readonly Game game;
     private readonly Scene scene;
     private readonly List<Ring> rings = [];
@@ -76,7 +84,7 @@ public sealed class TerrainClipmap : IDisposable
     private readonly ushort[] colliderSamples;
     private Entity? colliderEntity;
 
-    /// <param name="ringCount">Rings, finest first. Seven at 129 samples and a 0.25 m cell reach 1 km out.</param>
+    /// <param name="ringCount">Rings, finest first. Ten at 129 samples and a 0.25 m cell reach 8 km out.</param>
     /// <param name="samples">Samples along each axis of every ring; cells are one fewer.</param>
     /// <param name="finestCell">World size of the finest ring's cell.</param>
     /// <param name="shadowRings">How many of the finest rings write the shadow maps; the GI lights the rest.</param>
@@ -101,6 +109,9 @@ public sealed class TerrainClipmap : IDisposable
                     Source = new VoxelGridSourceTexture3D { Texture = field.Texture, SampleCount = field.SampleCount },
                     CellSize = cellSize,
                     IsoLevel = 0.5f,
+                    // Open at the edges: the coarser ring continues the surface past them, and a
+                    // sealed edge would draw a wall wherever the ground crosses it.
+                    SealBorder = true,
                     MaxSteps = samples * 3 + 64,
                     Surface = VoxelSurfaceForm.MarchingCubes,
                 },
@@ -147,9 +158,9 @@ public sealed class TerrainClipmap : IDisposable
             ring.Origin = desired;
             ring.Placed = true;
             ring.Dirty = true;
-            // The coarser ring's hole is this ring's box, so it moves too.
+            // The coarser ring's hole is this ring's box, so it moves too - the hole alone, not the ring.
             if (level + 1 < rings.Count)
-                rings[level + 1].Dirty = true;
+                rings[level + 1].HoleDirty = true;
         }
 
         if (brushesDirty)
@@ -157,6 +168,12 @@ public sealed class TerrainClipmap : IDisposable
             UploadBrushes();
             brushesDirty = false;
         }
+
+        // Holes first, every frame: an eighth of a ring each, and a stale one shows as a pit where
+        // the finer ring no longer draws.
+        foreach (var ring in rings)
+            if (ring.HoleDirty && ring.Placed && !ring.Dirty)
+                UpdateHole(ring);
 
         // Everything at once on the first frame; afterwards a budget, finest first, since that is
         // the ground under the player and the collider.
@@ -185,11 +202,11 @@ public sealed class TerrainClipmap : IDisposable
         };
         if (ring.Level > 0)
         {
-            // The finer ring's box, shrunk by one of this ring's cells: the two overlap by that
-            // much and the depth test picks the nearer, so a seam shows no gap.
+            // The finer ring's box, exactly: its outer band blends towards this ring, so the two
+            // surfaces meet at the boundary without overlapping.
             var finer = rings[ring.Level - 1];
-            placement.HoleMin = finer.Origin + new Vector3(ring.CellSize);
-            placement.HoleMax = finer.Origin + new Vector3(Extent(finer) - ring.CellSize);
+            placement.HoleMin = finer.Origin;
+            placement.HoleMax = finer.Origin + new Vector3(Extent(finer));
         }
         return placement;
     }
@@ -197,11 +214,34 @@ public sealed class TerrainClipmap : IDisposable
     private void Regenerate(Ring ring)
     {
         ring.Dirty = false;
+        ring.HoleDirty = false;
         ring.Generations++;
         ring.Entity.Transform.Position = ring.Origin;
-        ring.Field.Generate(PlacementOf(ring));
+        var placement = PlacementOf(ring);
+        ring.HoleMin = placement.HoleMin;
+        ring.HoleMax = placement.HoleMax;
+        ring.Field.Generate(placement);
         if (ring.Level == 0)
             SyncCollider();
+        Changed?.Invoke(ring.Level);
+    }
+
+    /// <summary>The hole again, where the finer ring now stands: the samples over the old hole and the new, nothing else.</summary>
+    private void UpdateHole(Ring ring)
+    {
+        ring.HoleDirty = false;
+        var placement = PlacementOf(ring);
+        var lo = Vector3.Min(ring.HoleMin, placement.HoleMin);
+        var hi = Vector3.Max(ring.HoleMax, placement.HoleMax);
+        ring.HoleMin = placement.HoleMin;
+        ring.HoleMax = placement.HoleMax;
+        var inverse = 1f / ring.CellSize;
+        var a = (lo - ring.Origin) * inverse;
+        var b = (hi - ring.Origin) * inverse;
+        ring.Field.GenerateBox(placement,
+            new Int3((int)MathF.Floor(a.X) - 1, (int)MathF.Floor(a.Y) - 1, (int)MathF.Floor(a.Z) - 1),
+            new Int3((int)MathF.Ceiling(b.X) + 1, (int)MathF.Ceiling(b.Y) + 1, (int)MathF.Ceiling(b.Z) + 1));
+        Changed?.Invoke(ring.Level);
     }
 
     /// <summary>The finest ring back on the CPU, into the collider, on a fresh static at the ring's origin.</summary>
@@ -264,6 +304,7 @@ public sealed class TerrainClipmap : IDisposable
             if (boxHi.X < 0 || boxHi.Y < 0 || boxHi.Z < 0 || boxLo.X >= Samples || boxLo.Y >= Samples || boxLo.Z >= Samples)
                 continue;
             ring.Field.GenerateBox(PlacementOf(ring), boxLo, boxHi);
+            Changed?.Invoke(ring.Level);
 
             if (ring.Level == 0)
                 EditCollider(ring, centre, radius, fill, material, Int3.Max(boxLo, Int3.Zero), Int3.Min(boxHi, new Int3(Samples - 1)));

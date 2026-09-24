@@ -41,7 +41,9 @@ public sealed class Hud : SyncScript
         var clipmap = VoxelTerrainScene.Clipmap;
         var position = Entity.Transform.Position;
         Line("Right mouse: look, + WASD/ZQSD/arrows fly, C/E down/up, Shift fast");
-        Line($"Left mouse: dig    F: fill    aim: {Digger?.Status ?? "-"}    brushes: {clipmap?.BrushCount ?? 0}");
+        Line($"Left mouse: dig    F: fill    T: pour water    aim: {Digger?.Status ?? "-"}    brushes: {clipmap?.BrushCount ?? 0}");
+        if (VoxelTerrainScene.Water is { } water)
+            Line($"Water: {WaterSim.Size}^2 columns of {WaterSim.Cell} m, {water.Steps} steps{(VoxelTerrainScene.WaterSurface?.Underwater == true ? ", under water" : "")}");
         Line($"G: voxel GI {(VoxelTerrainScene.GIEnabled ? "on" : "off")}    O: GI quality {VoxelTerrainScene.GIQuality}");
         Line($"B: surface {VoxelTerrainScene.Surface switch { VoxelSurfaceForm.Cubes => "cubes", VoxelSurfaceForm.SurfaceNets => "surface nets", _ => "smooth" }}");
         Line($"L: sun and ambient {(VoxelTerrainScene.LightsEnabled ? "on" : "off")}    H: terrain shadows {(VoxelTerrainScene.CastShadows ? "on" : "off")}");

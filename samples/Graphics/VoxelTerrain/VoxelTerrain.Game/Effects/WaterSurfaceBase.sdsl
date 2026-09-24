@@ -1,0 +1,86 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// What the water's material shaders share: the simulation's textures and where they lie in
+    /// the world, the sea, the time, and the small ripples laid over the simulated surface.
+    shader WaterSurfaceBase : Texturing
+    {
+        rgroup PerMaterial
+        {
+            stage Texture2D<float> WaterHeight;
+            stage Texture2D<float> WaterBed;
+            stage Texture2D<float2> WaterVelocity;
+        }
+
+        cbuffer PerMaterial
+        {
+            stage float2 WaterOriginXZ;
+            stage float WaterExtent;
+            stage float WaterCell;
+            stage float WaterSeaLevel;
+            stage float WaterTime;
+            /// 1 where the simulation covers the surface, 0 for the far sea, which is still at sea level.
+            stage float WaterSimulated;
+        }
+
+        float2 SimUv(float2 xz)
+        {
+            return (xz - WaterOriginXZ) / WaterExtent;
+        }
+
+        /// Height of the water surface over a point of the world, or well under the ground where there is none.
+        float SurfaceAt(float2 xz)
+        {
+            if (WaterSimulated < 0.5)
+                return WaterSeaLevel;
+            float2 uv = SimUv(xz);
+            float h = WaterHeight.SampleLevel(LinearSampler, uv, 0.0);
+            float bed = WaterBed.SampleLevel(LinearSampler, uv, 0.0);
+            // A dry column hides its vertex under the ground it stands on, so the sheet ends at the shore.
+            return h > 0.02 ? bed + h : bed - 0.5;
+        }
+
+        float2 VelocityAt(float2 xz)
+        {
+            if (WaterSimulated < 0.5)
+                return float2(0, 0);
+            return WaterVelocity.SampleLevel(LinearSampler, SimUv(xz), 0.0);
+        }
+
+        float Hash(float2 p)
+        {
+            return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+        }
+
+        float Noise(float2 p)
+        {
+            float2 i = floor(p);
+            float2 f = frac(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float a = Hash(i);
+            float b = Hash(i + float2(1, 0));
+            float c = Hash(i + float2(0, 1));
+            float d = Hash(i + float2(1, 1));
+            return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+        }
+
+        /// Small wind ripples over the world plane, as a slope: several directions so they never line up.
+        float2 Ripples(float2 xz)
+        {
+            float2 gradient = float2(0, 0);
+            float t = WaterTime;
+            float2 dirs[5] = { float2(0.94, 0.34), float2(-0.51, 0.86), float2(0.37, -0.93), float2(-0.98, -0.21), float2(0.71, 0.70) };
+            float freqs[5] = { 0.9, 1.6, 2.7, 4.3, 7.0 };
+            float amps[5] = { 0.035, 0.022, 0.014, 0.008, 0.004 };
+            float speeds[5] = { 1.1, 1.5, 2.0, 2.6, 3.4 };
+            [unroll]
+            for (int i = 0; i < 5; i++)
+            {
+                float phase = dot(xz, dirs[i]) * freqs[i] + t * speeds[i];
+                gradient += dirs[i] * (amps[i] * freqs[i] * cos(phase));
+            }
+            return gradient;
+        }
+    };
+}

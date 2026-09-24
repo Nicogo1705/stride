@@ -1,0 +1,66 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The ground under the water, one height per column of the simulation, read from the terrain
+    /// rings themselves: the finest ring that holds the column is scanned from its top down to the
+    /// first solid sample, and the surface is placed between that sample and the one above it. So
+    /// the water rests on the drawn ground, dug holes included, without a second copy of the terrain.
+    shader WaterBed : ComputeShaderBase
+    {
+        stage RWTexture2D<float> BedOut;
+        stage int2 SimSize;
+        stage float2 SimOriginXZ;
+        stage float SimCell;
+
+        stage Texture3D<float2> Field0;
+        stage float3 Origin0;
+        stage float Cell0;
+        stage Texture3D<float2> Field1;
+        stage float3 Origin1;
+        stage float Cell1;
+        stage Texture3D<float2> Field2;
+        stage float3 Origin2;
+        stage float Cell2;
+        stage int Samples;
+
+        /// Whether the ring holds the column, and the height of the topmost ground in it; false with no ground in the ring's box.
+        bool BedOf(Texture3D<float2> field, float3 origin, float cell, float2 xz, out float bed)
+        {
+            bed = 0.0;
+            float2 local = (xz - origin.xz) / cell;
+            if (any(local < 0.0) || any(local > Samples - 1))
+                return false;
+            int2 c = (int2)round(local);
+            float above = 0.0;
+            [loop]
+            for (int y = Samples - 1; y >= 0; y--)
+            {
+                float d = field.Load(int4(c.x, y, c.y, 0)).r;
+                if (d >= 0.5)
+                {
+                    // Between this sample and the one above, where the density crosses the iso level.
+                    float t = y + 1 < Samples ? saturate((d - 0.5) / max(d - above, 0.001)) : 0.0;
+                    bed = origin.y + (y + t) * cell;
+                    return true;
+                }
+                above = d;
+            }
+            return false;
+        }
+
+        override void Compute()
+        {
+            int2 c = int2(streams.DispatchThreadId.xy);
+            if (any(c >= SimSize))
+                return;
+            float2 xz = SimOriginXZ + c * SimCell;
+            float bed;
+            if (!BedOf(Field0, Origin0, Cell0, xz, bed))
+                if (!BedOf(Field1, Origin1, Cell1, xz, bed))
+                    if (!BedOf(Field2, Origin2, Cell2, xz, bed))
+                        bed = -1000.0;
+            BedOut[c] = bed;
+        }
+    };
+}

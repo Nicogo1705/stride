@@ -1,0 +1,24 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The surface's slope as a tangent-space normal: the simulated surface's own gradient, and the ripples over it.
+    shader WaterSurfaceNormal : ComputeColor, WaterSurfaceBase, PositionStream4
+    {
+        override float4 Compute()
+        {
+            float2 xz = streams.PositionWS.xz;
+            float2 gradient = Ripples(xz);
+            if (WaterSimulated > 0.5)
+            {
+                float e = WaterCell;
+                float hx = SurfaceAt(xz + float2(e, 0)) - SurfaceAt(xz - float2(e, 0));
+                float hz = SurfaceAt(xz + float2(0, e)) - SurfaceAt(xz - float2(0, e));
+                // A dry neighbour sits under the ground; its slope is the shore's, not the water's.
+                gradient += clamp(float2(hx, hz) / (2.0 * e), -1.0, 1.0);
+            }
+            float3 n = normalize(float3(-gradient.x, -gradient.y, 1.0));
+            return float4(n * 0.5 + 0.5, 1);
+        }
+    };
+}

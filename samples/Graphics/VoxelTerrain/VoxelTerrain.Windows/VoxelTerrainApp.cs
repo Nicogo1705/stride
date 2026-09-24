@@ -7,7 +7,7 @@ using VoxelTerrain;
 // The scene is built in code once the game is up, so that everything the sample shows is in one
 // readable place (VoxelTerrainScene) rather than spread over assets.
 //
-//   --rings=N          rings around the camera (default 7: 1 km out at the defaults)
+//   --rings=N          rings around the camera (default 10: 8 km out at the defaults, 16 km across)
 //   --ring-samples=N   samples along each axis of a ring (default 129; cubic in cost)
 //   --cell=F           world size of the finest cell (default 0.25)
 //   --seed=N           another world

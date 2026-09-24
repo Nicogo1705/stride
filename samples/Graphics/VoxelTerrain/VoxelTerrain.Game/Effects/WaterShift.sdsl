@@ -1,0 +1,38 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The simulation's domain moved with the camera: the columns it still covers are copied over
+    /// with their flow, and the columns it just took in start at sea level, still.
+    shader WaterShift : ComputeShaderBase
+    {
+        stage Texture2D<float> Height;
+        stage Texture2D<float4> Flux;
+        stage Texture2D<float> Bed;
+        stage RWTexture2D<float> HeightOut;
+        stage RWTexture2D<float4> FluxOut;
+
+        stage int2 SimSize;
+        /// Where a new column was in the old domain: old = new + Offset.
+        stage int2 Offset;
+        stage float SeaLevel;
+
+        override void Compute()
+        {
+            int2 c = int2(streams.DispatchThreadId.xy);
+            if (any(c >= SimSize))
+                return;
+            int2 old = c + Offset;
+            if (all(old >= 0) && all(old < SimSize))
+            {
+                HeightOut[c] = Height[old];
+                FluxOut[c] = Flux[old];
+            }
+            else
+            {
+                HeightOut[c] = max(SeaLevel - Bed[c], 0.0);
+                FluxOut[c] = float4(0, 0, 0, 0);
+            }
+        }
+    };
+}

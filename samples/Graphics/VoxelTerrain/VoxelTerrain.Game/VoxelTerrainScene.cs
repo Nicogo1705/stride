@@ -24,7 +24,7 @@ namespace VoxelTerrain;
 public sealed class TerrainOptions
 {
     /// <summary>Rings around the camera, finest first; each doubles the reach of the one inside it.</summary>
-    public int Rings { get; set; } = 7;
+    public int Rings { get; set; } = 10;
 
     /// <summary>Samples along each axis of every ring. Cubic in memory and generation cost.</summary>
     public int RingSamples { get; set; } = 129;
@@ -53,6 +53,18 @@ public sealed class TerrainOptions
     /// <summary>The engine's profiler overlay to open at start: fps, cpu or gpu; null for none.</summary>
     public string? Profiler { get; set; }
 
+    /// <summary>Speed the camera flies at in an unattended run, world units per second.</summary>
+    public Vector3 Fly { get; set; }
+
+    /// <summary>Where the camera looks at start: yaw and pitch, in degrees; null for the default.</summary>
+    public Vector2? Look { get; set; }
+
+    /// <summary>A hole dug at start, and water poured at start, for an unattended run.</summary>
+    public Vector3? DigAt { get; set; }
+    public bool NoWater { get; set; }
+    public bool NoSunShadow { get; set; }
+    public Vector3? PourAt { get; set; }
+
     /// <summary>
     /// --rings=N --ring-samples=N --cell=F --seed=N --gi=off|low|medium|high --shadow-rings=N
     /// --no-lod --beam=N --pos=x,y,z --shot=FILE --exit-after=SECONDS
@@ -75,6 +87,8 @@ public sealed class TerrainOptions
         options.Seed = Int(Option("seed"), options.Seed);
         options.ShadowRings = Int(Option("shadow-rings"), options.ShadowRings);
         options.LevelOfDetail = !args.Contains("--no-lod");
+        options.NoWater = args.Contains("--no-water");
+        options.NoSunShadow = args.Contains("--no-sun-shadow");
         options.BeamBlockSize = Int(Option("beam"), options.BeamBlockSize);
         options.Shot = Option("shot");
         options.ExitAfter = Float(Option("exit-after"), 0f);
@@ -89,6 +103,14 @@ public sealed class TerrainOptions
         };
         if (Option("pos")?.Split(',') is { Length: 3 } parts)
             options.Position = new Vector3(Float(parts[0], 0f), Float(parts[1], 0f), Float(parts[2], 0f));
+        if (Option("dig-at")?.Split(',') is { Length: 3 } dig)
+            options.DigAt = new Vector3(Float(dig[0], 0f), Float(dig[1], 0f), Float(dig[2], 0f));
+        if (Option("pour-at")?.Split(',') is { Length: 3 } pourAt)
+            options.PourAt = new Vector3(Float(pourAt[0], 0f), Float(pourAt[1], 0f), Float(pourAt[2], 0f));
+        if (Option("look")?.Split(',') is { Length: 2 } look)
+            options.Look = new Vector2(Float(look[0], 0f), Float(look[1], 0f));
+        if (Option("fly")?.Split(',') is { Length: 3 } fly)
+            options.Fly = new Vector3(Float(fly[0], 0f), Float(fly[1], 0f), Float(fly[2], 0f));
         return options;
     }
 }
@@ -100,6 +122,9 @@ public sealed class TerrainOptions
 public static class VoxelTerrainScene
 {
     public static TerrainClipmap? Clipmap { get; private set; }
+    public static Material? TerrainMaterial { get; private set; }
+    public static WaterSim? Water { get; private set; }
+    public static WaterSurface? WaterSurface { get; private set; }
     public static TerrainOptions Options { get; private set; } = new();
 
     private static Game? game;
@@ -118,8 +143,9 @@ public static class VoxelTerrainScene
         GIQuality = options.GI ?? GIQuality.Medium;
 
         // -- the world ------------------------------------------------------------------------------
+        TerrainMaterial = TerrainMaterials.Build(game.GraphicsDevice);
         Clipmap = new TerrainClipmap(game, scene, options.Rings, options.RingSamples, options.CellSize, options.Seed,
-            TerrainMaterials.Build(game.GraphicsDevice), options.ShadowRings, options.LevelOfDetail, options.BeamBlockSize);
+            TerrainMaterial, options.ShadowRings, options.LevelOfDetail, options.BeamBlockSize);
 
         // -- light and sky --------------------------------------------------------------------------
         var sun = new Entity("Sun")
@@ -131,7 +157,7 @@ public static class VoxelTerrainScene
                     Color = new ColorRgbProvider(new Color3(1f, 0.95f, 0.85f)),
                     Shadow =
                     {
-                        Enabled = true,
+                        Enabled = !options.NoSunShadow,
                         Size = LightShadowMapSize.Large,
                         Filter = new LightShadowMapFilterTypePcf(),
                         // A surface found by a ray shadows itself along a sawtooth at grazing
@@ -168,7 +194,7 @@ public static class VoxelTerrainScene
             {
                 VerticalFieldOfView = 65f,
                 NearClipPlane = 0.2f,
-                FarClipPlane = 4000f,
+                FarClipPlane = 20000f,
                 Slot = game.SceneSystem.GraphicsCompositor!.Cameras[0].ToSlotId(),
             },
             new ClipmapFollower(),
@@ -178,7 +204,7 @@ public static class VoxelTerrainScene
         // to the window that just took the focus.
         var unattended = options.Shot is not null || options.ExitAfter > 0f;
         if (unattended)
-            scripts.Add(new UnattendedRun { Shot = options.Shot, ExitAfter = options.ExitAfter });
+            scripts.Add(new UnattendedRun { Shot = options.Shot, ExitAfter = options.ExitAfter, Velocity = options.Fly });
         else
         {
             scripts.Add(new FlyCamera());
@@ -189,12 +215,32 @@ public static class VoxelTerrainScene
             camera.Add(component);
         // Above the ground at the origin: the height is the shader's, evaluated once here on the CPU.
         camera.Transform.Position = options.Position ?? new Vector3(0f, TerrainHeightCpu.Height(0f, 0f, options.Seed) + 12f, 0f);
-        camera.Transform.Rotation = Quaternion.RotationYawPitchRoll(MathUtil.Pi * 0.75f, -0.15f, 0);
+        camera.Transform.Rotation = options.Look is { } look
+            ? Quaternion.RotationYawPitchRoll(MathUtil.DegreesToRadians(look.X), MathUtil.DegreesToRadians(look.Y), 0)
+            : Quaternion.RotationYawPitchRoll(MathUtil.Pi * 0.75f, -0.15f, 0);
         scene.Entities.Add(camera);
         scene.Entities.Add(BuildReticle());
 
         // Rings placed and generated before the first frame draws them, so the balls have ground to land on.
         Clipmap.Update(camera.Transform.Position);
+
+        // -- the water ------------------------------------------------------------------------------
+        if (!options.NoWater)
+        {
+        Water = new WaterSim(game, Clipmap);
+        Clipmap.Changed += level => { if (level <= 2) Water.BedDirty = true; };
+        // A spring on the hillside by the start: it fills the nearest hollow into a lake and runs on down.
+        var spring = new Vector2(camera.Transform.Position.X + 24f, camera.Transform.Position.Z + 24f);
+        Water.Springs.Add((spring, 2f, 1.2f));
+        Water.Update(camera.Transform.Position, 0f);
+        var vignette = (FindForwardRenderer(game.SceneSystem.GraphicsCompositor?.Game)?.PostEffects as Stride.Rendering.Images.PostProcessingEffects)?.ColorTransforms.Transforms.OfType<Stride.Rendering.Images.Vignetting>().FirstOrDefault();
+        WaterSurface = new WaterSurface(game, scene, Water, sky, vignette);
+        }
+        if (options.DigAt is { } digAt)
+            for (int i = 0; i < 6; i++)
+                Edit(digAt - new Vector3(0f, i * 1.2f, 0f), 2.5f, fill: false);
+        if (options.PourAt is { } pourAt)
+            Water.Springs.Add((new Vector2(pourAt.X, pourAt.Z), 2f, 2f));
 
         // Something to drop, so contacts are visible rather than asserted.
         var random = new Random(7);
@@ -226,6 +272,9 @@ public static class VoxelTerrainScene
 
     /// <summary>Adds or removes a ball of material at a point.</summary>
     public static void Edit(Vector3 centre, float radius, bool fill) => Clipmap?.Dig(centre, radius, fill, TerrainMaterials.Rock);
+
+    /// <summary>Pours water over a point.</summary>
+    public static void Pour(Vector3 point) => Water?.Pour(new Vector2(point.X, point.Z), 2.5f, 6f);
 
     // -- switches for the HUD -------------------------------------------------------------------------
 
@@ -340,7 +389,14 @@ public static class VoxelTerrainScene
 /// <summary>Moves the rings with the entity it sits on: the camera.</summary>
 public sealed class ClipmapFollower : SyncScript
 {
-    public override void Update() => VoxelTerrainScene.Clipmap?.Update(Entity.Transform.Position);
+    public override void Update()
+    {
+        var position = Entity.Transform.Position;
+        var seconds = (float)Game.UpdateTime.Elapsed.TotalSeconds;
+        VoxelTerrainScene.Clipmap?.Update(position);
+        VoxelTerrainScene.Water?.Update(position, seconds);
+        VoxelTerrainScene.WaterSurface?.Update(position, seconds);
+    }
 }
 
 /// <summary>For a run without anyone at the keyboard: a screenshot, the frame rate on the console, and exit.</summary>
@@ -348,6 +404,9 @@ public sealed class UnattendedRun : SyncScript
 {
     public string? Shot { get; set; }
     public float ExitAfter { get; set; } = 10f;
+
+    /// <summary>Flies the camera at this speed, in world units per second, so a run exercises the rings moving.</summary>
+    public Vector3 Velocity { get; set; }
 
     private float elapsed;
     private int frames;
@@ -360,6 +419,7 @@ public sealed class UnattendedRun : SyncScript
             return;
         var dt = (float)Game.UpdateTime.Elapsed.TotalSeconds;
         elapsed += dt;
+        Entity.Transform.Position += Velocity * dt;
         // The first half is warm-up: shaders compile, rings generate. The second half is measured.
         if (elapsed > ExitAfter * 0.5f)
         {

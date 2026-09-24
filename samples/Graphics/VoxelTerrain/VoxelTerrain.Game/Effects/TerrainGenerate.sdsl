@@ -10,6 +10,8 @@ namespace VoxelTerrain
     {
         /// The columns, from TerrainHeight: height, slope, tint, cave-proneness.
         stage Texture2D<float4> Heights;
+        /// The same columns as the next coarser ring sees them; the outer band blends towards them.
+        stage Texture2D<float4> HeightsCoarse;
         stage RWTexture3D<float2> Target;
 
         /// World position of sample (0, 0, 0) and the size of a cell.
@@ -44,7 +46,12 @@ namespace VoxelTerrain
                 return;
 
             float3 p = WorldOrigin + c * CellSize;
-            float4 column = Heights.Load(int3(c.x, c.z, 0));
+            // The blend towards the coarser ring, over the outer thirty percent of the box on every
+            // axis: the surface then matches across the boundary, and a boundary that moves with the
+            // camera has nothing to pop.
+            float3 u = abs(c / float(TargetSize.x - 1) * 2.0 - 1.0);
+            float morph = saturate((max(u.x, max(u.y, u.z)) - 0.7) / 0.3);
+            float4 column = lerp(Heights.Load(int3(c.x, c.z, 0)), HeightsCoarse.Load(int3(c.x, c.z, 0)), morph);
             float h = column.x;
             float slope = column.y;
             float tint = column.z;
@@ -56,24 +63,32 @@ namespace VoxelTerrain
             float ramp = 0.35 / CellSize;
             float3 q = p + Seed;
 
-            // 3D noise on the height where it is steep: overhangs and ledges.
-            float lean = (Fbm3(q, 1.0 / 45.0, 3, minWavelength) - 0.5) * 14.0 * saturate(slope - 0.4);
+            // 3D noise on the height where it is steep: overhangs and ledges. Only in the fine
+            // rings: at a coarse cell the fractal is down to one octave, which swings wider than
+            // the sum of several, and the far hills would open where the near ones do not.
+            // Both at a fixed wavelength, the finest ring's, so every ring sees the same caves and
+            // ledges and a cave is whole however far its far wall is; the coarse rings sample them
+            // coarsely, which is fine while a cell is smaller than a cave.
+            float shapes = 0.5;
+            float fine = CellSize <= 4.0 ? 1.0 : 0.0;
+            float fineCoarser = CellSize * 2.0 <= 4.0 ? 1.0 : 0.0;
+            float lean = (Fbm3(q, 1.0 / 45.0, 3, shapes) - 0.5) * 14.0 * saturate(slope - 0.4) * lerp(fine, fineCoarser, morph);
             float ground = saturate((h + lean - p.y) * ramp);
 
-            // Caves, a few metres under the surface, where the column is cave-prone.
+            // Caves, a few metres under the surface, where the column is cave-prone; fine rings only, as above.
             float below = h - p.y;
             float caveRoom = saturate((below - 5.0) / 6.0);
             float cave = 0.0;
-            if (caveMask > 0.0 && caveRoom > 0.0)
+            if (caveMask > 0.0 && caveRoom > 0.0 && CellSize <= 8.0)
             {
-                float n = Fbm3(q + 100.0, 1.0 / 60.0, 3, minWavelength);
-                cave = saturate((n - 0.58) * 14.0) * caveRoom * caveMask;
+                float n = Fbm3(q + 100.0, 1.0 / 60.0, 3, shapes);
+                cave = saturate((n - 0.58) * 14.0) * caveRoom * caveMask * (CellSize * 2.0 <= 8.0 ? 1.0 : 1.0 - morph);
             }
             ground *= 1.0 - cave;
 
-            // Still water fills everything below sea level that the ground does not.
-            float water = saturate((SeaLevel - p.y) * ramp) * (1.0 - ground);
-            float density = max(ground, water);
+            // The water is not in the field: it is a surface of its own, simulated and drawn apart.
+            float water = 0.0;
+            float density = ground;
 
             // Where the sample sits decides what it is made of.
             uint grass = tint > 0.58 ? GrassDry : tint < 0.42 ? GrassDeep : Grass;

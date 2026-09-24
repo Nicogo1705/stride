@@ -1,0 +1,15 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// Lifts each vertex of the water mesh to the simulated surface. The mesh is a flat plane at
+    /// height zero moved with the domain; the displacement, along its normal, is the surface height itself.
+    shader WaterSurfaceDisplace : ComputeColor, WaterSurfaceBase, PositionStream4, Transformation
+    {
+        override float4 Compute()
+        {
+            float3 world = mul(streams.Position, World).xyz;
+            return float4(SurfaceAt(world.xz), 0, 0, 1);
+        }
+    };
+}

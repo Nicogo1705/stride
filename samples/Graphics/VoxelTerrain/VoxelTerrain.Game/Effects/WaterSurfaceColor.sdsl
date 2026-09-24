@@ -1,0 +1,63 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// What the water looks like: the scene behind it, refracted through the surface and absorbed
+    /// by the depth of water in front of it, the sky reflected at grazing angles, foam where the
+    /// water is shallow or fast; and from underneath, the surface as a lit ceiling.
+    /// Drawn in the transparent pass, where the opaque colour and depth are bound.
+    shader WaterSurfaceColor : ComputeColor, WaterSurfaceBase, OpaqueBase, DepthBase, ShaderBaseStream, PositionStream4, NormalStream, MaterialPixelStream
+    {
+        cbuffer PerMaterial
+        {
+            stage float3 WaterSkyColor;
+        }
+
+        override float4 Compute()
+        {
+            float2 screenUv = streams.ShadingPosition.xy / ViewSize;
+            float waterZ = streams.DepthVS;
+            float3 n = normalize(streams.normalWS);
+            float3 view = normalize(streams.viewWS);
+
+            // Refraction: the pixel behind, displaced by the surface's slope, unless what is there
+            // stands in front of the water.
+            float thickness = max(ComputeDepthFromUV(screenUv) - waterZ, 0.0);
+            float2 offset = n.xz * 0.03 * saturate(thickness);
+            float2 refractedUv = saturate(screenUv + offset);
+            float refractedZ = ComputeDepthFromUV(refractedUv);
+            if (refractedZ < waterZ)
+            {
+                refractedUv = screenUv;
+                refractedZ = ComputeDepthFromUV(screenUv);
+            }
+            float3 behind = GetOpaqueColor(refractedUv);
+            float depthInWater = max(refractedZ - waterZ, 0.0);
+
+            // Red goes first, then green: what is left of the scene after a few metres of water.
+            float3 absorb = exp(-depthInWater * float3(0.55, 0.22, 0.12));
+            float3 deep = float3(0.015, 0.09, 0.15);
+            float3 under = lerp(deep, behind, absorb);
+
+            // The sky in the surface at grazing angles.
+            float fresnel = 0.02 + 0.98 * pow(1.0 - saturate(dot(n, view)), 5.0);
+            float3 colour = lerp(under, WaterSkyColor, fresnel);
+
+            // Foam: the shore, and the fast water.
+            float2 xz = streams.PositionWS.xz;
+            float speed = length(VelocityAt(xz));
+            float grain = Noise(xz * 3.0 + float2(WaterTime * 0.4, -WaterTime * 0.3)) * Noise(xz * 7.0 - WaterTime * 0.5);
+            float foam = saturate(1.0 - thickness / 0.35) * 0.7 + saturate((speed - 0.8) * 0.6);
+            colour = lerp(colour, float3(0.9, 0.95, 1.0), saturate(foam * (0.4 + 1.2 * grain)));
+
+            // Seen from below: the surface is a bright ceiling, the sky through it, fading with the angle.
+            if (!streams.IsFrontFace)
+            {
+                float3 up = float3(0, 1, 0);
+                float look = saturate(dot(view, up));
+                colour = lerp(deep * 2.0, WaterSkyColor * 0.8 + behind * 0.3, look * 0.7);
+            }
+            return float4(colour, 1.0);
+        }
+    };
+}

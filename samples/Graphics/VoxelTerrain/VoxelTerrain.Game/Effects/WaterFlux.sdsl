@@ -1,0 +1,64 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// Shallow water over a height field, as virtual pipes between neighbouring columns (Mei, Decaudin
+    /// and Hu, 2007): each column keeps an outgoing flow to its four neighbours, pushed by the
+    /// difference in water surface height and never letting out more than the column holds. Stable
+    /// at any depth for a small enough step, and the waves, the settling and the flow down a slope
+    /// all fall out of it.
+    shader WaterFlux : ComputeShaderBase
+    {
+        stage Texture2D<float> Height;
+        stage Texture2D<float> Bed;
+        /// Outgoing flow per column: to -x, +x, +z, -z.
+        stage Texture2D<float4> Flux;
+        stage RWTexture2D<float4> FluxOut;
+
+        stage int2 SimSize;
+        stage float Cell;
+        stage float Dt;
+        stage float Gravity;
+        /// A little of the flow lost each step, so ripples die down rather than ring forever.
+        stage float Damping;
+
+        float Surface(int2 c)
+        {
+            return Bed[c] + Height[c];
+        }
+
+        float Push(float4 current, float mine, int2 n, bool inside, int k)
+        {
+            if (!inside)
+                return 0.0;
+            float dh = mine - Surface(n);
+            // The pipe's section over its length is the cell itself, so the acceleration term is g * dh * cell.
+            return max(0.0, current[k] * Damping + Dt * Gravity * dh * Cell);
+        }
+
+        override void Compute()
+        {
+            int2 c = int2(streams.DispatchThreadId.xy);
+            if (any(c >= SimSize))
+                return;
+
+            float h = Height[c];
+            float mine = Bed[c] + h;
+            float4 f = Flux[c];
+            float4 next;
+            next.x = Push(f, mine, c + int2(-1, 0), c.x > 0, 0);
+            next.y = Push(f, mine, c + int2(1, 0), c.x < SimSize.x - 1, 1);
+            next.z = Push(f, mine, c + int2(0, 1), c.y < SimSize.y - 1, 2);
+            next.w = Push(f, mine, c + int2(0, -1), c.y > 0, 3);
+
+            // Never more out than there is: the four flows are scaled down together.
+            float total = next.x + next.y + next.z + next.w;
+            if (total > 0.0)
+            {
+                float k = min(1.0, h * Cell * Cell / (total * Dt));
+                next *= k;
+            }
+            FluxOut[c] = next;
+        }
+    };
+}
