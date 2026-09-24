@@ -1,0 +1,13 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// The material id of the resolved voxel surface at the pixel, for the rest of the material to
+    /// read: a material that draws every id of a grid (a VoxelGridComponent.Material) picks its colour
+    /// from this, so one pass covers the grid. Set by the resolve layer at the front of the pixel
+    /// stage; -1 from the vertex stage, so the stream exists in every pass.
+    shader VoxelGridSurfaceStream
+    {
+        stage stream int VoxelGridSurfaceMaterial;
+    };
+}

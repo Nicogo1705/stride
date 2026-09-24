@@ -22,6 +22,10 @@
     <Project Path="Graphics/CustomEffect/CustomEffect.Game/CustomEffect.Game.csproj" />
     <Project Path="Graphics/CustomEffect/CustomEffect.Windows/CustomEffect.Windows.csproj" />
   </Folder>
+  <Folder Name="/Graphics/VoxelTerrain/">
+    <Project Path="Graphics/VoxelTerrain/VoxelTerrain.Game/VoxelTerrain.Game.csproj" />
+    <Project Path="Graphics/VoxelTerrain/VoxelTerrain.Windows/VoxelTerrain.Windows.csproj" />
+  </Folder>
   <Folder Name="/Graphics/MaterialShader/">
     <Project Path="Graphics/MaterialShader/MaterialShader.Game/MaterialShader.Game.csproj" />
     <Project Path="Graphics/MaterialShader/MaterialShader.Windows/MaterialShader.Windows.csproj" />

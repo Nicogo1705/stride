@@ -1,0 +1,131 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The world as a function: value noise, fractal sums, and the height of the ground at a point,
+    /// in metres. Every fractal is band-limited by a minimum wavelength - the ring being generated
+    /// passes twice its cell size - so a coarse ring holds the same landscape at its own scale rather
+    /// than aliasing the fine detail, and the rings agree where they meet.
+    shader TerrainNoise
+    {
+        /// Sea level, in metres. The water is a still sheet at this height wherever the ground is below it.
+        static const float SeaLevel = 0.0;
+
+        /// Offsets the landscape: another seed, another world.
+        stage float Seed;
+
+        float Hash2(int2 i)
+        {
+            uint h = (uint)i.x * 374761393u + (uint)i.y * 668265263u;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return float(h ^ (h >> 16)) * (1.0 / 4294967295.0);
+        }
+
+        float Hash3(int3 i)
+        {
+            uint h = (uint)i.x * 374761393u + (uint)i.y * 668265263u + (uint)i.z * 2246822519u;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return float(h ^ (h >> 16)) * (1.0 / 4294967295.0);
+        }
+
+        /// Smooth value noise in [0, 1].
+        float Noise2(float2 p)
+        {
+            int2 i = (int2)floor(p);
+            float2 f = frac(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float a = Hash2(i);
+            float b = Hash2(i + int2(1, 0));
+            float c = Hash2(i + int2(0, 1));
+            float d = Hash2(i + int2(1, 1));
+            return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+        }
+
+        float Noise3(float3 p)
+        {
+            int3 i = (int3)floor(p);
+            float3 f = frac(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float x00 = lerp(Hash3(i), Hash3(i + int3(1, 0, 0)), f.x);
+            float x10 = lerp(Hash3(i + int3(0, 1, 0)), Hash3(i + int3(1, 1, 0)), f.x);
+            float x01 = lerp(Hash3(i + int3(0, 0, 1)), Hash3(i + int3(1, 0, 1)), f.x);
+            float x11 = lerp(Hash3(i + int3(0, 1, 1)), Hash3(i + int3(1, 1, 1)), f.x);
+            return lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z);
+        }
+
+        /// Fractal noise in [0, 1], octaves whose wavelength falls under minWavelength left out.
+        float Fbm2(float2 p, float frequency, int octaves, float minWavelength)
+        {
+            float sum = 0.0;
+            float weight = 0.5;
+            float total = 0.0;
+            [loop]
+            for (int i = 0; i < octaves; i++)
+            {
+                if (1.0 / frequency < minWavelength)
+                    break;
+                sum += Noise2(p * frequency) * weight;
+                total += weight;
+                weight *= 0.5;
+                frequency *= 2.03;
+                p += float2(31.7, 11.3);
+            }
+            return total > 0.0 ? sum / total : 0.5;
+        }
+
+        float Fbm3(float3 p, float frequency, int octaves, float minWavelength)
+        {
+            float sum = 0.0;
+            float weight = 0.5;
+            float total = 0.0;
+            [loop]
+            for (int i = 0; i < octaves; i++)
+            {
+                if (1.0 / frequency < minWavelength)
+                    break;
+                sum += Noise3(p * frequency) * weight;
+                total += weight;
+                weight *= 0.5;
+                frequency *= 2.01;
+                p += float3(19.1, 7.3, 3.7);
+            }
+            return total > 0.0 ? sum / total : 0.5;
+        }
+
+        /// Ridged fractal noise in [0, 1]: sharp crests, for mountains.
+        float Ridge2(float2 p, float frequency, int octaves, float minWavelength)
+        {
+            float sum = 0.0;
+            float weight = 0.5;
+            float total = 0.0;
+            [loop]
+            for (int i = 0; i < octaves; i++)
+            {
+                if (1.0 / frequency < minWavelength)
+                    break;
+                float n = 1.0 - abs(Noise2(p * frequency) * 2.0 - 1.0);
+                sum += n * n * weight;
+                total += weight;
+                weight *= 0.5;
+                frequency *= 2.05;
+                p += float2(17.3, 29.1);
+            }
+            return total > 0.0 ? sum / total : 0.5;
+        }
+
+        /// Height of the ground at a point, in metres: a continent of lowlands and plateaus, a
+        /// mountain range where it is high, hills over it all, and a little detail on top.
+        float Height(float2 xz, float minWavelength)
+        {
+            float2 q = xz + Seed;
+            float continent = Fbm2(q, 1.0 / 1400.0, 4, minWavelength);
+            float baseHeight = (continent - 0.45) * 220.0;
+            float mountain = smoothstep(0.55, 0.80, continent);
+            float ridged = Ridge2(q + 500.0, 1.0 / 520.0, 5, minWavelength);
+            float mountains = ridged * 340.0 * mountain;
+            float hills = (Fbm2(q + 200.0, 1.0 / 160.0, 4, minWavelength) - 0.5) * 44.0;
+            float detail = (Fbm2(q + 900.0, 1.0 / 22.0, 3, minWavelength) - 0.5) * 5.0;
+            return baseHeight + mountains + hills + detail;
+        }
+    };
+}

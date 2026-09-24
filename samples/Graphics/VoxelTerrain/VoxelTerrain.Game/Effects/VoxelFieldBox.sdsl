@@ -1,0 +1,21 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// A pass that rebuilds one level of something derived from the field, over a box of that level's
+    /// texels: the dispatch covers the box, and each thread is one texel of it.
+    shader VoxelFieldBox : ComputeShaderBase
+    {
+        /// First texel of the box, at the level being written.
+        stage int3 Origin;
+        /// Texels along each axis of the level being written.
+        stage int3 TargetSize;
+
+        /// The texel this thread writes, or a negative one when the thread falls outside the level.
+        int3 Texel()
+        {
+            int3 c = Origin + int3(streams.DispatchThreadId);
+            return all(c < TargetSize) ? c : int3(-1, -1, -1);
+        }
+    };
+}

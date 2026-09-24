@@ -19,6 +19,12 @@ namespace Stride.Rendering.Voxels.Grid
         Texture2D VoxelGridSceneDepth;
         float VoxelGridSceneDepthBound;
 
+        /// The depth the grids resolved before this one, and 1 when it is bound: a ray stops at a
+        /// nearer grid's surface too, and a pixel a nearer grid covers is not walked at all. With
+        /// nested grids - rings of a clipmap - this is most of the pixels of every ring but the first.
+        Texture2D VoxelGridResolvedDepth;
+        float VoxelGridResolvedDepthBound;
+
         /// What VoxelGridBeamShader wrote, one texel per block of VoxelGridBeamBlock pixels a side; 0 pixels leaves it unread.
         stage Texture2D<float> VoxelGridBeam;
         int VoxelGridBeamBlock;
@@ -68,13 +74,21 @@ namespace Stride.Rendering.Voxels.Grid
             float reach = VoxelGridMaxDistance;
             // The scene's surface on this ray, in the grid's units from the entry: a ray behind it
             // has a reach below zero and the walk ends before its first cell.
-            float sceneDepth = VoxelGridSceneDepth.Load(int3(pixel, 0)).x;
+            // The nearer of the scene's depth and the depth the grids before this one resolved; 1 where neither is bound or drawn.
+            float sceneDepth = lerp(1.0, VoxelGridSceneDepth.Load(int3(pixel, 0)).x, VoxelGridSceneDepthBound);
+            float resolvedDepth = lerp(1.0, VoxelGridResolvedDepth.Load(int3(pixel, 0)).x, VoxelGridResolvedDepthBound);
+            sceneDepth = min(sceneDepth, resolvedDepth);
             float2 uv = streams.ShadingPosition.xy / VoxelGridViewSize;
             float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
             float4 sceneClip = mul(float4(ndc, sceneDepth, 1.0), VoxelGridViewProjectionInverse);
             float3 sceneLocal = mul(float4(sceneClip.xyz / sceneClip.w, 1), VoxelGridWorldInverse).xyz;
             float sceneReach = dot(sceneLocal - localOrigin, localDirection) - enter;
-            float bounded = VoxelGridSceneDepthBound * (1.0 - step(1.0, sceneDepth));
+            float bounded = 1.0 - step(1.0, sceneDepth);
+            // A surface already in front of the box: nothing of this grid can show, so nothing is walked.
+            if (bounded > 0.5 && sceneReach <= 0.0)
+            {
+                discard;
+            }
             reach = lerp(reach, min(reach, sceneReach), bounded);
             // Or further, where the beam of the pixel's block found nothing up to; negative says nothing along the block.
             float start = enter;

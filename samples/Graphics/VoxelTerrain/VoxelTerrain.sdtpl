@@ -1,0 +1,11 @@
+!TemplateSample
+Id: 9F3B7C21-5D4E-4A8B-B2C6-1E7D8F9A0B3C
+Name: "Sample: voxel terrain"
+Scope: Session
+Description: A kilometre of procedural voxel terrain drawn without a mesh, dug into, lit by voxel GI
+FullDescription: This sample evaluates a landscape on the GPU into nested rings of voxel grids around the camera, draws them with the voxel grid renderer (no meshing, no chunks), collides against the finest ring with the voxel collider, injects the field into the voxel cone tracing GI, and lets you dig and fill it in real time.
+Group: Samples/Graphics
+Icon: .sdtpl/Icon.png
+DefaultOutputName: VoxelTerrain
+Screenshots:
+    - .sdtpl/screenshot_small.png

@@ -1,0 +1,44 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The colour and gloss of the terrain at a pixel, from the material id the resolve pass left
+    /// there. One material draws every id of a ring this way, one full-screen pass per ring instead
+    /// of one per id; the ids are the ones TerrainGenerate writes.
+    shader TerrainSurface : VoxelGridSurfaceStream
+    {
+        /// The material id at the pixel, set by the grid's resolve layer (MaterialSurfaceVoxelGridResolve)
+        /// at the front of the material's pixel stage.
+        int MaterialId()
+        {
+            return streams.VoxelGridSurfaceMaterial;
+        }
+
+        float3 Albedo(int id)
+        {
+            float3 c = float3(1.0, 0.0, 1.0);          // air: never at a surface
+            if (id == 1) c = float3(0.14, 0.34, 0.09);  // grass
+            else if (id == 2) c = float3(0.28, 0.18, 0.11);  // dirt
+            else if (id == 3) c = float3(0.38, 0.37, 0.36);  // rock
+            else if (id == 4) c = float3(0.76, 0.68, 0.48);  // sand
+            else if (id == 5) c = float3(0.10, 0.27, 0.08);  // grass, deep
+            else if (id == 6) c = float3(0.36, 0.42, 0.14);  // grass, dry
+            else if (id == 7) c = float3(0.50, 0.48, 0.45);  // rock, pale
+            else if (id == 8) c = float3(0.24, 0.24, 0.25);  // rock, dark
+            else if (id == 9) c = float3(0.08, 0.22, 0.36);  // water
+            else if (id == 10) c = float3(0.92, 0.94, 0.97); // snow
+            return c;
+        }
+
+        float Gloss(int id)
+        {
+            float g = 0.15;
+            if (id == 9) g = 0.93;
+            else if (id == 10) g = 0.35;
+            else if (id == 3 || id == 7 || id == 8) g = 0.25;
+            else if (id == 4) g = 0.20;
+            else if (id == 2) g = 0.10;
+            return g;
+        }
+    };
+}

@@ -62,6 +62,8 @@ namespace Stride.Rendering.Voxels.Grid
         public Texture Position { get; private set; }
 
         private Texture depth;
+        /// <summary>A readable copy of <see cref="depth"/> as the grids before the current one left it, so a grid stops at their surfaces and skips the pixels they cover.</summary>
+        private Texture resolvedDepth;
         private Texture beam;
 
         /// <summary>Counts the times the targets were remade; a reader binds them again when it changes.</summary>
@@ -151,11 +153,27 @@ namespace Stride.Rendering.Voxels.Grid
             parameters.Set(VoxelGridResolveShaderKeys.VoxelGridSceneDepth, sceneDepth ?? noSceneDepth);
             parameters.Set(VoxelGridResolveShaderKeys.VoxelGridSceneDepthBound, sceneDepth != null ? 1f : 0f);
 
+            var first = true;
             foreach (var grid in Grids)
             {
                 var box = grid.Box;
                 if (grid.Traversal?.Source == null || box == null)
                     continue;
+
+                // What the grids before this one resolved bounds its walk: a copy of the depth so
+                // far, since the depth buffer itself is bound for writing. Nested grids - the rings
+                // of a clipmap, finest first - leave every ring but the first only the pixels the
+                // finer ones did not cover.
+                if (!first)
+                {
+                    commandList.ResetTargets();
+                    commandList.Copy(depth, resolvedDepth);
+                    commandList.ResourceBarrierTransition(resolvedDepth, BarrierLayout.ShaderResource);
+                    commandList.SetRenderTargetsAndViewport(depth, Normal, Material, Position);
+                }
+                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridResolvedDepth, first ? noSceneDepth : resolvedDepth);
+                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridResolvedDepthBound, first ? 0f : 1f);
+                first = false;
 
                 var world = grid.World;
                 Matrix.Invert(ref world, out var worldInverse);
@@ -226,6 +244,8 @@ namespace Stride.Rendering.Voxels.Grid
             Material = Texture.New2D(device, width, height, PixelFormat.R8G8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
             Position = Texture.New2D(device, width, height, PixelFormat.R32G32B32A32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
             depth = Texture.New2D(device, width, height, PixelFormat.D32_Float, TextureFlags.DepthStencil);
+            // The same bits as the depth buffer, readable: what a copy of a D32 depth lands in.
+            resolvedDepth = Texture.New2D(device, width, height, PixelFormat.R32_Float, TextureFlags.ShaderResource);
             TargetsVersion++;
         }
 
@@ -244,7 +264,8 @@ namespace Stride.Rendering.Voxels.Grid
             Material?.Dispose();
             Position?.Dispose();
             depth?.Dispose();
-            Normal = Material = Position = depth = null;
+            resolvedDepth?.Dispose();
+            Normal = Material = Position = depth = resolvedDepth = null;
         }
 
         public void Dispose()

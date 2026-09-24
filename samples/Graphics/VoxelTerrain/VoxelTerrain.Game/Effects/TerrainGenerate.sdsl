@@ -1,0 +1,127 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// The samples of one ring, over a box of them: density from the column's height with overhangs
+    /// and caves from 3D noise, still water up to sea level, a material id from where the sample
+    /// sits; then every brush the player painted, and finally the hole where the next finer ring
+    /// draws instead. Density in red, material id in green, as the grid reads them.
+    shader TerrainGenerate : VoxelFieldBox, TerrainNoise
+    {
+        /// The columns, from TerrainHeight: height, slope, tint, cave-proneness.
+        stage Texture2D<float4> Heights;
+        stage RWTexture3D<float2> Target;
+
+        /// World position of sample (0, 0, 0) and the size of a cell.
+        stage float3 WorldOrigin;
+        stage float CellSize;
+
+        /// The box the next finer ring covers, in world units; empty (max below min) for the finest ring.
+        stage float3 HoleMin;
+        stage float3 HoleMax;
+
+        /// Two float4 per brush: centre and radius, then fill (1) or dig (0) and the material id.
+        stage StructuredBuffer<float4> Brushes;
+        stage int BrushCount;
+
+        // Material ids, as TerrainMaterials lays the palette out.
+        static const uint Air = 0;
+        static const uint Grass = 1;
+        static const uint Dirt = 2;
+        static const uint Rock = 3;
+        static const uint Sand = 4;
+        static const uint GrassDeep = 5;
+        static const uint GrassDry = 6;
+        static const uint RockPale = 7;
+        static const uint RockDark = 8;
+        static const uint Water = 9;
+        static const uint Snow = 10;
+
+        override void Compute()
+        {
+            int3 c = Texel();
+            if (c.x < 0)
+                return;
+
+            float3 p = WorldOrigin + c * CellSize;
+            float4 column = Heights.Load(int3(c.x, c.z, 0));
+            float h = column.x;
+            float slope = column.y;
+            float tint = column.z;
+            float caveMask = column.w;
+            float minWavelength = CellSize * 2.0;
+            // The density ramps over about three cells around the surface, whatever the cell is: the
+            // surface is found by interpolating the samples, and its normal is their gradient, so a
+            // ramp that saturates within one cell gives a surface that steps from row to row.
+            float ramp = 0.35 / CellSize;
+            float3 q = p + Seed;
+
+            // 3D noise on the height where it is steep: overhangs and ledges.
+            float lean = (Fbm3(q, 1.0 / 45.0, 3, minWavelength) - 0.5) * 14.0 * saturate(slope - 0.4);
+            float ground = saturate((h + lean - p.y) * ramp);
+
+            // Caves, a few metres under the surface, where the column is cave-prone.
+            float below = h - p.y;
+            float caveRoom = saturate((below - 5.0) / 6.0);
+            float cave = 0.0;
+            if (caveMask > 0.0 && caveRoom > 0.0)
+            {
+                float n = Fbm3(q + 100.0, 1.0 / 60.0, 3, minWavelength);
+                cave = saturate((n - 0.58) * 14.0) * caveRoom * caveMask;
+            }
+            ground *= 1.0 - cave;
+
+            // Still water fills everything below sea level that the ground does not.
+            float water = saturate((SeaLevel - p.y) * ramp) * (1.0 - ground);
+            float density = max(ground, water);
+
+            // Where the sample sits decides what it is made of.
+            uint grass = tint > 0.58 ? GrassDry : tint < 0.42 ? GrassDeep : Grass;
+            uint rock = tint > 0.55 ? RockPale : tint < 0.45 ? RockDark : Rock;
+            uint surface = h < SeaLevel + 2.5 ? Sand
+                         : (h > 190.0 && slope < 1.2) ? Snow
+                         : slope > 1.0 ? rock
+                         : grass;
+            // Dirt below the top layer, which must be at least a couple of cells deep for the surface cells to carry it.
+            float topLayer = max(surface == rock ? 1.0 : 2.5, 2.5 * CellSize);
+            float depth = h + lean - p.y;
+            uint material = density <= 0.0 ? Air
+                          : water > ground ? Water
+                          : (cave > 0.02 || lean < -3.0) ? rock
+                          : depth > topLayer ? Dirt
+                          : surface;
+
+            // What the player dug and filled, in order.
+            [loop]
+            for (int i = 0; i < BrushCount; i++)
+            {
+                float4 brush = Brushes[i * 2];
+                float4 mode = Brushes[i * 2 + 1];
+                float d = distance(p, brush.xyz);
+                if (d >= brush.w)
+                    continue;
+                // Empty to the core, feathered only at the rim, so thin shapes go and the cut stays soft.
+                float edge = saturate((d - brush.w * 0.55) / (brush.w * 0.45));
+                if (mode.x < 0.5)
+                {
+                    density = min(density, edge);
+                }
+                else
+                {
+                    density = max(density, 1.0 - edge);
+                    if (material == Air)
+                        material = (uint)mode.y;
+                }
+            }
+
+            // The finer ring draws this box; here it is air, so the two never draw the same surface twice.
+            if (all(p > HoleMin) && all(p < HoleMax))
+            {
+                density = 0.0;
+                material = Air;
+            }
+
+            Target[c] = float2(density, material / 255.0);
+        }
+    };
+}

@@ -1,0 +1,36 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace VoxelTerrain
+{
+    /// One column per (x, z) sample of a ring: the ground height, its slope, a tint noise for the
+    /// material patches, and how cave-prone the column is. Computed once per ring here, in 2D, so
+    /// the volume pass does not evaluate the height fractals for every one of its samples.
+    shader TerrainHeight : ComputeShaderBase, TerrainNoise
+    {
+        stage RWTexture2D<float4> HeightsOut;
+        stage int2 HeightSize;
+        stage float2 WorldOriginXZ;
+        stage float CellSize;
+
+        override void Compute()
+        {
+            int2 c = int2(streams.DispatchThreadId.xy);
+            if (any(c >= HeightSize))
+                return;
+
+            float2 xz = WorldOriginXZ + c * CellSize;
+            float minWavelength = CellSize * 2.0;
+            float h = Height(xz, minWavelength);
+            // The slope from the neighbouring columns, at this ring's own scale.
+            float hx0 = Height(xz - float2(CellSize, 0.0), minWavelength);
+            float hx1 = Height(xz + float2(CellSize, 0.0), minWavelength);
+            float hz0 = Height(xz - float2(0.0, CellSize), minWavelength);
+            float hz1 = Height(xz + float2(0.0, CellSize), minWavelength);
+            float slope = length(float2(hx1 - hx0, hz1 - hz0)) / (2.0 * CellSize);
+
+            float tint = Fbm2(xz + Seed + 300.0, 1.0 / 35.0, 3, minWavelength);
+            float caves = smoothstep(0.50, 0.65, Fbm2(xz + Seed + 4000.0, 1.0 / 300.0, 3, minWavelength));
+            HeightsOut[c] = float4(h, slope, tint, caves);
+        }
+    };
+}
