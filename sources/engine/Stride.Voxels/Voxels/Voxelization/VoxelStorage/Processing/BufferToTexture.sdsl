@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 namespace Stride.Rendering.Voxels
 {
@@ -11,6 +11,10 @@ namespace Stride.Rendering.Voxels
         stage float  storageUints;
 
         stage uint  clipOffset;
+
+        // Which slot of the fragment buffer holds this ring. The buffer stages one ring at a time,
+        // so it is not the ring's own index any more.
+        stage uint  clipBufferOffset;
 
         compose VoxelAttribute AttributesTemp[];
         compose VoxelAttribute AttributesIndirect[];
@@ -27,12 +31,13 @@ namespace Stride.Rendering.Voxels
             uint3 pos = streams.DispatchThreadId.xyz;
             pos.y = pos.y % clipMapResolutionI.y;
             uint clipIndex = clipOffset + streams.DispatchThreadId.y/clipMapResolutionI.y;
+            uint bufferIndex = clipBufferOffset + streams.DispatchThreadId.y/clipMapResolutionI.y;
 
             streams.PositionVXPS = pos;
             streams.VoxelVolumeSize = clipMapResolutionI;
 
             uint wStride = clipMapResolutionI.x * clipMapResolutionI.y * clipMapResolutionI.z;
-            uint VoxelFragmentsIndex = clipIndex * wStride + pos.x + pos.y * clipMapResolutionI.x + pos.z * clipMapResolutionI.x * clipMapResolutionI.y;
+            uint VoxelFragmentsIndex = bufferIndex * wStride + pos.x + pos.y * clipMapResolutionI.x + pos.z * clipMapResolutionI.x * clipMapResolutionI.y;
             VoxelFragmentsIndex *= (uint)storageUints;
 
             uint yStride = clipMapResolutionI.x * (uint)storageUints;
@@ -48,7 +53,7 @@ namespace Stride.Rendering.Voxels
             IndirectReadAndStoreMacro
 
             foreach (var attr in AttributesIndirect)
-                attr.DirectWrite(streams.PositionVXPS, clipIndex, (int)clipMapResolutionI.y);
+                attr.DirectWrite(streams.PositionVXPS, uint3(clipIndex * clipMapResolutionI.x, 0, 0), (uint)clipMapResolutionI.y);
         }
     };
 }

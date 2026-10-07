@@ -1,0 +1,38 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Where a voxel grid's samples come from, and how they are packed.
+    /// Readers only ask how solid a sample is and which material it carries, so the packing is a composition:
+    /// a game with its own layout implements this in a few lines of SDSL and keeps its data as uploaded.
+    /// The CPU counterpart is Stride.BepuPhysics' IVoxelDensitySource.
+    shader IVoxelGridSource : VoxelGridLodStream
+    {
+        /// How many coarser levels the source holds beyond the finest. Zero when it has none.
+        int LodLevels()
+        {
+            return 0;
+        }
+
+        /// Samples per axis. One more than the number of cells per axis, since a cell reads the
+        /// eight samples at its corners.
+        int3 SampleCount()
+        {
+            return int3(0, 0, 0);
+        }
+
+        /// Density of one sample. The iso level is compared against whatever range this returns, so
+        /// a signed distance field can be handed over unchanged with an iso level of zero.
+        float Density(int3 coord)
+        {
+            return 0.0;
+        }
+
+        /// Material of one sample: an index into the grid's palette, a byte. Only read at a
+        /// surface, so an implementation with no material data can leave every sample on entry 0.
+        int MaterialId(int3 coord)
+        {
+            return 0;
+        }
+    };
+}

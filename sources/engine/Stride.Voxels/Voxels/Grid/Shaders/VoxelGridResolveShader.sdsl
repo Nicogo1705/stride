@@ -1,0 +1,169 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Finds the surface of a grid once per pixel and writes what a material needs to draw it: position, normal and material id.
+    /// A field is drawn by one draw per material; walking once here and letting each draw read the answer keeps the
+    /// material count from multiplying the cost of the walk. Depth is written too, so several grids resolve against one another.
+    /// Drawn as the grid's proxy box, so only the pixels under its footprint march; the ray comes from the pixel, not the box.
+    shader VoxelGridResolveShader : ShaderBase, PositionStream4, VoxelGridRay, VoxelGridDither, VoxelGridLodStream
+    {
+        compose IVoxelGridTraversal Traversal;
+
+        float4x4 VoxelGridViewProjection;
+        float4x4 VoxelGridWorld;
+        float4x4 VoxelGridWorldViewProjection;
+
+        /// The scene's depth where it is drawn already, and 1 when it is bound: a ray stops at the
+        /// opaque surface in front of the grid. Depth 1.0 is nothing drawn and bounds nothing.
+        Texture2D VoxelGridSceneDepth;
+        float VoxelGridSceneDepthBound;
+
+        /// What VoxelGridBeamShader wrote, one texel per block of VoxelGridBeamBlock pixels a side; 0 pixels leaves it unread.
+        stage Texture2D<float> VoxelGridBeam;
+        int VoxelGridBeamBlock;
+
+        /// How far along the ray the surface is looked for, in grid local units.
+        float VoxelGridMaxDistance;
+
+        /// See VoxelGridDither.
+        int VoxelGridDither;
+
+        /// Which grid this is, so a material of one grid does not claim a pixel of another.
+        int VoxelGridIndex;
+
+        /// Level of detail: how many grid units a pixel covers per unit of distance along the ray,
+        /// and a bias in levels (positive is coarser). Zero units turns it off.
+        float VoxelGridLodPixel;
+        float VoxelGridLodBias;
+
+        stage override void VSMain()
+        {
+            streams.ShadingPosition = mul(streams.Position, VoxelGridWorldViewProjection);
+        }
+
+        stage override void PSMain()
+        {
+            streams.ColorTarget = Shading();
+        }
+
+        stage float4 Shading()
+        {
+            // Written first, before any read of the field: the level the walks are made at.
+            streams.VoxelGridLod = 0;
+            // The ray through the pixel, from the near plane to the far one: right under any
+            // projection, so an orthographic camera in the editor resolves as a perspective one.
+            int2 pixel = (int2)streams.ShadingPosition.xy;
+            float3 localOrigin;
+            float3 localDirection;
+            float directionScale;
+            ViewRay(streams.ShadingPosition.xy, localOrigin, localDirection, directionScale);
+
+            float hitDistance;
+            float3 localNormal;
+            bool found;
+            // The walk starts where the ray enters the box, not at the near plane: the reach is the field's own extent,
+            // and the walk's float distance keeps the box's precision however far the camera is.
+            float enter = Traversal.EnterDistance(localOrigin, localDirection);
+            float reach = VoxelGridMaxDistance;
+            // The scene's surface on this ray, in the grid's units from the entry: a ray behind it
+            // has a reach below zero and the walk ends before its first cell.
+            float sceneDepth = VoxelGridSceneDepth.Load(int3(pixel, 0)).x;
+            float2 uv = streams.ShadingPosition.xy / VoxelGridViewSize;
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            float4 sceneClip = mul(float4(ndc, sceneDepth, 1.0), VoxelGridViewProjectionInverse);
+            float3 sceneLocal = mul(float4(sceneClip.xyz / sceneClip.w, 1), VoxelGridWorldInverse).xyz;
+            float sceneReach = dot(sceneLocal - localOrigin, localDirection) - enter;
+            float bounded = VoxelGridSceneDepthBound * (1.0 - step(1.0, sceneDepth));
+            reach = lerp(reach, min(reach, sceneReach), bounded);
+            // Or further, where the beam of the pixel's block found nothing up to; negative says nothing along the block.
+            float start = enter;
+            if (VoxelGridBeamBlock > 0)
+            {
+                float beam = VoxelGridBeam.Load(int3(pixel / VoxelGridBeamBlock, 0));
+                if (beam < 0)
+                {
+                    discard;
+                }
+                start = max(enter, beam);
+            }
+            localOrigin += localDirection * start;
+            reach -= start - enter;
+            int levels = Traversal.LodLevelCount();
+            // Only when some pixel of the field can want a coarser level at all: the farthest
+            // reach of the walk, at this pixel size, still under level one means every pixel walks
+            // the finest level and the coarse pass would be a cost with no return.
+            float farthest = Traversal.LodAt((start + reach) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+            if (levels > 0 && VoxelGridLodPixel > 0 && farthest >= 1.0)
+            {
+                // Coarse first: the coarsest level finds roughly where the surface is, the hit distance picks the level this
+                // pixel wants, and that level is walked from a little before the coarse hit. The level is fractional and dithered.
+                // The coarse pass stops four levels short of the last: sixteen samples a side still place a surface.
+                int coarse = max(levels - 4, 0);
+                Traversal.SetLod(coarse);
+                found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);
+                if (!found)
+                {
+                    // What the coarse level lost - a thin thing, a silhouette - is looked for at
+                    // the finest, from the start: a miss must not become a hole.
+                    Traversal.SetLod(0);
+                    found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);
+                }
+                else
+                {
+                    float wanted = Traversal.LodAt((start + hitDistance) * directionScale, VoxelGridLodPixel) + VoxelGridLodBias;
+                    int lod = clamp((int)floor(wanted + DitherThreshold(pixel, VoxelGridDither)), 0, levels);
+                    if (lod < coarse)
+                    {
+                        float coarseCell = Traversal.CellSizeAtLod();
+                        Traversal.SetLod(lod);
+                        float back = max(hitDistance - 2.0 * coarseCell, 0.0);
+                        float3 nearOrigin = localOrigin + localDirection * back;
+                        float nearDistance;
+                        float3 nearNormal;
+                        if (Traversal.Trace(nearOrigin, localDirection, reach - back, nearDistance, nearNormal))
+                        {
+                            hitDistance = back + nearDistance;
+                            localNormal = nearNormal;
+                        }
+                        else
+                        {
+                            // The finer surface is not where the coarse one was: keep the coarse
+                            // answer rather than punch a hole, and read the material at its level.
+                            Traversal.SetLod(coarse);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Traversal.SetLod(0);
+                // The reach is in the grid's own units, as the direction was made unit length in them.
+                found = Traversal.Trace(localOrigin, localDirection, reach, hitDistance, localNormal);
+            }
+            if (!found)
+            {
+                discard;
+            }
+
+            float3 localPosition = localOrigin + localDirection * hitDistance;
+            float3 worldPosition = mul(float4(localPosition, 1), VoxelGridWorld).xyz;
+            float3 worldNormal = normalize(mul(float4(localNormal, 0), VoxelGridWorld).xyz);
+
+            float4 hitClip = mul(float4(worldPosition, 1), VoxelGridViewProjection);
+            float depth = hitClip.z / hitClip.w;
+            streams.Depth = depth;
+
+            // Read the material a little inside the surface: a hit on a cell face lands in either
+            // cell by rounding, and the one in front of a cube is air or a water ramp.
+            float3 materialPosition = localPosition - localNormal * (0.05 * Traversal.CellSizeAtLod());
+            int material = Traversal.SurfaceMaterialId(materialPosition, pixel, VoxelGridDither);
+
+            // Three targets: the normal with a 1 in w that says "resolved"; the material id and
+            // the grid index, a byte each; the world position with the depth in w.
+            streams.ColorTarget1 = float4(material / 255.0, VoxelGridIndex / 255.0, 0, 1);
+            streams.ColorTarget2 = float4(worldPosition, depth);
+            return float4(worldNormal, 1);
+        }
+    };
+}

@@ -1,0 +1,66 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+using Stride.Core;
+using Stride.Core.Mathematics;
+using Stride.Graphics;
+using Stride.Shaders;
+using GraphicsBuffer = Stride.Graphics.Buffer;
+
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// <summary>A grid held in an R8G8 3D texture: density in red, material id in green.</summary>
+    /// <remarks>A single channel texture works too; every sample then points at the first material of the palette.</remarks>
+    [DataContract(DefaultMemberMode = DataMemberMode.Default)]
+    [Display("3D texture")]
+    public class VoxelGridSourceTexture3D : IVoxelGridSource
+    {
+        /// <summary>The samples. Not serialized: a voxel world is produced, not authored in a scene.</summary>
+        [DataMemberIgnore]
+        public Texture Texture { get; set; }
+
+        /// <summary>Samples per axis, one more than the cells per axis. Taken from the texture when left at zero.</summary>
+        public Int3 SampleCount { get; set; }
+
+        /// <summary>The SDSL side of this source.</summary>
+        public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourceTexture3D");
+
+        /// <summary>Binds the resource and its layout.</summary>
+        public void ApplyParameters(ParameterCollection parameters)
+        {
+            parameters.Set(VoxelGridFieldKeys.Texture, Texture);
+            var count = SampleCount;
+            if (count.X <= 0 && Texture != null)
+                count = new Int3(Texture.Width, Texture.Height, Texture.Depth);
+            parameters.Set(VoxelGridFieldKeys.SampleCount, count);
+            parameters.Set(VoxelGridFieldKeys.LodLevels, Texture != null ? Texture.MipLevelCount - 1 : 0);
+        }
+    }
+
+    /// <summary>
+    /// A grid held in a structured buffer, one value per sample, density in bits 0-7 and material in
+    /// bits 8-15, laid out x-major with z varying fastest.
+    /// </summary>
+    /// <remarks>The material byte is the palette index.</remarks>
+    [DataContract(DefaultMemberMode = DataMemberMode.Default)]
+    [Display("Packed buffer")]
+    public class VoxelGridSourcePackedBuffer : IVoxelGridSource
+    {
+        /// <summary>The samples, one uint each. Not serialized; a voxel world is produced, not authored.</summary>
+        [DataMemberIgnore]
+        public GraphicsBuffer Data { get; set; }
+
+        /// <summary>Samples per axis, one more than the cells per axis.</summary>
+        public Int3 SampleCount { get; set; }
+
+        /// <summary>The SDSL side of this source.</summary>
+        public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourcePackedBuffer");
+
+        /// <summary>Binds the resource and its layout.</summary>
+        public void ApplyParameters(ParameterCollection parameters)
+        {
+            parameters.Set(VoxelGridFieldKeys.Data, Data);
+            parameters.Set(VoxelGridFieldKeys.SampleCount, SampleCount);
+        }
+    }
+}

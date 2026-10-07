@@ -19,7 +19,7 @@ using System.Linq;
 namespace Stride.Rendering.Voxels
 {
     [DataContract(DefaultMemberMode = DataMemberMode.Default)]
-    public class VoxelRenderer : IVoxelRenderer
+    public class VoxelRenderer : IVoxelRenderer, IDisposable
     {
         [DataMemberIgnore]
         public static readonly PropertyKey<Dictionary<VoxelVolumeComponent, DataVoxelVolume>> CurrentRenderVoxelVolumes = new PropertyKey<Dictionary<VoxelVolumeComponent, DataVoxelVolume>>("VoxelRenderer.CurrentRenderVoxelVolumes", typeof(VoxelRenderer));
@@ -44,6 +44,8 @@ namespace Stride.Rendering.Voxels
         {
             renderVoxelVolumes = Context.VisibilityGroup.Tags.Get(CurrentRenderVoxelVolumes);
             renderVoxelVolumeData = Context.VisibilityGroup.Tags.Get(CurrentProcessedVoxelVolumes);
+
+            ReleaseGoneVolumes();
 
             if (renderVoxelVolumes == null || renderVoxelVolumes.Count == 0)
                 return;
@@ -195,6 +197,51 @@ namespace Stride.Rendering.Voxels
                 }
             }
         }
+        private readonly List<VoxelVolumeComponent> goneVolumes = new List<VoxelVolumeComponent>();
+        private Grid.VoxelGridInjector injector;
+
+        /// <summary>Releases the injector's shader and every volume's device resources.</summary>
+        public void Dispose()
+        {
+            injector?.Dispose();
+            injector = null;
+            if (renderVoxelVolumeData != null)
+            {
+                foreach (var pair in renderVoxelVolumeData)
+                {
+                    pair.Value.Storage?.Dispose();
+                    pair.Value.VoxelizationMethod?.Dispose();
+                    foreach (var attribute in pair.Value.OutputAttributes)
+                        attribute.Dispose();
+                }
+                renderVoxelVolumeData.Clear();
+            }
+        }
+
+        /// <summary>Releases the device resources of volumes that are no longer in the scene.</summary>
+        private void ReleaseGoneVolumes()
+        {
+            if (renderVoxelVolumeData == null)
+                return;
+
+            goneVolumes.Clear();
+            foreach (var pair in renderVoxelVolumeData)
+            {
+                if (renderVoxelVolumes == null || !renderVoxelVolumes.ContainsKey(pair.Key))
+                    goneVolumes.Add(pair.Key);
+            }
+
+            foreach (var component in goneVolumes)
+            {
+                var processed = renderVoxelVolumeData[component];
+                processed.Storage?.Dispose();
+                processed.VoxelizationMethod?.Dispose();
+                foreach (var attribute in processed.OutputAttributes)
+                    attribute.Dispose();
+                renderVoxelVolumeData.Remove(component);
+            }
+        }
+
         public virtual void Draw(RenderDrawContext drawContext, Shadows.IShadowMapRenderer ShadowMapRenderer)
         {
             if (renderVoxelVolumes == null || renderVoxelVolumes.Count == 0)
@@ -239,6 +286,10 @@ namespace Stride.Rendering.Voxels
                                     pass.method.Render(storageContext, context, pass.view);
                                 }
                             }
+
+                            // Voxel fields, straight from their samples into the same buffer.
+                            injector ??= new Grid.VoxelGridInjector();
+                            injector.Inject(context, pass, drawContext.RenderContext.VisibilityGroup?.Tags.Get(Grid.VoxelGridInjector.CurrentEntries)?.Entries);
                         }
                         foreach (VoxelizationPass pass in processedVolume.passList.passes)
                         {

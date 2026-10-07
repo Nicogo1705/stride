@@ -1,0 +1,943 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Walks the cells a ray crosses, in order, and stops where the surface is.
+    /// A 3D DDA clips the ray to the grid box and steps along whichever axis reaches its next boundary first;
+    /// it needs nothing but the field. Empty space is skipped on a min/max pyramid of the field, and the
+    /// crossing is solved on the trilinear field inside the cell, so the traced surface matches a meshed one.
+    /// TSurface is a compile-time permutation picking which surface the walk stops on: 0 the cells themselves
+    /// (cubes), 1 the trilinear crossing (marching cubes), 2 the quads surface nets stitches between cell vertices.
+    shader VoxelGridTraversalDDA<int TSurface> : IVoxelGridTraversal, IVoxelGridSource, VoxelGridDither
+    {
+        // The source is inherited rather than composed, so that it shares this scope: a composition
+        // is a scope of its own with its own copy of every declaration, and a resource declared in
+        // one is not the one a material binds.
+
+        cbuffer PerMaterial
+        {
+            /// Edge length of one cell, in grid local space.
+            [Link("VoxelGridField.CellSize")]
+            stage float VoxelGridCellSize;
+
+            /// Density at or above which a sample counts as solid.
+            [Link("VoxelGridField.IsoLevel")]
+            stage float VoxelGridIsoLevel;
+
+            /// 1 reads the samples on the outer faces of the grid as air, closing the volume with
+            /// real surface. 0 leaves them alone, for a grid that continues into a neighbour.
+            [Link("VoxelGridField.SealBorder")]
+            stage float VoxelGridSealBorder;
+
+            /// Ceiling on the cells one ray may visit. A ray crossing a 256 cell grid corner to
+            /// corner touches on the order of 768, so this bounds the worst case, not the common one.
+            [Link("VoxelGridField.MaxSteps")]
+            stage int VoxelGridMaxSteps;
+
+            /// Levels in the occupancy pyramid: level N is bricks of 2^N cells, held in mip N - 1.
+            /// Zero when there is no pyramid, and every cell on the ray is visited.
+            [Link("VoxelGridField.OccupancyLevels")]
+            stage int VoxelGridOccupancyLevels;
+        }
+
+        rgroup PerMaterial
+        {
+            /// The pyramid: least density in red, greatest in green, see VoxelGridOccupancy.
+            [Link("VoxelGridField.Occupancy")]
+            stage Texture3D<float2> VoxelGridOccupancy;
+        }
+
+        /// Bisection steps that place the crossing once the interval holding it is known. Each
+        /// halves the error, so six put the surface within a sixty-fourth of a cell - well below
+        /// what a pixel resolves.
+        static const int RefineSteps = 6;
+
+        /// The cell size at the level in force: the field's, doubled per level.
+        float CellSize()
+        {
+            return VoxelGridCellSize * (float)(1 << clamp(streams.VoxelGridLod, 0, 15));
+        }
+
+        override float CellSizeAtLod()
+        {
+            return CellSize();
+        }
+
+        override int LodLevelCount()
+        {
+            // The source's own answer, through its override: naming the base class would call the
+            // base and answer zero for every source.
+            return LodLevels();
+        }
+
+        override void SetLod(int lod)
+        {
+            streams.VoxelGridLod = clamp(lod, 0, LodLevels());
+        }
+
+        override void SetLodForSize(float size)
+        {
+            // The coarsest level whose cell still fits in the size, so a reader at that
+            // granularity sees the surface that its own voxels can hold, and no finer.
+            float cells = max(size / max(VoxelGridCellSize, 1e-6), 1.0);
+            SetLod((int)floor(log2(cells)));
+        }
+
+        override float LodAt(float distance, float unitsPerDistance)
+        {
+            float footprint = max(distance, 0.0) * unitsPerDistance / max(VoxelGridCellSize, 1e-6);
+            return clamp(log2(max(footprint, 1.0)), 0.0, (float)LodLevels());
+        }
+
+        float SealedDensity(int3 coord)
+        {
+            int3 samples = SampleCount();
+            bool onBorder = any(coord <= 0) || any(coord >= samples - int3(1, 1, 1));
+            float density = Density(coord);
+            return (VoxelGridSealBorder > 0.5 && onBorder) ? 0.0 : density;
+        }
+
+        /// The field between samples, trilinear - the same reconstruction marching cubes and surface
+        /// nets interpolate along their edges, so the traced surface and a meshed one agree.
+        float SampleField(float3 localPosition)
+        {
+            float3 grid = localPosition / CellSize();
+            int3 cell = (int3)floor(grid);
+            float3 f = grid - (float3)cell;
+
+            float d000 = SealedDensity(cell + int3(0, 0, 0));
+            float d100 = SealedDensity(cell + int3(1, 0, 0));
+            float d010 = SealedDensity(cell + int3(0, 1, 0));
+            float d110 = SealedDensity(cell + int3(1, 1, 0));
+            float d001 = SealedDensity(cell + int3(0, 0, 1));
+            float d101 = SealedDensity(cell + int3(1, 0, 1));
+            float d011 = SealedDensity(cell + int3(0, 1, 1));
+            float d111 = SealedDensity(cell + int3(1, 1, 1));
+
+            float dx00 = lerp(d000, d100, f.x);
+            float dx10 = lerp(d010, d110, f.x);
+            float dx01 = lerp(d001, d101, f.x);
+            float dx11 = lerp(d011, d111, f.x);
+            return lerp(lerp(dx00, dx10, f.y), lerp(dx01, dx11, f.y), f.z);
+        }
+
+        /// The four corners of a cell on its near z face, then on its far one: (000, 100, 010, 110) and
+        /// (001, 101, 011, 111). Eight loads, held in registers by whoever needs the field at several points of one cell.
+        float4 CornersNear(int3 cell)
+        {
+            return float4(
+                SealedDensity(cell + int3(0, 0, 0)), SealedDensity(cell + int3(1, 0, 0)),
+                SealedDensity(cell + int3(0, 1, 0)), SealedDensity(cell + int3(1, 1, 0)));
+        }
+
+        float4 CornersFar(int3 cell)
+        {
+            return float4(
+                SealedDensity(cell + int3(0, 0, 1)), SealedDensity(cell + int3(1, 0, 1)),
+                SealedDensity(cell + int3(0, 1, 1)), SealedDensity(cell + int3(1, 1, 1)));
+        }
+
+        /// The trilinear field at a point of the cell, from its eight corners.
+        float Trilinear(float4 near, float4 far, float3 f)
+        {
+            float4 alongX = lerp(float4(near.x, near.z, far.x, far.z), float4(near.y, near.w, far.y, far.w), f.x);
+            float2 alongY = lerp(float2(alongX.x, alongX.z), float2(alongX.y, alongX.w), f.y);
+            return lerp(alongY.x, alongY.y, f.z);
+        }
+
+        /// The gradient of the trilinear field at a point of the cell, from its eight corners:
+        /// the exact normal of the surface that is drawn, since the surface is that field's
+        /// iso level.
+        float3 TrilinearGradient(float4 near, float4 far, float3 f)
+        {
+            float dx = lerp(lerp(near.y - near.x, near.w - near.z, f.y), lerp(far.y - far.x, far.w - far.z, f.y), f.z);
+            float dy = lerp(lerp(near.z - near.x, near.w - near.y, f.x), lerp(far.z - far.x, far.w - far.y, f.x), f.z);
+            float dz = lerp(lerp(far.x - near.x, far.y - near.y, f.x), lerp(far.z - near.z, far.w - near.w, f.x), f.y);
+            return float3(dx, dy, dz) / CellSize();
+        }
+
+        /// Whether the corners straddle the iso level: some at or above it, some below.
+        bool CornersStraddle(float4 near, float4 far)
+        {
+            float iso = VoxelGridIsoLevel;
+            bool anyIn = any(near >= iso) || any(far >= iso);
+            bool anyOut = any(near < iso) || any(far < iso);
+            return anyIn && anyOut;
+        }
+
+        override bool IsSolid(float3 localPosition)
+        {
+            return SampleField(localPosition) >= VoxelGridIsoLevel;
+        }
+
+        override float3 SurfaceNormal(float3 localPosition)
+        {
+            int3 cell = CellOf(localPosition);
+            float3 f = saturate(localPosition / CellSize() - (float3)cell);
+            float3 gradient = TrilinearGradient(CornersNear(cell), CornersFar(cell), f);
+            return dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : float3(0, 1, 0);
+        }
+
+        override int SurfaceProbe(float3 localPosition, float halfSize, out float3 normal)
+        {
+            int3 cell = CellOf(localPosition);
+            float3 f = localPosition / CellSize() - (float3)cell;
+            float4 near = CornersNear(cell);
+            float4 far = CornersFar(cell);
+
+            float3 gradient = TrilinearGradient(near, far, saturate(f));
+            normal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : float3(0, 1, 0);
+
+            // The eight points a half-voxel out from the centre. When they all fall in this cell -
+            // the usual case, a GI voxel being smaller than a field cell - the eight loads above
+            // answer for all of them; otherwise each is sampled where it lands.
+            float hf = halfSize / CellSize();
+            bool within = all(f - hf >= 0) && all(f + hf <= 1);
+            float iso = VoxelGridIsoLevel;
+            int solid = 0;
+            for (int corner = 0; corner < 8; corner++)
+            {
+                float3 offset = float3((corner & 1) != 0 ? hf : -hf, (corner & 2) != 0 ? hf : -hf, (corner & 4) != 0 ? hf : -hf);
+                float density = within
+                    ? Trilinear(near, far, f + offset)
+                    : SampleField(localPosition + offset * CellSize());
+                solid += density >= iso ? 1 : 0;
+            }
+
+            return solid == 0 ? 0 : (solid == 8 ? 2 : 1);
+        }
+
+        override int BrickState(float3 localPosition, float radius)
+        {
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
+            int state = 1;
+            if (levels > 0)
+            {
+                // The level whose bricks span the radius twice over, so the point and everything
+                // within the radius sit in one brick when the point is far enough from its faces.
+                float cellsNeeded = (2.0 * radius) / CellSize() + 2.0;
+                int level = 1;
+                while (level < levels && (float)(1 << level) < cellsNeeded)
+                    level++;
+
+                int size = 1 << level;
+                int3 cell = CellOf(localPosition);
+                int3 brick = cell / size;
+                float2 minMax = VoxelGridOccupancy.Load(int4(brick, level - 1 + streams.VoxelGridLod)).rg;
+
+                float3 brickMin = (float3)(brick * size) * CellSize();
+                float3 brickMax = brickMin + (float)size * CellSize();
+                bool inside = all(localPosition - brickMin > radius) && all(brickMax - localPosition > radius);
+
+                if (minMax.y < VoxelGridIsoLevel)
+                    state = 0;
+                else if (inside && minMax.x >= VoxelGridIsoLevel)
+                    state = 2;
+            }
+            return state;
+        }
+
+        /// The cell a point is in.
+        int3 CellOf(float3 localPosition)
+        {
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            return clamp((int3)floor(localPosition / CellSize()), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+        }
+
+        /// The material of the point: cubes take the cell's own; a smooth surface weighs the eight samples round the
+        /// point trilinearly, sums the weight per id, and picks the heaviest or the one the dither threshold draws.
+        override int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)
+        {
+            int3 cell = CellOf(localPosition);
+            bool cubes = TSurface == 0;
+
+            float3 grid = localPosition / CellSize();
+            float3 f = saturate(grid - (float3)cell);
+
+            int ids[8];
+            float weights[8];
+            ids[0] = MaterialId(cell + int3(0, 0, 0)); weights[0] = (1 - f.x) * (1 - f.y) * (1 - f.z);
+            ids[1] = MaterialId(cell + int3(1, 0, 0)); weights[1] = f.x * (1 - f.y) * (1 - f.z);
+            ids[2] = MaterialId(cell + int3(0, 1, 0)); weights[2] = (1 - f.x) * f.y * (1 - f.z);
+            ids[3] = MaterialId(cell + int3(1, 1, 0)); weights[3] = f.x * f.y * (1 - f.z);
+            ids[4] = MaterialId(cell + int3(0, 0, 1)); weights[4] = (1 - f.x) * (1 - f.y) * f.z;
+            ids[5] = MaterialId(cell + int3(1, 0, 1)); weights[5] = f.x * (1 - f.y) * f.z;
+            ids[6] = MaterialId(cell + int3(0, 1, 1)); weights[6] = (1 - f.x) * f.y * f.z;
+            ids[7] = MaterialId(cell + int3(1, 1, 1)); weights[7] = f.x * f.y * f.z;
+
+            // The same id at several corners counts once, with all their weight, on its first
+            // corner. Air, id 0 below the iso level, weighs nothing: a surface is made of what is
+            // solid on either side of it, and air is solid nowhere.
+            for (int i = 0; i < 8; i++)
+            {
+                if (ids[i] == 0)
+                    weights[i] = 0;
+                for (int j = 0; j < i; j++)
+                {
+                    if (ids[j] == ids[i])
+                    {
+                        weights[j] += weights[i];
+                        weights[i] = 0;
+                    }
+                }
+            }
+
+            float total = 0;
+            for (int k = 0; k < 8; k++)
+                total += weights[k];
+
+            int chosen = ids[0];
+            if (total > 0)
+            {
+                float threshold = DitherThreshold(pixel, dither) * total;
+                float best = -1;
+                float running = 0;
+                bool drawn = false;
+                for (int m = 0; m < 8; m++)
+                {
+                    if (dither == 0)
+                    {
+                        if (weights[m] > best)
+                        {
+                            best = weights[m];
+                            chosen = ids[m];
+                        }
+                    }
+                    else
+                    {
+                        running += weights[m];
+                        if (!drawn && weights[m] > 0 && running > threshold)
+                        {
+                            chosen = ids[m];
+                            drawn = true;
+                        }
+                    }
+                }
+            }
+
+            return cubes ? MaterialId(cell) : chosen;
+        }
+
+        /// Whether a cell counts as solid when the surface is not being interpolated: the mean of
+        /// its eight corners reaches the iso level. The same rule the voxel collider's box form
+        /// applies, so cubes drawn and cubes collided against are the same cubes.
+        bool CellIsSolid(int3 cell)
+        {
+            float sum =
+                SealedDensity(cell + int3(0, 0, 0)) + SealedDensity(cell + int3(1, 0, 0)) +
+                SealedDensity(cell + int3(1, 0, 1)) + SealedDensity(cell + int3(0, 0, 1)) +
+                SealedDensity(cell + int3(0, 1, 0)) + SealedDensity(cell + int3(1, 1, 0)) +
+                SealedDensity(cell + int3(1, 1, 1)) + SealedDensity(cell + int3(0, 1, 1));
+            return sum * 0.125 >= VoxelGridIsoLevel;
+        }
+
+        override float3 Probe(float3 localPosition)
+        {
+            int3 cell = clamp((int3)floor(localPosition / CellSize()), int3(0, 0, 0), SampleCount() - int3(2, 2, 2));
+            return float3(SampleCount().x / 128.0, SealedDensity(cell), VoxelGridIsoLevel);
+        }
+
+        /// One edge's contribution to the mean of the crossings: the crossing in xyz, and 1 in w
+        /// when the surface passes through that edge at all. A value in and a value out - inout
+        /// parameters and early returns are constructs this shader compiler does not finish on.
+        float4 EdgeCrossing(int3 a, int3 b)
+        {
+            float iso = VoxelGridIsoLevel;
+            float da = SealedDensity(a);
+            float db = SealedDensity(b);
+
+            float delta = db - da;
+            float t = abs(delta) > 1e-6 ? saturate((iso - da) / delta) : 0.5;
+            float3 crossing = lerp((float3)a, (float3)b, t) * CellSize();
+
+            bool crosses = (da >= iso) != (db >= iso);
+            return crosses ? float4(crossing, 1) : float4(0, 0, 0, 0);
+        }
+
+        /// The one vertex surface nets keeps for a cell: the mean of the crossings on its edges,
+        /// in xyz, with the number of them in w.
+        float4 CellVertex(int3 c)
+        {
+            float4 sum = float4(0, 0, 0, 0);
+
+            sum += EdgeCrossing(c + int3(0, 0, 0), c + int3(1, 0, 0));
+            sum += EdgeCrossing(c + int3(0, 1, 0), c + int3(1, 1, 0));
+            sum += EdgeCrossing(c + int3(0, 0, 1), c + int3(1, 0, 1));
+            sum += EdgeCrossing(c + int3(0, 1, 1), c + int3(1, 1, 1));
+
+            sum += EdgeCrossing(c + int3(0, 0, 0), c + int3(0, 1, 0));
+            sum += EdgeCrossing(c + int3(1, 0, 0), c + int3(1, 1, 0));
+            sum += EdgeCrossing(c + int3(0, 0, 1), c + int3(0, 1, 1));
+            sum += EdgeCrossing(c + int3(1, 0, 1), c + int3(1, 1, 1));
+
+            sum += EdgeCrossing(c + int3(0, 0, 0), c + int3(0, 0, 1));
+            sum += EdgeCrossing(c + int3(1, 0, 0), c + int3(1, 0, 1));
+            sum += EdgeCrossing(c + int3(0, 1, 0), c + int3(0, 1, 1));
+            sum += EdgeCrossing(c + int3(1, 1, 0), c + int3(1, 1, 1));
+
+            return sum.w > 0 ? float4(sum.xyz / sum.w, 1) : float4(0, 0, 0, 0);
+        }
+
+        /// Which way the field rises across a cell, from its eight corners: eight reads, against the
+        /// forty-eight a central difference on the reconstructed field costs.
+        float3 CellNormal(int3 c)
+        {
+            float d000 = SealedDensity(c + int3(0, 0, 0));
+            float d100 = SealedDensity(c + int3(1, 0, 0));
+            float d010 = SealedDensity(c + int3(0, 1, 0));
+            float d001 = SealedDensity(c + int3(0, 0, 1));
+            float d110 = SealedDensity(c + int3(1, 1, 0));
+            float d101 = SealedDensity(c + int3(1, 0, 1));
+            float d011 = SealedDensity(c + int3(0, 1, 1));
+            float d111 = SealedDensity(c + int3(1, 1, 1));
+
+            return float3(
+                (d100 + d110 + d101 + d111) - (d000 + d010 + d001 + d011),
+                (d010 + d110 + d011 + d111) - (d000 + d100 + d001 + d101),
+                (d001 + d101 + d011 + d111) - (d000 + d100 + d010 + d110));
+        }
+
+        /// Where a ray meets a triangle: the distance in w, zero in w when it does not.
+        /// Two sided on purpose - a facet is looked at from whichever side the camera happens to be.
+        float4 MeetTriangle(float3 a, float3 b, float3 c, float3 origin, float3 direction)
+        {
+            float3 ab = b - a;
+            float3 ac = c - a;
+            float3 normal = cross(ab, ac);
+
+            float denominator = dot(normal, direction);
+            float hitT = abs(denominator) > 1e-12 ? dot(normal, a - origin) / denominator : -1;
+
+            // Barycentric test at the intersection, in the plane's own frame.
+            float3 planePoint = origin + direction * hitT - a;
+            float d00 = dot(ab, ab);
+            float d01 = dot(ab, ac);
+            float d11 = dot(ac, ac);
+            float d20 = dot(planePoint, ab);
+            float d21 = dot(planePoint, ac);
+            float area = d00 * d11 - d01 * d01;
+
+            float v = abs(area) > 1e-12 ? (d11 * d20 - d01 * d21) / area : -1;
+            float w = abs(area) > 1e-12 ? (d00 * d21 - d01 * d20) / area : -1;
+
+            bool inside = hitT > 0 && v >= 0 && w >= 0 && v + w <= 1;
+            return inside ? float4(normalize(normal), hitT) : float4(0, 1, 0, 0);
+        }
+
+        /// The nearer of two hits, either of which may be nothing.
+        float4 Nearer(float4 first, float4 second)
+        {
+            bool takeSecond = second.w > 0 && (first.w <= 0 || second.w < first.w);
+            return takeSecond ? second : first;
+        }
+
+        /// Where a ray meets the quad four cell vertices span, as two triangles.
+        float4 MeetQuad(float4 v0, float4 v1, float4 v2, float4 v3, float3 origin, float3 direction)
+        {
+            // No early return (FXC fails to unroll it inside the walk's loop): an incomplete quad is tested, then discarded.
+            bool complete = v0.w > 0 && v1.w > 0 && v2.w > 0 && v3.w > 0;
+            float4 first = MeetTriangle(v0.xyz, v1.xyz, v2.xyz, origin, direction);
+            float4 second = MeetTriangle(v0.xyz, v2.xyz, v3.xyz, origin, direction);
+            return complete ? Nearer(first, second) : float4(0, 1, 0, 0);
+        }
+
+        /// The walk of Trace with the hit left coarse: a shadow map wants a depth within a fraction of a cell, past
+        /// the surface rather than short of it. No bisection, gradient or material reads.
+        /// A copy of the walk rather than a flag through it, so the compiler folds the constant branches. Surface nets
+        /// settles for the trilinear crossing here, within a cell of its own facets.
+        override bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
+        {
+            hitDistance = 0;
+
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float cellSize = CellSize();
+            float3 boundsMax = (float3)cells * cellSize;
+
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+
+            float3 toMin = (0.0 - origin) * inverseDirection;
+            float3 toMax = (boundsMax - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            float3 farthest = max(toMin, toMax);
+            float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+            float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
+
+            bool cubes = TSurface == 0;
+            bool smooth = !cubes;
+            bool running = tEnter <= tExit;
+            bool hit = false;
+            float tHit = 0;
+
+            bool startsInside = tEnter <= 0;
+            if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
+            {
+                hit = true;
+                running = false;
+                tHit = tEnter;
+            }
+
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
+            int level = levels;
+            float t = tEnter;
+            float nudge = cellSize * 1e-3;
+            int3 cell = int3(0, 0, 0);
+
+            int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            [loop]
+            for (int i = 0; i < steps && running; i++)
+            {
+                float3 probe = origin + safeDirection * (t + nudge);
+                cell = clamp((int3)floor(probe / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+
+                int size = 1 << level;
+                int3 brick = cell / size;
+                float3 brickMin = (float3)(brick * size) * cellSize;
+                float3 brickMax = brickMin + (float)size * cellSize;
+                float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
+                // A plane met at or behind the walked-from position is not an exit where the direction has almost no
+                // component on that axis, so a ray lying on a brick's plane does not leave the brick where it stands.
+                // Restricted to that axis: a far side legitimately met at the position on another axis stays an exit.
+                farSide += (farSide <= t + nudge && abs(safeDirection) < 1e-5) * 1e30;
+                float tLeave = min(min(farSide.x, farSide.y), farSide.z);
+
+                bool empty = false;
+                if (level > 0)
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + streams.VoxelGridLod)).g < VoxelGridIsoLevel;
+
+                if (level > 0 && !empty)
+                {
+                    level--;
+                }
+                else
+                {
+                    bool atCell = level == 0;
+                    float tSegmentEnd = min(tLeave, tExit);
+
+                    bool solidCube = atCell && !smooth && CellIsSolid(cell);
+
+                    // The first of four points across the cell found inside is the hit: at most a
+                    // quarter of a cell past the surface, never short of it. The cell's eight
+                    // corners are loaded once and the four points read off them.
+                    bool crosses = false;
+                    float insideAt = tSegmentEnd;
+                    if (atCell && smooth)
+                    {
+                        float4 near = CornersNear(cell);
+                        float4 far = CornersFar(cell);
+                        if (CornersStraddle(near, far))
+                        {
+                            float3 cellOrigin = (float3)cell * cellSize;
+                            float t1 = lerp(t, tSegmentEnd, 0.25);
+                            float t2 = lerp(t, tSegmentEnd, 0.50);
+                            float t3 = lerp(t, tSegmentEnd, 0.75);
+
+                            bool in1 = Trilinear(near, far, saturate((origin + safeDirection * t1 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in2 = Trilinear(near, far, saturate((origin + safeDirection * t2 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in3 = Trilinear(near, far, saturate((origin + safeDirection * t3 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in4 = Trilinear(near, far, saturate((origin + safeDirection * tSegmentEnd - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+
+                            crosses = in1 || in2 || in3 || in4;
+                            insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                        }
+                    }
+
+                    if (solidCube)
+                    {
+                        tHit = t;
+                        hit = true;
+                        running = false;
+                    }
+                    else if (crosses)
+                    {
+                        tHit = insideAt;
+                        hit = true;
+                        running = false;
+                    }
+                    else
+                    {
+                        t = tLeave;
+                        level = min(level + 1, levels);
+                        if (t >= tExit)
+                            running = false;
+                    }
+                }
+            }
+
+            hitDistance = tHit;
+            return hit;
+        }
+
+        /// Where the ray meets the field's box, along the ray from its origin: zero from inside, past the box when it
+        /// misses. Callers count their reach from here, so a field is walked whole from any camera distance.
+        override float EnterDistance(float3 origin, float3 direction)
+        {
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float3 boundsMax = (float3)cells * CellSize();
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+            float3 toMin = (0.0 - origin) * inverseDirection;
+            float3 toMax = (boundsMax - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            return max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+        }
+
+        /// A ball around the ray moved along it on the pyramid: the eight bricks nearest its centre, at the level whose
+        /// bricks span the ball twice over, are read at once, and the ball advances to where it would leave them.
+        /// The walk stops short of the first brick among the eight that reaches the iso level.
+        override float BeamDistance(float3 origin, float3 direction, float radius, float radiusPerDistance)
+        {
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
+
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float cellSize = CellSize();
+            float3 boundsMax = (float3)cells * cellSize;
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+
+            // Past the box's farthest point from the origin, ball included, no ray of the beam is in the box any more.
+            float3 center = boundsMax * 0.5;
+            float tLimit = length(center - origin) + length(center) + radius;
+
+            // The walk starts where the ball at its largest could first touch the box.
+            float largest = radius + radiusPerDistance * tLimit;
+            float3 toMin = (0.0 - largest - origin) * inverseDirection;
+            float3 toMax = (boundsMax + largest - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            float t = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+
+            float nudge = cellSize * 1e-3;
+            bool running = levels > 0 && t < tLimit;
+            bool blocked = false;
+            int lowest = 1;
+
+            int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            for (int i = 0; i < steps && running; i++)
+            {
+                float r = radius + radiusPerDistance * t;
+                // Bricks of twice the radius plus two cells: the centre then sits at least a cell inside the eight.
+                float cellsNeeded = (2.0 * r) / cellSize + 2.0;
+                int level = min(lowest, levels);
+                while (level < levels && (float)(1 << level) < cellsNeeded)
+                    level++;
+
+                float brickSize = (float)(1 << level) * cellSize;
+                float3 position = origin + safeDirection * t;
+                // The brick the centre is in and the neighbour it leans towards, on each axis.
+                int3 first = (int3)floor(position / brickSize - 0.5);
+                int mip = level - 1 + streams.VoxelGridLod;
+                bool empty = VoxelGridOccupancy.Load(int4(first + int3(0, 0, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 0, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(0, 1, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 1, 0), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(0, 0, 1), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 0, 1), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(0, 1, 1), mip)).g < VoxelGridIsoLevel;
+                empty = empty && VoxelGridOccupancy.Load(int4(first + int3(1, 1, 1), mip)).g < VoxelGridIsoLevel;
+
+                // Where the ball leaves the eight: the box they make, shrunk by the radius the ball has when it gets there.
+                float3 unionMin = (float3)first * brickSize;
+                float3 unionMax = unionMin + 2.0 * brickSize;
+                float3 farSide = max((unionMin - origin) * inverseDirection, (unionMax - origin) * inverseDirection);
+                float tLeave = min(min(farSide.x, farSide.y), farSide.z);
+                float rLeave = radius + radiusPerDistance * tLeave;
+                float3 farShrunk = max((unionMin + rLeave - origin) * inverseDirection, (unionMax - rLeave - origin) * inverseDirection);
+                float tSafe = min(min(farShrunk.x, farShrunk.y), farShrunk.z);
+
+                if (!empty)
+                {
+                    blocked = true;
+                    running = false;
+                }
+                else if (tSafe > t + nudge)
+                {
+                    t = tSafe;
+                    lowest = 1;
+                    if (t >= tLimit)
+                        running = false;
+                }
+                else if (level < levels)
+                {
+                    // The ball grew faster than the room it had: coarser bricks give it more.
+                    lowest = level + 1;
+                }
+                else
+                {
+                    running = false;
+                }
+            }
+
+            return (!blocked && t >= tLimit) ? -1.0 : t;
+        }
+
+        override bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
+        {
+            hitDistance = 0;
+            hitNormal = float3(0, 1, 0);
+
+            int3 cells = SampleCount() - int3(1, 1, 1);
+            float cellSize = CellSize();
+            float3 boundsMax = (float3)cells * cellSize;
+
+            // A zero component would make the slab test compute 0 * infinity, which is a NaN rather
+            // than the "never crosses this plane" the maths wants. Nudging it off zero keeps the
+            // vectorized form, worth more than the exactness lost in the twelfth digit.
+            float3 safeDirection = direction + (abs(direction) < 1e-8) * 1e-8;
+            float3 inverseDirection = 1.0 / safeDirection;
+
+            float3 toMin = (0.0 - origin) * inverseDirection;
+            float3 toMax = (boundsMax - origin) * inverseDirection;
+            float3 nearest = min(toMin, toMax);
+            float3 farthest = max(toMin, toMax);
+            float tEnter = max(max(nearest.x, nearest.y), max(nearest.z, 0.0));
+            float tExit = min(min(farthest.x, farthest.y), min(farthest.z, maxDistance));
+
+            // Compile-time, so each of the three surfaces is its own shader and the branches of the
+            // other two fold away.
+            bool cubes = TSurface == 0;
+            bool nets = TSurface == 2;
+            bool smooth = !cubes;
+            bool running = tEnter <= tExit;
+            bool hit = false;
+            float tHit = 0;
+
+            // Which face of the box the ray entered through: the normal to use when the first cell is already solid.
+            int axis = nearest.x >= nearest.y && nearest.x >= nearest.z ? 0 : (nearest.y >= nearest.z ? 1 : 2);
+
+            // A ray that starts inside matter - the camera in the volume, in solid - has the box face
+            // as its surface and nothing to refine. Only for rays that start inside the box: applied
+            // to one arriving from outside it turns the whole boundary into surface.
+            bool startsInside = tEnter <= 0;
+            if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
+            {
+                hit = true;
+                running = false;
+                tHit = tEnter;
+            }
+
+            // The walk holds a distance along the ray and a pyramid level. An empty brick is left through its far face
+            // and the next look is a level coarser; any other brick is looked at a level finer; at level zero the cell settles the surface.
+            int levels = clamp(VoxelGridOccupancyLevels - streams.VoxelGridLod, 0, 16);
+            int level = levels;
+            float t = tEnter;
+
+            // A hair past the distance, so the position lands inside the next brick rather than on
+            // the boundary just crossed. A thousandth of a cell is far below anything the surface
+            // solver resolves, and far above what float error on the boundary reaches.
+            float nudge = cellSize * 1e-3;
+
+            int3 cell = int3(0, 0, 0);
+
+            // The facet a surface-nets hit landed on, kept because its own orientation is what makes
+            // that surface look like surface nets; taking the field gradient at the point instead
+            // smooths it straight back into the marching-cubes surface.
+            int3 netsCell = int3(0, 0, 0);
+
+            // The corners of the cell the hit landed in, kept for the normal.
+            float4 hitNear = float4(0, 0, 0, 0);
+            float4 hitFar = float4(0, 0, 0, 0);
+
+            // The walk ends by clearing its condition, never by break or return, which miscompile inside a loop on some
+            // targets. The step count is clamped: an unbound constant buffer member reads as leftover memory.
+            int steps = clamp(VoxelGridMaxSteps, 0, 4096);
+            for (int i = 0; i < steps && running; i++)
+            {
+                float3 probe = origin + safeDirection * (t + nudge);
+                cell = clamp((int3)floor(probe / cellSize), int3(0, 0, 0), max(cells - int3(1, 1, 1), int3(0, 0, 0)));
+
+                // The brick at this level, and where the ray leaves it.
+                int size = 1 << level;
+                int3 brick = cell / size;
+                float3 brickMin = (float3)(brick * size) * cellSize;
+                float3 brickMax = brickMin + (float)size * cellSize;
+                float3 farSide = max((brickMin - origin) * inverseDirection, (brickMax - origin) * inverseDirection);
+                // A plane met at or behind the walked-from position is not an exit where the direction has almost no
+                // component on that axis, so a ray lying on a brick's plane does not leave the brick where it stands.
+                // Restricted to that axis: a far side legitimately met at the position on another axis stays an exit.
+                farSide += (farSide <= t + nudge && abs(safeDirection) < 1e-5) * 1e30;
+                float tLeave = min(min(farSide.x, farSide.y), farSide.z);
+                int leaveAxis = farSide.x <= farSide.y && farSide.x <= farSide.z ? 0 : (farSide.y <= farSide.z ? 1 : 2);
+
+                // One read decides a whole brick: nothing in it reaches the iso level, so no cell in
+                // it holds surface or solid.
+                bool empty = false;
+                if (level > 0)
+                    empty = VoxelGridOccupancy.Load(int4(brick, level - 1 + streams.VoxelGridLod)).g < VoxelGridIsoLevel;
+
+                if (level > 0 && !empty)
+                {
+                    level--;
+                }
+                else
+                {
+                    bool atCell = level == 0;
+                    float tSegmentEnd = min(tLeave, tExit);
+
+                    bool solidCube = atCell && !smooth && CellIsSolid(cell);
+
+                    // Only a cell whose corners straddle the iso level can hold surface: eight loads decide it and then
+                    // answer the probes, the bisection and the normal. An explicit branch, since && need not short-circuit in a shader.
+                    bool crosses = false;
+                    float insideAt = tSegmentEnd;
+                    float outsideAt = t;
+                    float4 near = float4(0, 0, 0, 0);
+                    float4 far = float4(0, 0, 0, 0);
+                    float3 cellOrigin = (float3)cell * cellSize;
+                    if (atCell && smooth)
+                    {
+                        near = CornersNear(cell);
+                        far = CornersFar(cell);
+                        if (CornersStraddle(near, far))
+                        {
+                            // Four points across the segment this cell gives the ray: testing only where it leaves misses
+                            // a surface that enters and leaves within one cell. Flat rather than a loop: the bisection below is one already.
+                            float t1 = lerp(t, tSegmentEnd, 0.25);
+                            float t2 = lerp(t, tSegmentEnd, 0.50);
+                            float t3 = lerp(t, tSegmentEnd, 0.75);
+
+                            bool in1 = Trilinear(near, far, saturate((origin + safeDirection * t1 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in2 = Trilinear(near, far, saturate((origin + safeDirection * t2 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in3 = Trilinear(near, far, saturate((origin + safeDirection * t3 - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+                            bool in4 = Trilinear(near, far, saturate((origin + safeDirection * tSegmentEnd - cellOrigin) / cellSize)) >= VoxelGridIsoLevel;
+
+                            crosses = in1 || in2 || in3 || in4;
+
+                            // The first point known to be inside, and the last one known to be
+                            // outside: the crossing is between them.
+                            insideAt = in1 ? t1 : (in2 ? t2 : (in3 ? t3 : tSegmentEnd));
+                            outsideAt = in1 ? t : (in2 ? t1 : (in3 ? t2 : t3));
+                        }
+                    }
+
+                    if (solidCube)
+                    {
+                        // Cubes: the hit is the face the ray crossed to get here, which is where it
+                        // already stands.
+                        tHit = t;
+                        hit = true;
+                        running = false;
+                    }
+                    else if (crosses)
+                    {
+                        // Bisect between where the ray was still outside and the first point known
+                        // to be inside. Only a sign is ever needed, never a distance - which is what
+                        // lets this work on a field that is not a distance field.
+                        float low = outsideAt;
+                        float high = insideAt;
+                        for (int step = 0; step < RefineSteps; step++)
+                        {
+                            float mid = (low + high) * 0.5;
+                            if (Trilinear(near, far, saturate((origin + safeDirection * mid - cellOrigin) / cellSize)) >= VoxelGridIsoLevel)
+                                high = mid;
+                            else
+                                low = mid;
+                        }
+                        tHit = high;
+                        hit = true;
+                        running = false;
+                        netsCell = cell;
+                        hitNear = near;
+                        hitFar = far;
+                    }
+                    else
+                    {
+                        // Out through the far face, and the next look is a level coarser: past an
+                        // empty brick the ray is likely in more of the same, and past a cell that held
+                        // nothing the brick around it may yet be skipped as a whole.
+                        t = tLeave;
+                        axis = leaveAxis;
+                        level = min(level + 1, levels);
+                        if (t >= tExit)
+                            running = false;
+                    }
+                }
+            }
+
+            if (hit)
+            {
+                float3 position = origin + safeDirection * tHit;
+                hitDistance = tHit;
+
+                // The face just crossed, facing back along the ray.
+                float3 faceNormal = float3(
+                    axis == 0 ? -sign(safeDirection.x) : 0,
+                    axis == 1 ? -sign(safeDirection.y) : 0,
+                    axis == 2 ? -sign(safeDirection.z) : 0);
+
+                if (nets)
+                {
+                    // Every quad surface nets stitches that can cover a point in this cell, not just the three the cell
+                    // owns: a quad spans the four cells round a grid edge. Nineteen cell vertices, twelve quads.
+                    int3 c = netsCell;
+
+                    float4 vP00 = CellVertex(c + int3( 1,  0,  0));
+                    float4 vM00 = CellVertex(c + int3(-1,  0,  0));
+                    float4 v0P0 = CellVertex(c + int3( 0,  1,  0));
+                    float4 v0M0 = CellVertex(c + int3( 0, -1,  0));
+                    float4 v00P = CellVertex(c + int3( 0,  0,  1));
+                    float4 v00M = CellVertex(c + int3( 0,  0, -1));
+                    float4 v000 = CellVertex(c);
+
+                    float4 v0PP = CellVertex(c + int3( 0,  1,  1));
+                    float4 v0PM = CellVertex(c + int3( 0,  1, -1));
+                    float4 v0MP = CellVertex(c + int3( 0, -1,  1));
+                    float4 v0MM = CellVertex(c + int3( 0, -1, -1));
+
+                    float4 vP0P = CellVertex(c + int3( 1,  0,  1));
+                    float4 vP0M = CellVertex(c + int3( 1,  0, -1));
+                    float4 vM0P = CellVertex(c + int3(-1,  0,  1));
+                    float4 vM0M = CellVertex(c + int3(-1,  0, -1));
+
+                    float4 vPP0 = CellVertex(c + int3( 1,  1,  0));
+                    float4 vPM0 = CellVertex(c + int3( 1, -1,  0));
+                    float4 vMP0 = CellVertex(c + int3(-1,  1,  0));
+                    float4 vMM0 = CellVertex(c + int3(-1, -1,  0));
+
+                    // The four quads on the x edges, wound round the edge.
+                    float4 best = MeetQuad(v000, v0M0, v0MM, v00M, origin, safeDirection);
+                    best = Nearer(best, MeetQuad(v00P, v0MP, v0M0, v000, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v0P0, v000, v00M, v0PM, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v0PP, v00P, v000, v0P0, origin, safeDirection));
+
+                    // The four on the y edges.
+                    best = Nearer(best, MeetQuad(v000, vM00, vM0M, v00M, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v00P, vM0P, vM00, v000, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vP00, v000, v00M, vP0M, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vP0P, v00P, v000, vP00, origin, safeDirection));
+
+                    // The four on the z edges.
+                    best = Nearer(best, MeetQuad(v000, vM00, vMM0, v0M0, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(v0P0, vMP0, vM00, v000, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vP00, v000, v0M0, vPM0, origin, safeDirection));
+                    best = Nearer(best, MeetQuad(vPP0, v0P0, v000, vP00, origin, safeDirection));
+
+                    if (best.w > 0)
+                    {
+                        hitDistance = best.w;
+                        position = origin + safeDirection * best.w;
+                        // Facing the camera, because a quad is stitched without a preferred side.
+                        hitNormal = dot(best.xyz, safeDirection) > 0 ? -best.xyz : best.xyz;
+                    }
+                    else
+                    {
+                        hitNormal = normalize(-CellNormal(netsCell));
+                    }
+                }
+                else if (smooth)
+                {
+                    // The gradient of the trilinear field at the hit, from the corners already held; density rises into
+                    // matter, so the outward normal is the gradient reversed. No gradient, or a hit that started inside matter, takes the face just crossed.
+                    float3 hitF = saturate((position - (float3)netsCell * cellSize) / cellSize);
+                    float3 gradient = TrilinearGradient(hitNear, hitFar, hitF);
+                    hitNormal = dot(gradient, gradient) > 1e-12 ? normalize(-gradient) : faceNormal;
+                }
+                else
+                {
+                    hitNormal = faceNormal;
+                }
+            }
+
+            return hit;
+        }
+    };
+}

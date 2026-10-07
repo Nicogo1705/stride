@@ -1,0 +1,53 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.VoxelGI
+{
+    /// <summary>
+    /// Traces the diffuse cones once per pixel of a reduced-resolution target from the depth buffer.
+    /// <see cref="LightVoxelShader"/> reads the result instead of marching.
+    /// </summary>
+    shader VoxelGIResolveShader : ImageEffectShader, DepthBase, Transformation
+    {
+        compose VoxelMarchSet diffuseMarcher;
+
+        cbuffer PerView.Lighting
+        {
+            // What a cone that met nothing sees: credited by how much of it is still open.
+            float3 SkyLight;
+        }
+
+
+        float3 WorldPositionFromUV(float2 uv, float zProj)
+        {
+            float4 clipPosition = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, zProj, 1.0);
+            float4 viewPosition = mul(clipPosition, ProjectionInverse);
+            viewPosition /= viewPosition.w;
+            return mul(viewPosition, ViewInverse).xyz;
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float zProj = GetZProjDepthFromUV(uv);
+
+            // Nothing was drawn here. The sky bounces no light, and marching from the far plane
+            // would spend a full set of cones to accumulate zero.
+            if (zProj >= 1.0)
+                return float4(0, 0, 0, 0);
+
+            float3 worldPosition = WorldPositionFromUV(uv, zProj);
+
+            // Geometric normal from the reconstructed surface: a forward renderer has no normal buffer.
+            // The cross product sign depends on winding, so face it towards the camera.
+            float3 normal = normalize(cross(ddy(worldPosition), ddx(worldPosition)));
+            if (dot(normal, Eye.xyz - worldPosition) < 0.0)
+                normal = -normal;
+
+            float4 light = diffuseMarcher.March(worldPosition, normal);
+            light.rgb += SkyLight * saturate(1.0 - light.a);
+
+            // Alpha carries the raw projected depth; the light shader linearizes it with its own ZProjection.
+            return float4(light.rgb, zProj);
+        }
+    };
+}

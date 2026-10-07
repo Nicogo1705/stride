@@ -388,7 +388,9 @@ namespace Stride.Rendering.Images
                 currentInput = aoOutput;
             }
 
-            if (LocalReflections.Enabled && inputDepthTexture != null)
+            // A render path that produced no G-buffer leaves fewer inputs than indices, and GetInput
+            // throws rather than returning null; check InputCount before the null checks below.
+            if (LocalReflections.Enabled && inputDepthTexture != null && InputCount > 3)
             {
                 var normalsBuffer = GetInput(2);
                 var specularRoughnessBuffer = GetInput(3);

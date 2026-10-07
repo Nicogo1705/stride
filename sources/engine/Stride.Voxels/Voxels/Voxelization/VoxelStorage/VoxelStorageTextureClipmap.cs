@@ -27,7 +27,38 @@ namespace Stride.Rendering.Voxels
         public Vector4[] PerMapOffsetScaleCurrent = new Vector4[20];
         public Vector3[] MippingOffset = new Vector3[20];
 
-        ShaderClassSource sampler = new ShaderClassSource("VoxelStorageTextureClipmapShader");
+        /// <summary>
+        /// The ring voxelized this frame, or -1 when every ring was. Only downsamples involving a
+        /// rewritten ring are redone.
+        /// </summary>
+        public int RingUpdated = -1;
+
+        bool RingPairChanged(int finer) => RingUpdated < 0 || RingUpdated == finer || RingUpdated == finer + 1;
+
+        /// <summary>Releases the ring, mip and scratch textures and the mipmapping shaders.</summary>
+        public void Dispose()
+        {
+            ClipMaps?.Dispose();
+            MipMaps?.Dispose();
+            if (TempMipMaps != null)
+                foreach (var temp in TempMipMaps)
+                    temp?.Dispose();
+            ClipMaps = null;
+            MipMaps = null;
+            TempMipMaps = null;
+
+            if (VoxelMipmapSimpleGroups != null)
+            {
+                foreach (var group in VoxelMipmapSimpleGroups)
+                    if (group != null)
+                        foreach (var shader in group)
+                            shader?.Dispose();
+                VoxelMipmapSimpleGroups = null;
+            }
+        }
+
+        ShaderClassSource sampler;
+        (float, int, int, float) samplerArguments;
 
         public void UpdateVoxelizationLayout(string compositionName)
         {
@@ -38,9 +69,9 @@ namespace Stride.Rendering.Voxels
             parameters.Set(MainKey, ClipMaps);
         }
 
-        Stride.Rendering.ComputeEffect.ComputeEffectShader VoxelMipmapSimple;
-        //Memory leaks if the ThreadGroupCounts/Numbers/Composition changes (I suppose due to recompiles...?)
-        //so instead cache them as seperate shaders.
+        // One compute shader per direction and per mip level. A shader whose composition changes
+        // from one draw to the next is a new permutation each time - a compile, or a lookup at
+        // best - so each direction keeps its own, with its mipmapper composed once.
         Stride.Rendering.ComputeEffect.ComputeEffectShader[][] VoxelMipmapSimpleGroups;
 
         public void PostProcess(RenderDrawContext drawContext, ShaderSource[] mipmapShaders)
@@ -48,11 +79,6 @@ namespace Stride.Rendering.Voxels
             if (mipmapShaders.Length != LayoutSize)
             {
                 return;
-            }
-
-            if (VoxelMipmapSimple == null)
-            {
-                VoxelMipmapSimple = new Stride.Rendering.ComputeEffect.ComputeEffectShader(drawContext.RenderContext) { ShaderSourceName = "Voxel2x2x2MipmapEffect" };
             }
 
             if (VoxelMipmapSimpleGroups == null || VoxelMipmapSimpleGroups.Length != LayoutSize || VoxelMipmapSimpleGroups[0].Length != TempMipMaps.Length)
@@ -83,25 +109,31 @@ namespace Stride.Rendering.Voxels
 
             int offsetIndex = 0;
             //Mipmap detailed clipmaps into less detailed ones
-            Vector3 totalResolution = ClipMapResolution * new Vector3(1,LayoutSize,1);
             Int3 threadGroupCounts = new Int3(32, 32, 32);
             if (DownsampleFinerClipMaps)
             {
                 for (int i = 0; i < ClipMapCount - 1; i++)
                 {
+                    if (!RingPairChanged(i))
+                    {
+                        offsetIndex++;
+                        continue;
+                    }
                     Vector3 Offset = MippingOffset[offsetIndex];
 
-                    VoxelMipmapSimple.ThreadNumbers = new Int3(8);
-                    VoxelMipmapSimple.ThreadGroupCounts = (Int3)((ClipMapResolution / 2f) / (Vector3)VoxelMipmapSimple.ThreadNumbers);
-
+                    // The direction's own shader for the first mip level: same thread numbers, same
+                    // composition, only the targets and offsets differ from its use below.
                     for (int axis = 0; axis < LayoutSize; axis++)
                     {
-                        VoxelMipmapSimple.Parameters.Set(Voxel2x2x2MipmapKeys.ReadTex, ClipMaps);
-                        VoxelMipmapSimple.Parameters.Set(Voxel2x2x2MipmapKeys.WriteTex, TempMipMaps[0]);
-                        VoxelMipmapSimple.Parameters.Set(Voxel2x2x2MipmapKeys.ReadOffset, -(Vector3.Mod(Offset, new Vector3(2))) + new Vector3(0, (int)totalResolution.Y * i + (int)ClipMapResolution.Y * axis, 0));
-                        VoxelMipmapSimple.Parameters.Set(Voxel2x2x2MipmapKeys.WriteOffset, new Vector3(0, ClipMapResolution.Y / 2 * axis, 0));
-                        VoxelMipmapSimple.Parameters.Set(Voxel2x2x2MipmapKeys.mipmapper, mipmapShaders[axis]);
-                        ((RendererBase)VoxelMipmapSimple).Draw(drawContext);
+                        var ringShader = VoxelMipmapSimpleGroups[axis][0];
+                        ringShader.ThreadNumbers = new Int3(8);
+                        ringShader.ThreadGroupCounts = (Int3)((ClipMapResolution / 2f) / (Vector3)ringShader.ThreadNumbers);
+                        ringShader.Parameters.Set(Voxel2x2x2MipmapKeys.ReadTex, ClipMaps);
+                        ringShader.Parameters.Set(Voxel2x2x2MipmapKeys.WriteTex, TempMipMaps[0]);
+                        ringShader.Parameters.Set(Voxel2x2x2MipmapKeys.ReadOffset, -(Vector3.Mod(Offset, new Vector3(2))) + new Vector3((int)ClipMapResolution.X * i, (int)ClipMapResolution.Y * axis, 0));
+                        ringShader.Parameters.Set(Voxel2x2x2MipmapKeys.WriteOffset, new Vector3(0, ClipMapResolution.Y / 2 * axis, 0));
+                        ringShader.Parameters.Set(Voxel2x2x2MipmapKeys.mipmapper, mipmapShaders[axis]);
+                        ((RendererBase)ringShader).Draw(drawContext);
                     }
 
                     Offset -= Vector3.Mod(Offset, new Vector3(2));
@@ -109,17 +141,23 @@ namespace Stride.Rendering.Voxels
                     for (int axis = 0; axis < LayoutSize; axis++)
                     {
                         int axisOffset = axis * (int)ClipMapResolution.Y;
+                        int ringOffset = (i + 1) * (int)ClipMapResolution.X;
 
                         Int3 CopySize = new Int3((int)ClipMapResolution.X / 2 - 2, (int)ClipMapResolution.Y / 2 - 2, (int)ClipMapResolution.Z / 2 - 2);
 
 
-                        Int3 DstMinBound = new Int3((int)ClipMapResolution.X / 4 + (int)Offset.X / 2 + 1, (int)totalResolution.Y * (i + 1) + axisOffset + (int)ClipMapResolution.Y / 4 + 1 + (int)Offset.Y / 2, (int)ClipMapResolution.Z / 4 + (int)Offset.Z / 2 + 1);
+                        Int3 DstMinBound = new Int3(ringOffset + (int)ClipMapResolution.X / 4 + (int)Offset.X / 2 + 1, axisOffset + (int)ClipMapResolution.Y / 4 + 1 + (int)Offset.Y / 2, (int)ClipMapResolution.Z / 4 + (int)Offset.Z / 2 + 1);
                         Int3 DstMaxBound = DstMinBound + CopySize;
 
-                        DstMaxBound = Int3.Min(DstMaxBound, new Int3((int)totalResolution.X, (int)totalResolution.Y * (i + 2), (int)totalResolution.Z));
-                        DstMinBound = Int3.Min(DstMinBound, new Int3((int)totalResolution.X, (int)totalResolution.Y * (i + 2), (int)totalResolution.Z));
-                        DstMaxBound = Int3.Max(DstMaxBound, new Int3(0, (int)totalResolution.Y * (i + 1), 0));
-                        DstMinBound = Int3.Max(DstMinBound, new Int3(0, (int)totalResolution.Y * (i + 1), 0));
+                        // Stay inside the destination ring's own column of the atlas and this
+                        // direction's own row: a copy that ran over would land in a neighbour.
+                        Int3 RingMin = new Int3(ringOffset, axisOffset, 0);
+                        Int3 RingMax = new Int3(ringOffset + (int)ClipMapResolution.X, axisOffset + (int)ClipMapResolution.Y, (int)ClipMapResolution.Z);
+
+                        DstMaxBound = Int3.Min(DstMaxBound, RingMax);
+                        DstMinBound = Int3.Min(DstMinBound, RingMax);
+                        DstMaxBound = Int3.Max(DstMaxBound, RingMin);
+                        DstMinBound = Int3.Max(DstMinBound, RingMin);
 
                         Int3 SizeBound = DstMaxBound - DstMinBound;
 
@@ -142,8 +180,10 @@ namespace Stride.Rendering.Voxels
             }
             Vector3 resolution = ClipMapResolution;
             offsetIndex = ClipMapCount-1;
-            //Mipmaps for the largest clipmap
-            for (int i = 0; i < TempMipMaps.Length - 1; i++)
+            //Mipmaps for the largest clipmap - rebuilt only when that ring changed: its own
+            //voxelization, or the finer ring's downsample into its centre.
+            bool largestChanged = RingPairChanged(ClipMapCount - 2) || ClipMapCount == 1;
+            for (int i = 0; largestChanged && i < TempMipMaps.Length - 1; i++)
             {
                 Vector3 Offset = MippingOffset[offsetIndex];
                 resolution /= 2;
@@ -158,7 +198,7 @@ namespace Stride.Rendering.Voxels
                     if (i == 0)
                     {
                         mipmapShader.Parameters.Set(Voxel2x2x2MipmapKeys.ReadTex, ClipMaps);
-                        mipmapShader.Parameters.Set(Voxel2x2x2MipmapKeys.ReadOffset, -Offset + new Vector3(0, (int)ClipMapResolution.Y * LayoutSize * (ClipMapCount - 1) + (int)ClipMapResolution.Y * axis, 0));
+                        mipmapShader.Parameters.Set(Voxel2x2x2MipmapKeys.ReadOffset, -Offset + new Vector3((int)ClipMapResolution.X * (ClipMapCount - 1), (int)ClipMapResolution.Y * axis, 0));
                         mipmapShader.Parameters.Set(Voxel2x2x2MipmapKeys.WriteOffset, new Vector3(0, resolution.Y * axis, 0));
                     }
                     else
@@ -193,7 +233,14 @@ namespace Stride.Rendering.Voxels
         }
         public ShaderClassSource GetSamplingShader()
         {
-            sampler = new ShaderClassSource("VoxelStorageTextureClipmapShader", VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y/2.0f);
+            // The same source for the same four arguments: a fresh one each call is a permutation
+            // lookup for every consumer every frame.
+            var arguments = (VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y / 2.0f);
+            if (sampler == null || samplerArguments != arguments)
+            {
+                sampler = new ShaderClassSource("VoxelStorageTextureClipmapShader", VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y / 2.0f);
+                samplerArguments = arguments;
+            }
             return sampler;
         }
         public void ApplySamplingParameters(VoxelViewContext viewContext, ParameterCollection parameters)

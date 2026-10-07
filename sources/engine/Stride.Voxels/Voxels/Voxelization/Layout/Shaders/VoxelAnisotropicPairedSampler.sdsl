@@ -10,37 +10,63 @@ namespace Stride.Rendering.Voxels
             float maxBrightness;
         }
         
+        // An axis weighted below this contributes under a percent of the sum; skipping it saves a set
+        // of Texture3D fetches. Cones along a cardinal direction have two zero weights, so this is common.
+        static const float AxisWeightCutoff = 0.01;
+
         float4 applyMaxBrightness(float4 col)
         {
             return float4(col.rgb * maxBrightness, col.a);
         }
         override float4 Sample(float3 position, float3 normal, float diameter)
         {
-            return applyMaxBrightness(
-                   storage.Sample(position, diameter, 0) * abs(normal.x) +
-                   storage.Sample(position, diameter, 1) * abs(normal.y) +
-                   storage.Sample(position, diameter, 2) * abs(normal.z)
-                   );
+            float3 weights = abs(normal);
+            float4 sum = float4(0, 0, 0, 0);
+
+            if (weights.x > AxisWeightCutoff)
+                sum += storage.Sample(position, diameter, 0) * weights.x;
+            if (weights.y > AxisWeightCutoff)
+                sum += storage.Sample(position, diameter, 1) * weights.y;
+            if (weights.z > AxisWeightCutoff)
+                sum += storage.Sample(position, diameter, 2) * weights.z;
+
+            return applyMaxBrightness(sum);
         }
         override float4 SampleNearestMip(float3 position, float3 normal, float diameter)
         {
-            return applyMaxBrightness(
-                   storage.SampleNearestMip(position, diameter, 0) * abs(normal.x) +
-                   storage.SampleNearestMip(position, diameter, 1) * abs(normal.y) +
-                   storage.SampleNearestMip(position, diameter, 2) * abs(normal.z)
-                   );
+            float3 weights = abs(normal);
+            float4 sum = float4(0, 0, 0, 0);
+
+            if (weights.x > AxisWeightCutoff)
+                sum += storage.SampleNearestMip(position, diameter, 0) * weights.x;
+            if (weights.y > AxisWeightCutoff)
+                sum += storage.SampleNearestMip(position, diameter, 1) * weights.y;
+            if (weights.z > AxisWeightCutoff)
+                sum += storage.SampleNearestMip(position, diameter, 2) * weights.z;
+
+            return applyMaxBrightness(sum);
         }
         override float4 SampleByMipNearestMip(float3 position, float3 normal, float diameter)
         {
-            return applyMaxBrightness(
-                   storage.SampleByMipNearestMip(position, diameter, 0) * abs(normal.x) +
-                   storage.SampleByMipNearestMip(position, diameter, 1) * abs(normal.y) +
-                   storage.SampleByMipNearestMip(position, diameter, 2) * abs(normal.z)
-                   );
+            float3 weights = abs(normal);
+            float4 sum = float4(0, 0, 0, 0);
+
+            if (weights.x > AxisWeightCutoff)
+                sum += storage.SampleByMipNearestMip(position, diameter, 0) * weights.x;
+            if (weights.y > AxisWeightCutoff)
+                sum += storage.SampleByMipNearestMip(position, diameter, 1) * weights.y;
+            if (weights.z > AxisWeightCutoff)
+                sum += storage.SampleByMipNearestMip(position, diameter, 2) * weights.z;
+
+            return applyMaxBrightness(sum);
         }
         override float4 SampleRaw(float3 pos, float mipmap, int textureID, int axis)
         {
             return storage.SampleRaw(pos, mipmap, textureID, axis);
+        }
+        override bool OutsideVolume(float3 position)
+        {
+            return storage.OutsideVolume(position);
         }
         override float VoxelSize()
         {

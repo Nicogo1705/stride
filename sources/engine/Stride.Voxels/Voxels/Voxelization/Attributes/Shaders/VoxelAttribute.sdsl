@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelAttribute
 {
@@ -6,6 +6,6 @@ shader VoxelAttribute
     void InitializeFromStreams(){}
     void InitializeFromBuffer(RWBuffer<uint> buffer, uint address, uint2 base_stride){}
     void IndirectWrite(RWBuffer<uint> buffer, uint address){}
-    void DirectWrite(uint3 address, uint strideIndex, uint stride){}
+    void DirectWrite(uint3 address, uint3 clipOffset, uint axisStride){}
     float4 SampleLocal(){return float4(0,0,0,1);}
 };

@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelMarchBeam<int steps, float stepScale, float beamDiameter> : VoxelMarchMethod, VoxelRadiusMarchMethod, MarchAttributes
 {
@@ -15,14 +15,31 @@ shader VoxelMarchBeam<int steps, float stepScale, float beamDiameter> : VoxelMar
         float dist = voxelSize;
         float4 light = float4(0.0, 0.0, 0.0, 0.0);
 
+        float size = beamDiameter * radiusScale;
+        bool entered = false;
+        [loop]
         for (int i = 0; i < steps; i++)
         {
-            float size = beamDiameter * radiusScale;
             float3 pos = rayPos + rayDir * dist;
 
-            light += AttributeSamplers[AttributeID].Sample(pos, -rayDir, AttributeSamplers[AttributeID].VoxelSize() * size) * saturate(1.0 - light.a);
+            // A straight ray that has left the volume never re-enters, and a saturated beam gains
+            // nothing: stop there. Before it enters, though, keep walking - a camera parked outside
+            // the volume (the usual place to view it from) would otherwise see nothing at all.
+            if (AttributeSamplers[AttributeID].OutsideVolume(pos))
+            {
+                if (entered)
+                    break;
+                dist += voxelSize * stepScale;
+                continue;
+            }
+            entered = true;
 
-            dist += AttributeSamplers[AttributeID].VoxelSize() * stepScale;
+            light += AttributeSamplers[AttributeID].Sample(pos, -rayDir, voxelSize * size) * saturate(1.0 - light.a);
+
+            if (light.a >= 0.99)
+                break;
+
+            dist += voxelSize * stepScale;
         }
         return light;
     }

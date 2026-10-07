@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Stride.Core.Collections;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
@@ -83,8 +84,19 @@ namespace Stride.Rendering.Voxels.VoxelGI
         {
             private ValueParameterKey<float> intensityKey;
             private ValueParameterKey<float> specularIntensityKey;
+            private ValueParameterKey<float> specularRoughnessCutoffKey;
+            private ValueParameterKey<float> specularOffsetKey;
+            private ValueParameterKey<Vector3> skyLightKey;
+            private ValueParameterKey<float> giResolveEnabledKey;
+            private ValueParameterKey<Vector4> giResolveSizesKey;
+            private ObjectParameterKey<Texture> giResolveTextureKey;
+
+            private string compositionName;
+            private ShaderSource resolveMarcher;
 
             private PermutationParameterKey<ShaderSource> diffuseMarcherKey;
+            private PermutationParameterKey<ShaderSource> bounceMarcherKey;
+            private ValueParameterKey<float> bounceMarchEnabledKey;
             private PermutationParameterKey<ShaderSource> specularMarcherKey;
 
             public RenderLight Light { get; set; }
@@ -135,10 +147,20 @@ namespace Stride.Rendering.Voxels.VoxelGI
 
                 traceAttribute = GetTraceAttr();
 
+                this.compositionName = compositionName;
+
                 intensityKey = LightVoxelShaderKeys.Intensity.ComposeWith(compositionName);
                 specularIntensityKey = LightVoxelShaderKeys.SpecularIntensity.ComposeWith(compositionName);
+                specularRoughnessCutoffKey = LightVoxelShaderKeys.SpecularRoughnessCutoff.ComposeWith(compositionName);
+                specularOffsetKey = LightVoxelShaderKeys.SpecularOffset.ComposeWith(compositionName);
+                skyLightKey = LightVoxelShaderKeys.SkyLight.ComposeWith(compositionName);
+                giResolveEnabledKey = LightVoxelShaderKeys.GIResolveEnabled.ComposeWith(compositionName);
+                giResolveSizesKey = LightVoxelShaderKeys.GIResolveSizes.ComposeWith(compositionName);
+                giResolveTextureKey = LightVoxelShaderKeys.GIResolveTexture.ComposeWith(compositionName);
 
                 diffuseMarcherKey = LightVoxelShaderKeys.diffuseMarcher.ComposeWith(compositionName);
+                bounceMarcherKey = LightVoxelShaderKeys.bounceMarcher.ComposeWith(compositionName);
+                bounceMarchEnabledKey = LightVoxelShaderKeys.BounceMarchEnabled.ComposeWith(compositionName);
                 specularMarcherKey = LightVoxelShaderKeys.specularMarcher.ComposeWith(compositionName);
 
                 if (traceAttribute != null)
@@ -147,6 +169,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
                         ((LightVoxel)Light.Type).DiffuseMarcher.UpdateMarchingLayout("diffuseMarcher." + compositionName);
                     if (((LightVoxel)Light.Type).SpecularMarcher != null)
                         ((LightVoxel)Light.Type).SpecularMarcher.UpdateMarchingLayout("specularMarcher." + compositionName);
+                    ((LightVoxel)Light.Type).BounceMarcher?.UpdateMarchingLayout("bounceMarcher." + compositionName);
                 }
             }
 
@@ -163,6 +186,12 @@ namespace Stride.Rendering.Voxels.VoxelGI
                         renderEffect.EffectValidator.ValidateParameter(diffuseMarcherKey, ((LightVoxel)Light.Type).DiffuseMarcher.GetMarchingShader(0, collection));
                     if (((LightVoxel)Light.Type).SpecularMarcher != null)
                         renderEffect.EffectValidator.ValidateParameter(specularMarcherKey, ((LightVoxel)Light.Type).SpecularMarcher.GetMarchingShader(0, collection));
+
+                    // The bounce composition must always be filled: an empty compose does not compile.
+                    // With no bounce marcher the diffuse marcher fills it and BounceMarchEnabled stays zero.
+                    var bounce = ((LightVoxel)Light.Type).BounceMarcher ?? ((LightVoxel)Light.Type).DiffuseMarcher;
+                    if (bounce != null)
+                        renderEffect.EffectValidator.ValidateParameter(bounceMarcherKey, bounce.GetMarchingShader(0, collection));
                 }
             }
 
@@ -189,8 +218,23 @@ namespace Stride.Rendering.Voxels.VoxelGI
                     specularIntensity = 0.0f;
                 }
 
+                // Only a voxel view marches the bounce set, and only when there is one to march.
+                parameters.Set(bounceMarchEnabledKey, viewContext.IsVoxelView && lightVoxel.BounceMarcher != null ? 1.0f : 0.0f);
+
                 parameters.Set(intensityKey, intensity);
                 parameters.Set(specularIntensityKey, specularIntensity);
+                parameters.Set(specularRoughnessCutoffKey, lightVoxel.SpecularRoughnessCutoff);
+                parameters.Set(specularOffsetKey, lightVoxel.SpecularOffset);
+                parameters.Set(skyLightKey, (Vector3)lightVoxel.SkyColor * lightVoxel.SkyIntensity);
+
+                var resolved = PrepareScreenSpaceResolve(context, lightVoxel, viewContext);
+
+                parameters.Set(giResolveEnabledKey, resolved != null ? 1.0f : 0.0f);
+                if (resolved != null)
+                {
+                    parameters.Set(giResolveTextureKey, resolved.Texture);
+                    parameters.Set(giResolveSizesKey, resolved.Sizes);
+                }
 
                 if (traceAttribute != null)
                 {
@@ -198,7 +242,59 @@ namespace Stride.Rendering.Voxels.VoxelGI
                     lightVoxel.SpecularMarcher?.ApplyMarchingParameters(parameters);
                     lightVoxel.DiffuseMarcher?.ApplyAttributeSamplers(traceAttribute, 0, viewContext, parameters);
                     lightVoxel.SpecularMarcher?.ApplyAttributeSamplers(traceAttribute, 0, viewContext, parameters);
+                    lightVoxel.BounceMarcher?.ApplyMarchingParameters(parameters);
+                    lightVoxel.BounceMarcher?.ApplyAttributeSamplers(traceAttribute, 0, viewContext, parameters);
                 }
+            }
+
+            /// <summary>
+            /// Requests a reduced-resolution trace from <see cref="VoxelGIResolver"/> for this frame and fills its parameters.
+            /// Returns the state to read from, or null when marching inline.
+            /// </summary>
+            /// <remarks>
+            /// The marcher and attribute hold one set of composed keys, so the resolver's parameters are filled here
+            /// and the light's own layout restored afterwards. The texture returned is the one written last frame.
+            /// </remarks>
+            private static bool warnedNoResolver;
+
+            private VoxelGIResolveState PrepareScreenSpaceResolve(RenderDrawContext context, LightVoxel lightVoxel, VoxelViewContext viewContext)
+            {
+                // A voxel view is voxelizing the scene into the clipmaps, not shading a screen:
+                // there is no depth buffer of it and nothing to reduce.
+                if (viewContext.IsVoxelView || lightVoxel.ScreenSpaceDivisor <= 1
+                    || traceAttribute == null || lightVoxel.DiffuseMarcher == null)
+                    return null;
+
+                var state = context.RenderContext.VisibilityGroup?.Tags.Get(VoxelGIResolver.Current);
+                if (state?.Parameters == null)
+                {
+                    // Asked for and not available: the compositor has no ForwardRendererVoxels, or
+                    // no depth-only stage for it to read. Said once, since the light would
+                    // otherwise march inline forever with nothing to show why.
+                    if (!warnedNoResolver)
+                        GlobalLogger.GetLogger("LightVoxelRenderer").Warning("A voxel light asks for a screen-space divisor but the compositor has no resolver to trace into (ForwardRendererVoxels with a depth-only stage); its cones are traced per pixel instead.");
+                    warnedNoResolver = true;
+                    return null;
+                }
+
+                state.Divisor = lightVoxel.ScreenSpaceDivisor;
+                state.Requested = true;
+
+                // Rebuilt every frame and kept only while equal: a ring count or marcher change alters the source
+                var marcher = lightVoxel.DiffuseMarcher.GetMarchingShader(0, new ShaderSourceCollection { traceAttribute.GetSamplingShader() });
+                if (!marcher.Equals(resolveMarcher))
+                    resolveMarcher = marcher;
+
+                lightVoxel.DiffuseMarcher.UpdateMarchingLayout("diffuseMarcher");
+
+                state.Parameters.Set(VoxelGIResolveShaderKeys.diffuseMarcher, resolveMarcher);
+                state.Parameters.Set(VoxelGIResolveShaderKeys.SkyLight, (Vector3)lightVoxel.SkyColor * lightVoxel.SkyIntensity);
+                lightVoxel.DiffuseMarcher.ApplyMarchingParameters(state.Parameters);
+                lightVoxel.DiffuseMarcher.ApplyAttributeSamplers(traceAttribute, 0, new VoxelViewContext(false), state.Parameters);
+
+                lightVoxel.DiffuseMarcher.UpdateMarchingLayout("diffuseMarcher." + compositionName);
+
+                return state.Texture != null ? state : null;
             }
         }
     }

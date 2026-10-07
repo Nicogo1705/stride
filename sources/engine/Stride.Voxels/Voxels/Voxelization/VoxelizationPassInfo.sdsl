@@ -1,0 +1,21 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels
+{
+    /// <summary>
+    /// Lets a material shader ask whether it is being run to voxelize the scene.
+    /// </summary>
+    /// <remarks>
+    /// A material whose surface is not where its mesh is (a volume drawn through a proxy) has no
+    /// resolved surface for the voxelizer's views and must find it itself. A stream: the user
+    /// writes 0 in the vertex stage, VoxelizeToFragments writes 1.
+    /// </remarks>
+    shader VoxelizationPassInfo
+    {
+        stage stream float IsVoxelizationPass;
+
+        /// 1 when the material has nothing at this fragment and the voxelizer must store nothing.
+        /// A stream rather than discard: discard does not stop the unordered access writes that follow it.
+        stage stream float VoxelizationSkip;
+    };
+}

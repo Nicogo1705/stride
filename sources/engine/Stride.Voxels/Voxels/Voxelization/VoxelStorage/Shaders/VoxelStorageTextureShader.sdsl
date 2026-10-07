@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelStorageTextureShader
 {
@@ -6,5 +6,6 @@ shader VoxelStorageTextureShader
     float4 SampleNearestMip(float3 pos, float diameter, int axis){ return float4(0, 1, 0, 0); }
     float4 SampleByMipNearestMip(float3 pos, float mipmap, int axis){ return float4(0, 1, 0, 0); }
     float4 SampleRaw(float3 pos, float mipmap, int textureID, int axis){ return float4(1, 0, 0, 0); }
+    bool OutsideVolume(float3 pos){ return false; }
     float VoxelSize(){ return 1.0; }
 };

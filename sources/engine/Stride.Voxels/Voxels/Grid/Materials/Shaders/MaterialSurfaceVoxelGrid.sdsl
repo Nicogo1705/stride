@@ -1,0 +1,86 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// The grid's shadow: a material that walks the field only in the shadow caster passes.
+    /// Shadow maps are separate views, one per cascade or face, each walking the field from the light.
+    /// Runs on a proxy box of the grid: a caster pass asks the traversal where the ray meets the field, every other pass discards.
+    shader MaterialSurfaceVoxelGrid : IMaterialSurfacePixel, Transformation, PositionStream4, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, ShadowMapCasterPassInfo, VoxelizationPassInfo
+    {
+        // The traversal and its source are inherited, not composed, so all three share one scope
+        // and the field's resource is declared once. See VoxelGridTraversalDDA.
+
+        cbuffer PerMaterial
+        {
+            /// How far along the ray the surface is looked for, in grid local units. The processor
+            /// sets it to the grid's diagonal when nothing else was asked for.
+            [Link("VoxelGridField.MaxDistance")]
+            stage float VoxelGridMaxDistance;
+        }
+
+        override void Compute()
+        {
+            // One exit, no early return: FXC fails to unroll a return inside a material's Compute around the walk's loop.
+            // A shadow map view and not the voxelizer's pass.
+            if (ShadowMapViewFlag > 0.5 && streams.IsVoxelizationPass < 0.5)
+            {
+                // The fragment, in the grid's own space.
+                float3 targetLocal = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
+                float reach = VoxelGridMaxDistance > 0 ? VoxelGridMaxDistance : 64.0;
+
+                // Orthographic when no world axis moves the projected w, read off ViewProjection with mul
+                // rather than off Projection elements, whose layout differs between Matrix and the emitted HLSL.
+                // The view axis is the world direction perpendicular to the clip x and y rows, pointed where clip depth grows.
+                float4 axisX = mul(float4(1, 0, 0, 0), ViewProjection);
+                float4 axisY = mul(float4(0, 1, 0, 0), ViewProjection);
+                float4 axisZ = mul(float4(0, 0, 1, 0), ViewProjection);
+                bool orthographic = abs(axisX.w) + abs(axisY.w) + abs(axisZ.w) < 1e-6;
+
+                float3 originLocal;
+                float3 directionLocal;
+                if (orthographic)
+                {
+                    float3 forwardWS = normalize(cross(float3(axisX.x, axisY.x, axisZ.x), float3(axisX.y, axisY.y, axisZ.y)));
+                    if (dot(forwardWS, float3(axisX.z, axisY.z, axisZ.z)) < 0)
+                        forwardWS = -forwardWS;
+                    directionLocal = normalize(mul(float4(forwardWS, 0), WorldInverse).xyz);
+                    // Started far enough back to be outside the volume; the traversal clips to it.
+                    originLocal = targetLocal - directionLocal * reach;
+                }
+                else
+                {
+                    originLocal = mul(float4(Eye.xyz, 1), WorldInverse).xyz;
+                    float3 towards = targetLocal - originLocal;
+                    float travel = length(towards);
+                    directionLocal = travel > 1e-6 ? towards / travel : float3(0, 0, 1);
+                }
+
+                // A shadow map reads the depth and nothing else, so the ray is asked only where it
+                // meets the field, and settles a fraction of a cell past it - on the far side, so
+                // the surface never shadows itself.
+                float occluderDistance;
+                SetLod(0);
+                // The reach is the field's extent, so it is counted from where the ray meets the box:
+                // a light farther from the field than that must still see it.
+                bool blocked = Occlude(originLocal, directionLocal, EnterDistance(originLocal, directionLocal) + reach, occluderDistance);
+                if (!blocked)
+                    discard;
+
+                float4 occluderClip = mul(mul(float4(originLocal + directionLocal * occluderDistance, 1), World), ViewProjection);
+                streams.Depth = occluderClip.z / occluderClip.w;
+
+                // Opaque, in so many words: the caster keeps a fragment on the material's alpha,
+                // and the streams were reset to zero before this ran.
+                streams.matColorBase = float4(0, 0, 0, 1);
+                streams.matDiffuse = float4(0, 0, 0, 1);
+            }
+            else
+            {
+                // The camera's passes draw the grid through its materials, not through this; and
+                // the voxelizer is told so, since a discard alone leaves its store to run.
+                streams.VoxelizationSkip = 1;
+                discard;
+            }
+        }
+    };
+}

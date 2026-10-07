@@ -34,7 +34,35 @@ namespace Stride.Rendering.Voxels
         [DataMember(20)]
         public bool DownsampleFinerClipMaps { get; set; } = true;
 
+        /// <summary>
+        /// Maximum number of maps the offset tables and <c>perMapOffsetScale</c> describe; rings and mipmaps share it.
+        /// </summary>
+        public const int MaxMaps = 20;
+
+        /// <summary>
+        /// The most rings a ring resolution allows: each ring takes a column of a 3D texture capped at 2048
+        /// by Direct3D11, and rings share the offset tables with the mipmaps.
+        /// </summary>
+        public static int MaxClipMapCount(Resolutions clipResolution)
+        {
+            int resolution = (int)clipResolution;
+            int byTextureWidth = 2048 / resolution;
+
+            // The tables hold rings and mipmaps, and the mipping offsets are computed by looking one
+            // entry past the last map - so the budget is one shorter than it looks.
+            int byOffsetTables = MaxMaps - (int)Math.Floor(Math.Log(resolution, 2)) - 1;
+
+            return Math.Max(1, Math.Min(byTextureWidth, byOffsetTables));
+        }
+
         int storageUints;
+
+        /// <summary>
+        /// Fragment buffer slots. Voxelizing one ring per frame needs only two (filling and clearing);
+        /// the other update methods fill every ring per frame.
+        /// </summary>
+        int FragmentSlots => UpdatesPerFrame == UpdateMethods.SingleClipmap ? Math.Min(2, ClipMapCount) : ClipMapCount;
+
         Stride.Graphics.Buffer FragmentsBuffer = null;
 
         int ClipMapCount;
@@ -57,7 +85,11 @@ namespace Stride.Rendering.Voxels
             var virtualResolution = context.Resolution();
             var largestDimension = (double)Math.Max(virtualResolution.X, Math.Max(virtualResolution.Y, virtualResolution.Z));
 
+            // The ring count follows from how much finer the requested voxel size is than one ring:
+            // every doubling is one more ring. Clamped, because a voxel size fine enough to ask for
+            // more rings than the atlas or the offset tables can hold would otherwise run off both.
             ClipMapCount = (int)Math.Log(largestDimension / Math.Min(largestDimension, (double)ClipResolution), 2) + 1;
+            ClipMapCount = Math.Clamp(ClipMapCount, 1, MaxClipMapCount(ClipResolution));
 
             ClipMapCurrent++;
             if (ClipMapCurrent >= ClipMapCount)
@@ -127,15 +159,32 @@ namespace Stride.Rendering.Voxels
             tempStorageCounter = 0;
 
             var resolution = ClipMapResolution;
-            int fragments = (int)(resolution.X * resolution.Y * resolution.Z) * ClipMapCount;
+            int fragments = (int)(resolution.X * resolution.Y * resolution.Z) * FragmentSlots;
 
-            if (VoxelUtils.DisposeBufferBySpecs(FragmentsBuffer, storageUints * fragments) && storageUints * fragments > 0)
+            // The helper disposes a buffer of the wrong size and says so; a size of zero then
+            // leaves no buffer at all rather than a reference to a disposed one.
+            if (VoxelUtils.DisposeBufferBySpecs(FragmentsBuffer, storageUints * fragments))
             {
-                FragmentsBuffer = Stride.Graphics.Buffer.Typed.New(context.device, storageUints * fragments, PixelFormat.R32_UInt, true);
+                FragmentsBuffer = storageUints * fragments > 0
+                    ? Stride.Graphics.Buffer.Typed.New(context.device, storageUints * fragments, PixelFormat.R32_UInt, true)
+                    : null;
             }
         }
 
 
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            FragmentsBuffer?.Dispose();
+            FragmentsBuffer = null;
+            ClearBuffer?.Dispose();
+            BufferToTexture?.Dispose();
+            BufferToTextureColumns?.Dispose();
+            ClearBuffer = null;
+            BufferToTexture = null;
+            BufferToTextureColumns = null;
+        }
 
         public void UpdateTexture(VoxelStorageContext context, ref IVoxelStorageTexture texture, Stride.Graphics.PixelFormat pixelFormat, int LayoutSize)
         {
@@ -145,7 +194,9 @@ namespace Stride.Rendering.Voxels
                 clipmap = new VoxelStorageTextureClipmap();
             }
 
-            Vector3 ClipMapTextureResolution = new Vector3(ClipMapResolution.X, ClipMapResolution.Y * ClipMapCount * LayoutSize, ClipMapResolution.Z);
+            // One ring per column along X, one direction per row along Y, so each is capped separately
+            // by Direct3D11's 2048 limit on a 3D texture side.
+            Vector3 ClipMapTextureResolution = new Vector3(ClipMapResolution.X * ClipMapCount, ClipMapResolution.Y * LayoutSize, ClipMapResolution.Z);
             Vector3 MipMapResolution = new Vector3(ClipMapResolution.X / 2, ClipMapResolution.Y / 2 * LayoutSize, ClipMapResolution.Z / 2);
             if (VoxelUtils.DisposeTextureBySpecs(clipmap.ClipMaps, ClipMapTextureResolution, pixelFormat))
             {
@@ -175,6 +226,7 @@ namespace Stride.Rendering.Voxels
                 }
             }
             clipmap.DownsampleFinerClipMaps = DownsampleFinerClipMaps;
+            clipmap.RingUpdated = UpdatesPerFrame == UpdateMethods.SingleClipmap ? ClipMapCurrent : -1;
             clipmap.ClipMapResolution = ClipMapResolution;
             clipmap.ClipMapCount = ClipMapCount;
             clipmap.LayoutSize = LayoutSize;
@@ -208,6 +260,7 @@ namespace Stride.Rendering.Voxels
                 VoxelStorerClipmap Storer = new VoxelStorerClipmap
                 {
                     storageUints = storageUints,
+                    FragmentSlots = FragmentSlots,
                     FragmentsBuffer = FragmentsBuffer,
                     ClipMapCount = ClipMapCount,
                     ClipMapCurrent = ClipMapCurrent,
@@ -227,6 +280,7 @@ namespace Stride.Rendering.Voxels
                     VoxelStorerClipmap Storer = new VoxelStorerClipmap
                     {
                         storageUints = storageUints,
+                        FragmentSlots = FragmentSlots,
                         FragmentsBuffer = FragmentsBuffer,
                         ClipMapCount = ClipMapCount,
                         ClipMapCurrent = i,
@@ -334,16 +388,25 @@ namespace Stride.Rendering.Voxels
 
 
             int processYSize = VoxelsAreIndependent ? (int)ClipMapResolution.Y : 1;
-            processYSize *= (UpdatesPerFrame == UpdateMethods.SingleClipmap) ? 1 : ClipMapCount;
+            var everyClipMap = UpdatesPerFrame != UpdateMethods.SingleClipmap;
+            if (everyClipMap)
+                processYSize *= ClipMapCount;
 
-            BufferWriter.ThreadGroupCounts = VoxelsAreIndependent ? new Int3(32, 32, 32) : new Int3(32, 1, 32);
-            BufferWriter.ThreadNumbers = new Int3((int)ClipMapResolution.X / BufferWriter.ThreadGroupCounts.X, processYSize / BufferWriter.ThreadGroupCounts.Y, (int)ClipMapResolution.Z / BufferWriter.ThreadGroupCounts.Z);
+            // The ring count goes into the group count, not the group size: numthreads() is capped at
+            // 1024 threads, and multiplying Y by the ring count would exceed it from three rings on.
+            var groups = VoxelsAreIndependent ? new Int3(32, 32, 32) : new Int3(32, 1, 32);
+            if (everyClipMap)
+                groups.Y *= ClipMapCount;
+
+            BufferWriter.ThreadGroupCounts = groups;
+            BufferWriter.ThreadNumbers = new Int3((int)ClipMapResolution.X / groups.X, processYSize / groups.Y, (int)ClipMapResolution.Z / groups.Z);
 
             BufferWriter.Parameters.Set(BufferToTextureKeys.VoxelFragments, FragmentsBuffer);
             BufferWriter.Parameters.Set(BufferToTextureKeys.clipMapResolution, ClipMapResolution);
             BufferWriter.Parameters.Set(BufferToTextureKeys.storageUints, storageUints);
 
             BufferWriter.Parameters.Set(BufferToTextureKeys.clipOffset, (uint)(UpdatesPerFrame == UpdateMethods.SingleClipmap ? ClipMapCurrent : 0));
+            BufferWriter.Parameters.Set(BufferToTextureKeys.clipBufferOffset, (uint)(UpdatesPerFrame == UpdateMethods.SingleClipmap ? ClipMapCurrent % FragmentSlots : 0));
 
 
             //Modifiers are stored within attributes, yet need to be able to query their results. 
@@ -380,28 +443,27 @@ namespace Stride.Rendering.Voxels
 
 
 
-            ClearBuffer.Parameters.Set(ClearBufferKeys.buffer, FragmentsBuffer);
-
             if (UpdatesPerFrame != UpdateMethods.SingleClipmap)
             {
-                //Clear all
-                ClearBuffer.ThreadNumbers = new Int3(1024, 1, 1);
-                ClearBuffer.ThreadGroupCounts = ClearDispatch(FragmentsBuffer.ElementCount, out var fragmentsRowLength);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.offset, 0);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.rowLength, fragmentsRowLength);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.count, FragmentsBuffer.ElementCount);
+                // Clear all: the whole buffer is zeroed, so use the native UAV clear.
+                drawContext.CommandList.ClearReadWrite(FragmentsBuffer, UInt4.Zero);
             }
             else
             {
-                //Clear next clipmap buffer
+                // Clear next clipmap buffer. Only a slice is cleared, and a native UAV clear has no
+                // offset, so this stays a compute dispatch. The slice is the one the ring voxelized next
+                // frame writes into: wrap by the ring count first, then map to a slot, since the two
+                // differ when the ring count is odd.
                 var clipMapElements = (int)(ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints);
+                var nextClipMap = (ClipMapCurrent + 1) % ClipMapCount;
+                ClearBuffer.Parameters.Set(ClearBufferKeys.buffer, FragmentsBuffer);
                 ClearBuffer.ThreadNumbers = new Int3(1024, 1, 1);
                 ClearBuffer.ThreadGroupCounts = ClearDispatch(clipMapElements, out var clipMapRowLength);
-                ClearBuffer.Parameters.Set(ClearBufferKeys.offset, (int)(((ClipMapCurrent+1) % ClipMapCount) * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints));
+                ClearBuffer.Parameters.Set(ClearBufferKeys.offset, (int)((nextClipMap % FragmentSlots) * ClipMapResolution.X * ClipMapResolution.Y * ClipMapResolution.Z * storageUints));
                 ClearBuffer.Parameters.Set(ClearBufferKeys.rowLength, clipMapRowLength);
                 ClearBuffer.Parameters.Set(ClearBufferKeys.count, clipMapElements);
+                ((RendererBase)ClearBuffer).Draw(drawContext);
             }
-            ((RendererBase)ClearBuffer).Draw(drawContext);
         }
     }
 }

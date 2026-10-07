@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelIsotropicWriter_Float4 : VoxelLayout_Float4
 {
@@ -17,9 +17,9 @@ shader VoxelIsotropicWriter_Float4 : VoxelLayout_Float4
     {
         streams.center = original;
     }
-    override void DirectWrite(uint3 address, uint strideIndex, uint stride)
+    override void DirectWrite(uint3 address, uint3 clipOffset, uint axisStride)
     {
-        address.y += strideIndex * stride;
+        address += clipOffset;
         float4 tempcenter = streams.center;
         foreach (var modifier in Modifiers)
         {

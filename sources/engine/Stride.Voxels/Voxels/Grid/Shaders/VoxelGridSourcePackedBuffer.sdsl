@@ -1,0 +1,44 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// A grid held in a structured buffer, one value per sample, density in bits 0-7 and material in
+    /// bits 8-15, laid out x-major with z varying fastest. The material byte is the palette index.
+    shader VoxelGridSourcePackedBuffer : IVoxelGridSource
+    {
+        // Linked to fixed keys: an unlinked member takes its mixin path (layers[N].materialPixelStage) into its
+        // parameter name, and a value set under any other name binds nothing.
+        rgroup PerMaterial
+        {
+            [Link("VoxelGridField.Data")]
+            stage StructuredBuffer<uint> VoxelGridData;
+        }
+
+        cbuffer PerMaterial
+        {
+            [Link("VoxelGridField.SampleCount")]
+            stage int3 VoxelGridSampleCount;
+        }
+
+        override int3 SampleCount()
+        {
+            return VoxelGridSampleCount;
+        }
+
+        uint Fetch(int3 coord)
+        {
+            int index = (coord.x * VoxelGridSampleCount.y + coord.y) * VoxelGridSampleCount.z + coord.z;
+            return VoxelGridData[index];
+        }
+
+        override float Density(int3 coord)
+        {
+            return (Fetch(coord) & 0xFF) / 255.0;
+        }
+
+        override int MaterialId(int3 coord)
+        {
+            return (int)((Fetch(coord) >> 8) & 0xFF);
+        }
+    };
+}

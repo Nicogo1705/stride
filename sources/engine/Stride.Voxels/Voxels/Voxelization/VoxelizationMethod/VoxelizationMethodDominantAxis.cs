@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -96,14 +96,25 @@ namespace Stride.Rendering.Voxels
 
         Stride.Graphics.Texture MSAARenderTarget = null;
 
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            MSAARenderTarget?.Dispose();
+            MSAARenderTarget = null;
+        }
+
         public void Render(VoxelStorageContext storageContext, RenderDrawContext drawContext, RenderView view)
         {
             RenderView voxelizationView = view;
             Int2 ViewSize = VoxelizationViewSizes[view];
 
-            if (VoxelUtils.DisposeTextureBySpecs(MSAARenderTarget, new Vector3(ViewSize.X, ViewSize.Y, 1), PixelFormat.R8G8B8A8_UNorm, MultisampleCount))
+            // The level is a request, not a guarantee: a software or low-end device caps R8G8B8A8 lower
+            // than the X8 default, and Texture.New throws past the cap. Take what the device offers.
+            var multisampleCount = (MultisampleCount)Math.Min((int)MultisampleCount, (int)storageContext.device.Features[PixelFormat.R8G8B8A8_UNorm].MultisampleCountMax);
+
+            if (VoxelUtils.DisposeTextureBySpecs(MSAARenderTarget, new Vector3(ViewSize.X, ViewSize.Y, 1), PixelFormat.R8G8B8A8_UNorm, multisampleCount))
             {
-                MSAARenderTarget = Texture.New(storageContext.device, TextureDescription.New2D(ViewSize.X, ViewSize.Y, new MipMapCount(false), PixelFormat.R8G8B8A8_UNorm, TextureFlags.RenderTarget, 1, GraphicsResourceUsage.Default, MultisampleCount), null);
+                MSAARenderTarget = Texture.New(storageContext.device, TextureDescription.New2D(ViewSize.X, ViewSize.Y, new MipMapCount(false), PixelFormat.R8G8B8A8_UNorm, TextureFlags.RenderTarget, 1, GraphicsResourceUsage.Default, multisampleCount), null);
             }
 
             drawContext.CommandList.ResetTargets();

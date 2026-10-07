@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 shader VoxelAttributeDirectionalCoverageShader : VoxelAttribute, ShaderBaseStream, NormalStream, DataPacking
 {
@@ -27,9 +27,9 @@ shader VoxelAttributeDirectionalCoverageShader : VoxelAttribute, ShaderBaseStrea
             shift = 16;
         streams.Voxel_Coverage = uint(streams.coverage)<<shift;
     }
-    override void DirectWrite(uint3 address, uint strideIndex, uint stride)
+    override void DirectWrite(uint3 address, uint3 clipOffset, uint axisStride)
     {
-        address.y += strideIndex * stride;
+        address += clipOffset;
         DirectOutput[address] = streams.Voxel_CoverageResolved;
     }
     override void IndirectWrite(RWBuffer<uint> buffer, uint address)

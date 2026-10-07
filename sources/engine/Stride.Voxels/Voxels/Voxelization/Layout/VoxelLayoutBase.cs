@@ -52,6 +52,9 @@ namespace Stride.Rendering.Voxels
 
         //Per-Layout Settings
         protected virtual int LayoutCount { get; set; } = 1;
+
+        /// <inheritdoc />
+        public int DirectionCount => LayoutCount;
         protected virtual ShaderClassSource Writer { get; set; } = new ShaderClassSource("VoxelIsotropicWriter_Float4");
         protected virtual ShaderClassSource Sampler { get; set; } = new ShaderClassSource("VoxelIsotropicSampler");
         protected virtual string ApplierKey { get; set; } = "Isotropic";
@@ -60,6 +63,9 @@ namespace Stride.Rendering.Voxels
 
 
         protected IVoxelStorageTexture storageTex;
+
+        /// <summary>The texture the attribute's rings are arranged into, once there is one.</summary>
+        public IVoxelStorageTexture StorageTexture => storageTex;
 
         virtual public int PrepareLocalStorage(VoxelStorageContext context, IVoxelStorage storage)
         {
@@ -71,6 +77,13 @@ namespace Stride.Rendering.Voxels
         }
         virtual public void ClearOutputStorage()
         {
+            storageTex = null;
+        }
+
+        /// <inheritdoc />
+        public virtual void Dispose()
+        {
+            storageTex?.Dispose();
             storageTex = null;
         }
 

@@ -1,0 +1,115 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// How a ray finds the surface of a voxel grid.
+    /// Callers only want a hit, a distance, a normal and a material. An implementation may walk the grid
+    /// cell by cell, march a distance field or use hardware ray tracing; the callers are unchanged.
+    shader IVoxelGridTraversal
+    {
+        /// Picks the level of detail the next walks are made at, clamped to what the source holds.
+        void SetLod(int lod)
+        {
+        }
+
+        /// The level whose cells are no larger than a size, in grid local units: what a reader of
+        /// the field at that granularity - a GI ring, a shadow texel - should walk.
+        void SetLodForSize(float size)
+        {
+        }
+
+        /// The level a ray at a distance wants, when a pixel covers that many local units per unit
+        /// of distance: the finest whose cell is not smaller than the pixel. Fractional, for a
+        /// cross-fade between the two levels around it.
+        float LodAt(float distance, float unitsPerDistance)
+        {
+            return 0;
+        }
+
+        /// How many coarser levels the walk can be made at.
+        int LodLevelCount()
+        {
+            return 0;
+        }
+
+        /// The cell size at the level in force.
+        float CellSizeAtLod()
+        {
+            return 0;
+        }
+
+        /// Traces a ray expressed in the grid local space, where the grid spans
+        /// [0, cells * cellSize] on each axis. Returns whether anything was hit; hitDistance is
+        /// measured along a normalized direction, and hitNormal points away from the surface.
+        float EnterDistance(float3 origin, float3 direction)
+        {
+            return 0;
+        }
+        bool Trace(float3 origin, float3 direction, float maxDistance, out float hitDistance, out float3 hitNormal)
+        {
+            hitDistance = 0;
+            hitNormal = float3(0, 1, 0);
+            return false;
+        }
+
+        /// The same ray, asked only whether and where it meets the surface, for a shadow map. May stop within
+        /// a fraction of a cell of the surface, on its far side so a receiver at the surface never shadows itself.
+        /// Not named after Trace: the shader mixer resolves a method whose name begins with another's to the wrong body.
+        bool Occlude(float3 origin, float3 direction, float maxDistance, out float hitDistance)
+        {
+            hitDistance = 0;
+            return false;
+        }
+
+        /// How far along a ray a ball around it, of a radius that grows per unit of distance, is known to hold no
+        /// surface. Negative when it leaves the field having met none; 0 when the walk cannot tell.
+        float BeamDistance(float3 origin, float3 direction, float radius, float radiusPerDistance)
+        {
+            return 0;
+        }
+
+        /// The material a point of the surface is drawn with: one id chosen among the eight surrounding samples by
+        /// trilinear weight. Dither shares a boundary between two materials out between pixels (see VoxelGridDither); 0 gives the heaviest.
+        int SurfaceMaterialId(float3 localPosition, int2 pixel, int dither)
+        {
+            return 0;
+        }
+
+        /// Whether a point of the grid's space is inside matter.
+        bool IsSolid(float3 localPosition)
+        {
+            return false;
+        }
+
+        /// The surface's outward normal near a point, from the field's gradient.
+        float3 SurfaceNormal(float3 localPosition)
+        {
+            return float3(0, 1, 0);
+        }
+
+        /// What the field is like at the eight points a half-voxel out from a point: 0 all air,
+        /// 2 all solid, 1 the surface passes between them. The normal at the point comes with it.
+        /// For a caller that takes the field voxel by voxel at some other resolution.
+        int SurfaceProbe(float3 localPosition, float halfSize, out float3 normal)
+        {
+            normal = float3(0, 1, 0);
+            return 0;
+        }
+
+        /// What the field is like within a radius of a point: 0 all air, 2 all solid, 1 neither or
+        /// unknown. Answered on the occupancy pyramid where there is one, so a caller looking for
+        /// surface skips the bricks that cannot hold any.
+        int BrickState(float3 localPosition, float radius)
+        {
+            return 1;
+        }
+
+        /// Diagnostic: what the composed source reports at a point, as
+        /// (samples per axis / 128, density, iso level). A pass that finds nothing looks the same
+        /// whether the source is unbound, the dimensions are zero or the field is empty.
+        float3 Probe(float3 localPosition)
+        {
+            return float3(0, 0, 0);
+        }
+    };
+}

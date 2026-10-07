@@ -1,0 +1,32 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// The camera's ray through a point of the screen, in a grid's local space. Shared by the passes
+    /// that walk a grid from the camera, so they agree on where every ray starts and points.
+    shader VoxelGridRay
+    {
+        float4x4 VoxelGridViewProjectionInverse;
+        float4x4 VoxelGridWorldInverse;
+
+        /// The view's size in pixels.
+        float2 VoxelGridViewSize;
+
+        /// The ray from the near plane to the far one through a pixel, converted to the grid's space. The direction
+        /// is made unit length in that space; scale is its length before, to convert a local distance back to world.
+        void ViewRay(float2 pixel, out float3 localOrigin, out float3 localDirection, out float directionScale)
+        {
+            float2 uv = pixel / VoxelGridViewSize;
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            float4 nearPoint = mul(float4(ndc, 0.0, 1.0), VoxelGridViewProjectionInverse);
+            float4 farPoint = mul(float4(ndc, 1.0, 1.0), VoxelGridViewProjectionInverse);
+            float3 originWS = nearPoint.xyz / nearPoint.w;
+            float3 directionWS = normalize(farPoint.xyz / farPoint.w - originWS);
+
+            localOrigin = mul(float4(originWS, 1), VoxelGridWorldInverse).xyz;
+            localDirection = mul(float4(directionWS, 0), VoxelGridWorldInverse).xyz;
+            directionScale = length(localDirection);
+            localDirection = localDirection / directionScale;
+        }
+    };
+}

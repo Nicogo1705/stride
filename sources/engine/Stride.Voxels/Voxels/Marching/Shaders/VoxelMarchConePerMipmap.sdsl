@@ -17,11 +17,20 @@ shader VoxelMarchConePerMipmap<int steps> : VoxelMarchMethod, MarchAttributes
         float dist = voxelSize * coneRatioInv;
         float size = 0;
         float4 light = float4(0.0, 0.0, 0.0, 0.0);
+        [loop]
         for (int i = 0; i < steps; i++)
         {
             float3 pos = rayPos + rayDir * dist;
 
+            // Left the volume: every further sample returns nothing and a straight ray never comes back in.
+            if (AttributeSamplers[AttributeID].OutsideVolume(pos))
+                break;
+
             light += AttributeSamplers[AttributeID].SampleByMipNearestMip(pos, -rayDir, size) * saturate(1.0 - light.a);
+
+            // Saturated: every further step is scaled by (1 - light.a) ~ 0.
+            if (light.a >= 0.99)
+                break;
 
             dist *= 2;
             size += 1;

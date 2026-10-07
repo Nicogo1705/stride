@@ -1,0 +1,21 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+using Stride.Rendering.Data;
+
+namespace Stride.Rendering.Voxels.VoxelGI
+{
+    /// <summary>
+    /// Reduced-resolution GI pass, composed with the same marcher and samplers as the light.
+    /// </summary>
+    effect VoxelGIResolveEffect
+    {
+        using params VoxelGIResolveShaderKeys;
+
+        mixin VoxelGIResolveShader;
+
+        if (VoxelGIResolveShaderKeys.diffuseMarcher != null)
+        {
+            mixin compose diffuseMarcher = VoxelGIResolveShaderKeys.diffuseMarcher;
+        }
+    };
+}

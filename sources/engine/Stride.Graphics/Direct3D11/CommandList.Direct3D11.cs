@@ -39,6 +39,8 @@ namespace Stride.Graphics
 
         private readonly ComPtr<ID3D11UnorderedAccessView>[] currentUARenderTargetViews = new ComPtr<ID3D11UnorderedAccessView>[SimultaneousRenderTargetCount];
         private readonly ComPtr<ID3D11UnorderedAccessView>[] unorderedAccessViews = new ComPtr<ID3D11UnorderedAccessView>[UnorderedAcccesViewCount]; // Only CS
+        // The resource behind each bound CS UAV: a view of the same resource bound as SRV is a hazard too.
+        private readonly nint[] unorderedAccessResources = new nint[UnorderedAcccesViewCount];
 
         private const int StageCount = 6;
 
@@ -147,6 +149,7 @@ namespace Stride.Graphics
             Array.Clear(constantBuffers);
 
             Array.Clear(unorderedAccessViews);
+            Array.Clear(unorderedAccessResources);
             Array.Clear(currentRenderTargetViews);
             Array.Clear(currentUARenderTargetViews);
 
@@ -492,6 +495,7 @@ namespace Stride.Graphics
                 if (unorderedAccessViews[slot].Handle != nativeUnorderedAccessView.Handle)
                 {
                     unorderedAccessViews[slot] = nativeUnorderedAccessView;
+                    unorderedAccessResources[slot] = unorderedAccessView is not null ? (nint) unorderedAccessView.NativeResource.Handle : 0;
 
                     nativeDeviceContext->CSSetUnorderedAccessViews((uint) slot, NumUAVs: 1, ref nativeUnorderedAccessView, (uint*) &uavInitialOffset);
                 }
@@ -511,19 +515,28 @@ namespace Stride.Graphics
         /// <param name="unorderedAccessView">The Unordered Access View to unset.</param>
         internal void UnsetUnorderedAccessView(GraphicsResource unorderedAccessView)
         {
-            var nativeUav = unorderedAccessView is not null ? unorderedAccessView.NativeUnorderedAccessView : default;
-            if (nativeUav.IsNull())
+            if (unorderedAccessView is null)
+                return;
+            var nativeUav = unorderedAccessView.NativeUnorderedAccessView;
+            var nativeResource = (nint) unorderedAccessView.NativeResource.Handle;
+            if (nativeUav.IsNull() && nativeResource == 0)
                 return;
 
             for (int slot = 0; slot < UnorderedAcccesViewCount; slot++)
             {
-                if (unorderedAccessViews[slot].Handle == nativeUav.Handle)
+                if (unorderedAccessViews[slot].IsNull())
+                    continue;
+                // Direct3D nulls an SRV whose resource is still bound as a UAV, through any view of it.
+                if (unorderedAccessViews[slot].Handle == nativeUav.Handle || (nativeResource != 0 && unorderedAccessResources[slot] == nativeResource))
                 {
                     var nullUav = NullComPtr<ID3D11UnorderedAccessView>();
                     unorderedAccessViews[slot] = nullUav;
+                    unorderedAccessResources[slot] = 0;
                     NativeDeviceContext.CSSetUnorderedAccessViews((uint) slot, NumUAVs: 1, ppUnorderedAccessViews: ref nullUav, pUAVInitialCounts: null);
                 }
             }
+            if (nativeUav.IsNull())
+                return;
             for (int slot = 0; slot < SimultaneousRenderTargetCount; slot++)
             {
                 if (currentUARenderTargetViews[slot].Handle == nativeUav.Handle)

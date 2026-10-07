@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Sean Boettger <sean@whypenguins.com>
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
@@ -13,7 +13,11 @@ namespace Stride.Rendering.Voxels
     public class VoxelMarchCone : IVoxelMarchMethod
     {
         [DataMember(0)]
-        public bool EditMode = true;
+        /// <summary>
+        /// Reads step count, scale and cone ratio from a constant buffer instead of compiling them in,
+        /// so they can be tuned without a new shader.
+        /// </summary>
+        public bool EditMode = false;
         [DataMember(10)]
         public bool Fast = false;
         [DataMember(20)]
@@ -25,15 +29,23 @@ namespace Stride.Rendering.Voxels
         [DataMember(50)]
         public float StartOffset = 1.0f;
 
+        /// <summary>
+        /// Furthest the cone may travel, in world units, or zero for no limit.
+        /// </summary>
+        /// <remarks>A uniform rather than a template argument, so changing it compiles no new permutation.</remarks>
+        [DataMember(60)]
+        public float MaxDistance = 0.0f;
+
         public VoxelMarchCone()
         {
 
         }
-        public VoxelMarchCone(int steps, float stepScale, float ratio)
+        public VoxelMarchCone(int steps, float stepScale, float ratio, float maxDistance = 0.0f)
         {
             Steps = steps;
             StepScale = stepScale;
             ConeRatio = ratio;
+            MaxDistance = maxDistance;
             EditMode = false;
         }
         public ShaderSource GetMarchingShader(int attrID, ShaderSourceCollection attributeSamplers)
@@ -61,9 +73,12 @@ namespace Stride.Rendering.Voxels
         ValueParameterKey<int> FastKey;
         ValueParameterKey<float> OffsetKey;
         string compositionName;
+        ValueParameterKey<float> MaxDistanceKey;
         public void UpdateMarchingLayout(string compositionName)
         {
             this.compositionName = compositionName;
+            if (!EditMode)
+                MaxDistanceKey = VoxelMarchConeKeys.maxTraceDistance.ComposeWith(compositionName);
             if (EditMode)
             {
                 StepsKey = VoxelMarchConeEditModeKeys.steps.ComposeWith(compositionName);
@@ -75,6 +90,8 @@ namespace Stride.Rendering.Voxels
         }
         public void ApplyMarchingParameters(ParameterCollection parameters)
         {
+            if (!EditMode)
+                parameters.Set(MaxDistanceKey, MaxDistance);
             if (EditMode)
             {
                 parameters.Set(StepsKey, Steps);

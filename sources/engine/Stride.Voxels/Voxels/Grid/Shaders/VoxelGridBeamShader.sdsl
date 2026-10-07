@@ -1,0 +1,48 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// One ray per block of pixels, walked ahead of the resolve: writes how far along the block every pixel's ray is
+    /// known to meet nothing, so the resolve starts its walk there. Negative where nothing lies along the whole block.
+    shader VoxelGridBeamShader : ImageEffectShader, VoxelGridRay, VoxelGridLodStream
+    {
+        compose IVoxelGridTraversal Traversal;
+
+        /// Pixels along a side of the block one beam covers.
+        int VoxelGridBeamBlock;
+
+        stage override float4 Shading()
+        {
+            streams.VoxelGridLod = 0;
+            float2 block = floor(streams.ShadingPosition.xy);
+            float2 centre = (block + 0.5) * (float)VoxelGridBeamBlock;
+
+            float3 origin;
+            float3 direction;
+            float scale;
+            ViewRay(centre, origin, direction, scale);
+
+            // The four corner rays bound every pixel ray of the block: at any distance t along the centre ray, a pixel's
+            // point is within (largest origin gap + t * largest direction gap) of the centre's, and both gaps peak at a corner.
+            float radius = 0;
+            float growth = 0;
+            float3 cornerOrigin;
+            float3 cornerDirection;
+            float cornerScale;
+            ViewRay(block * (float)VoxelGridBeamBlock, cornerOrigin, cornerDirection, cornerScale);
+            radius = max(radius, length(cornerOrigin - origin));
+            growth = max(growth, length(cornerDirection - direction));
+            ViewRay((block + float2(1, 0)) * (float)VoxelGridBeamBlock, cornerOrigin, cornerDirection, cornerScale);
+            radius = max(radius, length(cornerOrigin - origin));
+            growth = max(growth, length(cornerDirection - direction));
+            ViewRay((block + float2(0, 1)) * (float)VoxelGridBeamBlock, cornerOrigin, cornerDirection, cornerScale);
+            radius = max(radius, length(cornerOrigin - origin));
+            growth = max(growth, length(cornerDirection - direction));
+            ViewRay((block + float2(1, 1)) * (float)VoxelGridBeamBlock, cornerOrigin, cornerDirection, cornerScale);
+            radius = max(radius, length(cornerOrigin - origin));
+            growth = max(growth, length(cornerDirection - direction));
+
+            return float4(Traversal.BeamDistance(origin, direction, radius, growth), 0, 0, 0);
+        }
+    };
+}

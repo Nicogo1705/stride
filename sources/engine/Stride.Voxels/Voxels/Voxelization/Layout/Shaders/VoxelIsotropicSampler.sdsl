@@ -30,6 +30,10 @@ namespace Stride.Rendering.Voxels
         {
             return storage.SampleRaw(pos,mipmap,textureID,axis);
         }
+        override bool OutsideVolume(float3 position)
+        {
+            return storage.OutsideVolume(position);
+        }
         override float VoxelSize()
         {
             return storage.VoxelSize();
