@@ -82,9 +82,40 @@ namespace Stride.Rendering.Voxels
             base.DrawCore(context, drawContext);
         }
 
+        protected override void CollectView(RenderContext context)
+        {
+            base.CollectView(context);
+
+            // The grids and the reduced-resolution GI read the depth prepass, which the base collects only for light probes
+            if (GBufferRenderStage != null && !LightProbes)
+                context.RenderView.RenderStages.Add(GBufferRenderStage);
+        }
+
         protected override void DrawView(RenderContext context, RenderDrawContext drawContext, int eyeIndex, int eyeCount)
         {
-            ResolveFromDepth(context, drawContext);
+            var grids = GridResolver.Grids.Count > 0;
+            var gi = GIResolver.Requested;
+
+            // Emptied before any prepass: the grids' materials draw their box in it and read the targets, and must find nothing resolved there
+            if (grids)
+                GridResolver.Clear(drawContext);
+
+            // With light probes the base runs the prepass and calls AfterDepthPrepass; otherwise it is run here
+            if ((grids || gi) && !(LightProbes && GBufferRenderStage != null))
+            {
+                var depthStencil = drawContext.CommandList.DepthStencilBuffer;
+                if (GBufferRenderStage != null && depthStencil != null)
+                {
+                    using (drawContext.QueryManager.BeginProfile(Color.Green, CompositingProfilingKeys.GBuffer))
+                    using (drawContext.PushRenderTargetsAndRestore())
+                    {
+                        drawContext.CommandList.Clear(depthStencil, DepthStencilClearOptions.DepthBuffer);
+                        drawContext.CommandList.SetRenderTarget(depthStencil, null);
+                        context.RenderSystem.Draw(drawContext, context.RenderView, GBufferRenderStage);
+                    }
+                }
+                ResolveFromDepth(context, drawContext);
+            }
 
             base.DrawView(context, drawContext, eyeIndex, eyeCount);
 
@@ -96,12 +127,18 @@ namespace Stride.Rendering.Voxels
             }
         }
 
+        protected override void AfterDepthPrepass(RenderContext context, RenderDrawContext drawContext)
+        {
+            base.AfterDepthPrepass(context, drawContext);
+            ResolveFromDepth(context, drawContext);
+        }
+
         /// <summary>
         /// Runs the passes that read the scene's depth before the opaque pass: the grid resolve and the
         /// diffuse cones into the reduced-resolution buffer.
         /// </summary>
         /// <remarks>
-        /// A depth-only prepass through <c>GBufferRenderStage</c> fills the depth first. Without such a stage the
+        /// Called once the depth prepass through <c>GBufferRenderStage</c> filled the depth. Without such a stage the
         /// grids resolve unbounded and the light marches inline.
         /// </remarks>
         private void ResolveFromDepth(RenderContext context, RenderDrawContext drawContext)
@@ -114,25 +151,9 @@ namespace Stride.Rendering.Voxels
             var commandList = drawContext.CommandList;
             var depthStencil = commandList.DepthStencilBuffer;
 
-            // Emptied before the prepass: the grids' materials draw their box in it and read the
-            // targets, and must find nothing resolved there.
-            if (grids)
-                GridResolver.Clear(drawContext);
-
             Texture depth = null;
             if (GBufferRenderStage != null && depthStencil != null)
-            {
-                using (drawContext.QueryManager.BeginProfile(Color.Green, CompositingProfilingKeys.GBuffer))
-                using (drawContext.PushRenderTargetsAndRestore())
-                {
-                    commandList.Clear(depthStencil, DepthStencilClearOptions.DepthBuffer);
-                    commandList.SetRenderTarget(depthStencil, null);
-
-                    context.RenderSystem.Draw(drawContext, context.RenderView, GBufferRenderStage);
-                }
-
                 depth = drawContext.Resolver.ResolveDepthStencil(depthStencil);
-            }
 
             if (grids)
             {

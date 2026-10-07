@@ -25,6 +25,7 @@ namespace Stride.Rendering.Voxels
         private Dictionary<VoxelVolumeComponent, ProcessedVoxelVolume> renderVoxelVolumeData;
         
         private LogicalGroupReference VoxelizerStorerCasterKey;
+        private readonly Dictionary<ObjectId, ParameterCollection> parametersByLayout = new();
         private StaticObjectPropertyKey<RenderEffect> renderEffectKey;
 
         protected override void InitializeCore()
@@ -124,30 +125,9 @@ namespace Stride.Rendering.Voxels
                     if (firstViewLayout == null)
                         continue;
 
-                    var viewParameters = new ParameterCollection();
-
-                    var firstViewLighting = firstViewLayout.GetLogicalGroup(VoxelizerStorerCasterKey);
-
-                    // Prepare layout (should be similar for all PerView)
-                    {
-
-                        // Generate layout
-                        var viewParameterLayout = new ParameterCollectionLayout();
-                        viewParameterLayout.ProcessLogicalGroup(firstViewLayout, ref firstViewLighting);
-
-                        viewParameters.UpdateLayout(viewParameterLayout);
-                    }
-
-
-
-                    ParameterCollection VSViewParameters = viewParameters;
-
-                    pass.storer.ApplyVoxelizationParameters(VSViewParameters);
-                    foreach (var attr in processedVolume.Attributes)
-                    {
-                        attr.Attribute.ApplyVoxelizationParameters(VSViewParameters);
-                    }
-
+                    // One parameter set per distinct layout: an effect that never stores (a material that discards in the
+                    // voxelizer) has its fragment buffer compiled out and a layout of its own
+                    parametersByLayout.Clear();
                     foreach (var viewLayout in viewFeature.Layouts)
                     {
                         if (viewLayout.State != RenderEffectState.Normal)
@@ -157,12 +137,21 @@ namespace Stride.Rendering.Voxels
                         if (voxelizerStorer.Hash == ObjectId.Empty)
                             continue;
 
-                        if (voxelizerStorer.Hash != firstViewLighting.Hash)
-                            throw new InvalidOperationException("PerView VoxelizerStorer layout differs between different RenderObject in the same RenderView");
+                        if (!parametersByLayout.TryGetValue(voxelizerStorer.Hash, out var viewParameters))
+                        {
+                            var viewParameterLayout = new ParameterCollectionLayout();
+                            viewParameterLayout.ProcessLogicalGroup(viewLayout, ref voxelizerStorer);
+                            viewParameters = new ParameterCollection();
+                            viewParameters.UpdateLayout(viewParameterLayout);
 
+                            pass.storer.ApplyVoxelizationParameters(viewParameters);
+                            foreach (var attr in processedVolume.Attributes)
+                                attr.Attribute.ApplyVoxelizationParameters(viewParameters);
+                            parametersByLayout.Add(voxelizerStorer.Hash, viewParameters);
+                        }
 
                         var resourceGroup = viewLayout.Entries[pass.view.Index].Resources;
-                        resourceGroup.UpdateLogicalGroup(ref voxelizerStorer, VSViewParameters);
+                        resourceGroup.UpdateLogicalGroup(ref voxelizerStorer, viewParameters);
                     }
                 }
             }

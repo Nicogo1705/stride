@@ -50,7 +50,10 @@ namespace Stride.Rendering.Voxels.Grid
         }
 
         /// <summary>Reads the materials and uploads the table when anything in it changed.</summary>
-        public void Refresh(CommandList commandList, IReadOnlyList<Material> materials)
+        /// <param name="commandList">The command list the upload goes through.</param>
+        /// <param name="materials">The materials, by id.</param>
+        /// <param name="everyId">Whether the first material stands for every id, as a grid's single material does.</param>
+        public void Refresh(CommandList commandList, IReadOnlyList<Material> materials, bool everyId = false)
         {
             Array.Clear(scratch);
             for (int id = 0; id < Capacity && id < materials.Count; id++)
@@ -62,6 +65,14 @@ namespace Stride.Rendering.Voxels.Grid
 
                 scratch[id * 2] = new Vector4(colour.R, colour.G, colour.B, 1);
                 scratch[id * 2 + 1] = new Vector4(emissive.R * intensity, emissive.G * intensity, emissive.B * intensity, 1);
+            }
+            if (everyId && materials.Count > 0)
+            {
+                for (int id = 1; id < Capacity; id++)
+                {
+                    scratch[id * 2] = scratch[0];
+                    scratch[id * 2 + 1] = scratch[1];
+                }
             }
 
             var same = uploaded;

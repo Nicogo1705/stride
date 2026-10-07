@@ -148,7 +148,7 @@ namespace Stride.Rendering.Voxels.Grid
 
             float3 localPosition = localOrigin + localDirection * hitDistance;
             float3 worldPosition = mul(float4(localPosition, 1), VoxelGridWorld).xyz;
-            float3 worldNormal = normalize(mul(float4(localNormal, 0), VoxelGridWorld).xyz);
+            float3 worldNormal = normalize(mul((float3x3)VoxelGridWorldInverse, localNormal));
 
             float4 hitClip = mul(float4(worldPosition, 1), VoxelGridViewProjection);
             float depth = hitClip.z / hitClip.w;

@@ -99,7 +99,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         /// <summary>Whether the field writes the shadow maps. It receives shadows either way.</summary>
         /// <userdoc>Whether the field casts shadows.</userdoc>
-        [DataMember(20)]
+        [DataMember(24)]
         public bool CastShadows { get; set; } = true;
 
         /// <summary>See <see cref="VoxelGridFieldKeys.Debug"/>.</summary>

@@ -74,15 +74,27 @@ namespace Stride.Rendering.Voxels.Grid
         public VoxelGridOccupancy Occupancy { get; set; }
 
 
+        private ShaderMixinSource shaderSource;
+        private VoxelSurfaceForm shaderSurface;
+        private ShaderSource shaderSourceOfSource;
+
         /// <summary>The traversal shader with its source mixed in, generic on the surface mode.</summary>
+        /// <remarks>The same instance is returned until the surface form or the source's shader changes.</remarks>
         public ShaderSource GetShaderSource()
         {
+            var sourceShader = Source.GetShaderSource();
+            if (shaderSource != null && shaderSurface == Surface && Equals(shaderSourceOfSource, sourceShader))
+                return shaderSource;
+
             // Mixed beside its source rather than composing it, so both share one scope and the field's resource is
             // declared once. The surface form is a generic argument, so only the branch asked for is compiled.
             var mixin = new ShaderMixinSource();
             mixin.Mixins.Add(new ShaderClassSource("VoxelGridTraversalDDA", (int)Surface));
-            if (Source.GetShaderSource() is ShaderClassSource sourceClass)
+            if (sourceShader is ShaderClassSource sourceClass)
                 mixin.Mixins.Add(sourceClass);
+            shaderSource = mixin;
+            shaderSurface = Surface;
+            shaderSourceOfSource = sourceShader;
             return mixin;
         }
 

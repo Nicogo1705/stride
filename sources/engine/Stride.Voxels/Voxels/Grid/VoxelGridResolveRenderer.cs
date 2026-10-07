@@ -29,6 +29,8 @@ namespace Stride.Rendering.Voxels.Grid
         public MeshDraw Box;
         /// <summary>Pixels along a side of the block one beam ray walks ahead of the resolve; 0 walks every pixel from the box.</summary>
         public int BeamBlockSize;
+        /// <summary>The parameters of every pass of the grid's materials, which read the targets of the view being drawn.</summary>
+        public IReadOnlyList<ParameterCollection> MaterialParameters;
     }
 
     /// <summary>
@@ -37,8 +39,8 @@ namespace Stride.Rendering.Voxels.Grid
     /// </summary>
     /// <remarks>
     /// Each grid is drawn as its proxy box, so only the pixels under it march, and the scene's depth,
-    /// when given, ends a ray at the opaque surface in front of the grid. The targets are kept across
-    /// frames and remade when the view changes size; <see cref="TargetsVersion"/> tells a material when to bind them again.
+    /// when given, ends a ray at the opaque surface in front of the grid. Each view size keeps its own targets,
+    /// bound to the grids' materials when that view is resolved; a material drawn in a view that was not resolved draws nothing.
     /// </remarks>
     public sealed class VoxelGridResolveRenderer : IDisposable
     {
@@ -52,20 +54,40 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The grids to resolve this frame. Filled by whoever owns the grids before the pass draws.</summary>
         public List<VoxelGridResolveEntry> Grids { get; } = [];
 
-        /// <summary>The surface normal, with 1 in w where a surface was found.</summary>
-        public Texture Normal { get; private set; }
+        /// <summary>One view size's targets.</summary>
+        private sealed class Targets
+        {
+            public Texture Normal, Material, Position, Depth;
+            public long LastFrame;
+
+            public void Dispose()
+            {
+                Normal.Dispose();
+                Material.Dispose();
+                Position.Dispose();
+                Depth.Dispose();
+            }
+        }
+
+        // Frames a view size's targets survive unused, so an editor viewport and a probe capture do not remake them every frame
+        private const int UnusedTargetFrames = 120;
+        private readonly Dictionary<(int Width, int Height), Targets> targetsBySize = [];
+        private readonly List<(int Width, int Height)> staleSizes = [];
+        private Targets current;
+
+        /// <summary>The surface normal of the view resolved last, with 1 in w where a surface was found.</summary>
+        public Texture Normal => current?.Normal;
 
         /// <summary>The material id in r and the grid index in g, a byte each.</summary>
-        public Texture Material { get; private set; }
+        public Texture Material => current?.Material;
 
         /// <summary>The surface's world position, with its depth in w.</summary>
-        public Texture Position { get; private set; }
+        public Texture Position => current?.Position;
 
-        private Texture depth;
+        private Texture depth => current?.Depth;
         private Texture beam;
-
-        /// <summary>Counts the times the targets were remade; a reader binds them again when it changes.</summary>
-        public int TargetsVersion { get; private set; }
+        private VertexDeclaration inputDeclaration;
+        private InputElementDescription[] inputElements;
 
         /// <summary>
         /// Makes the targets fit the view and empties them, so nothing reads as resolved until <see cref="Draw"/> runs.
@@ -82,7 +104,8 @@ namespace Stride.Rendering.Voxels.Grid
             if (width <= 0 || height <= 0)
                 return;
 
-            EnsureTargets(context.GraphicsDevice, width, height);
+            SelectTargets(context, width, height);
+            BindToMaterials(renderView);
 
             var commandList = context.CommandList;
             // Zero in every channel: the normal's w is what says "resolved", and Color4.Black carries a 1 there.
@@ -203,7 +226,12 @@ namespace Stride.Rendering.Voxels.Grid
                 var vertexBuffer = box.VertexBuffers[0];
                 pipelineState.State.RootSignature = effect.RootSignature;
                 pipelineState.State.EffectBytecode = effect.Effect.Bytecode;
-                pipelineState.State.InputElements = vertexBuffer.Declaration.CreateInputElements();
+                if (vertexBuffer.Declaration != inputDeclaration)
+                {
+                    inputDeclaration = vertexBuffer.Declaration;
+                    inputElements = inputDeclaration.CreateInputElements();
+                }
+                pipelineState.State.InputElements = inputElements;
                 pipelineState.State.PrimitiveType = box.PrimitiveType;
                 pipelineState.State.Output.CaptureState(commandList);
                 pipelineState.Update();
@@ -216,17 +244,49 @@ namespace Stride.Rendering.Voxels.Grid
             }
         }
 
-        private void EnsureTargets(GraphicsDevice device, int width, int height)
+        private void SelectTargets(RenderDrawContext context, int width, int height)
         {
-            if (Normal != null && Normal.Width == width && Normal.Height == height)
-                return;
+            var frame = context.RenderContext.Time?.FrameCount ?? 0;
+            if (!targetsBySize.TryGetValue((width, height), out current))
+            {
+                var device = context.GraphicsDevice;
+                current = new Targets
+                {
+                    Normal = Texture.New2D(device, width, height, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget),
+                    Material = Texture.New2D(device, width, height, PixelFormat.R8G8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget),
+                    Position = Texture.New2D(device, width, height, PixelFormat.R32G32B32A32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget),
+                    Depth = Texture.New2D(device, width, height, PixelFormat.D32_Float, TextureFlags.DepthStencil),
+                };
+                targetsBySize.Add((width, height), current);
+            }
+            current.LastFrame = frame;
 
-            ReleaseTargets();
-            Normal = Texture.New2D(device, width, height, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
-            Material = Texture.New2D(device, width, height, PixelFormat.R8G8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
-            Position = Texture.New2D(device, width, height, PixelFormat.R32G32B32A32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
-            depth = Texture.New2D(device, width, height, PixelFormat.D32_Float, TextureFlags.DepthStencil);
-            TargetsVersion++;
+            staleSizes.Clear();
+            foreach (var (size, targets) in targetsBySize)
+                if (frame - targets.LastFrame > UnusedTargetFrames)
+                    staleSizes.Add(size);
+            foreach (var size in staleSizes)
+            {
+                targetsBySize[size].Dispose();
+                targetsBySize.Remove(size);
+            }
+        }
+
+        /// <summary>Points the grids' materials at this view's targets, and tells them which view these are.</summary>
+        private void BindToMaterials(RenderView renderView)
+        {
+            foreach (var grid in Grids)
+            {
+                if (grid.MaterialParameters == null)
+                    continue;
+                foreach (var parameters in grid.MaterialParameters)
+                {
+                    parameters.Set(VoxelGridFieldKeys.ResolveNormal, current.Normal);
+                    parameters.Set(VoxelGridFieldKeys.ResolveMaterial, current.Material);
+                    parameters.Set(VoxelGridFieldKeys.ResolvePosition, current.Position);
+                    parameters.Set(VoxelGridFieldKeys.ResolveViewProjection, renderView.ViewProjection);
+                }
+            }
         }
 
         private void EnsureBeam(GraphicsDevice device, int width, int height)
@@ -240,11 +300,10 @@ namespace Stride.Rendering.Voxels.Grid
 
         private void ReleaseTargets()
         {
-            Normal?.Dispose();
-            Material?.Dispose();
-            Position?.Dispose();
-            depth?.Dispose();
-            Normal = Material = Position = depth = null;
+            foreach (var targets in targetsBySize.Values)
+                targets.Dispose();
+            targetsBySize.Clear();
+            current = null;
         }
 
         public void Dispose()

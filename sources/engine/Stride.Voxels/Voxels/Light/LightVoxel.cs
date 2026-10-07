@@ -78,7 +78,7 @@ namespace Stride.Rendering.Voxels.VoxelGI
         /// Requires a depth-only render stage on the compositor to prime the depth buffer; without one
         /// the light marches inline and logs one warning.
         /// </remarks>
-        [DataMember(57)]
+        [DataMember(59)]
         [DataMemberRange(1, 4, 1, 1, 0)]
         public int ScreenSpaceDivisor { get; set; } = 1;
 

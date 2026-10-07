@@ -58,7 +58,7 @@ namespace Stride.Rendering.Voxels
         }
 
         ShaderClassSource sampler;
-        (float, int, int, float) samplerArguments;
+        (float, int, int, float, float) samplerArguments;
 
         public void UpdateVoxelizationLayout(string compositionName)
         {
@@ -233,12 +233,12 @@ namespace Stride.Rendering.Voxels
         }
         public ShaderClassSource GetSamplingShader()
         {
-            // The same source for the same four arguments: a fresh one each call is a permutation
+            // The same source for the same arguments: a fresh one each call is a permutation
             // lookup for every consumer every frame.
-            var arguments = (VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y / 2.0f);
+            var arguments = (VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y / 2.0f, ClipMapResolution.X);
             if (sampler == null || samplerArguments != arguments)
             {
-                sampler = new ShaderClassSource("VoxelStorageTextureClipmapShader", VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y / 2.0f);
+                sampler = new ShaderClassSource("VoxelStorageTextureClipmapShader", VoxelSize, ClipMapCount, LayoutSize, ClipMapResolution.Y / 2.0f, ClipMapResolution.X);
                 samplerArguments = arguments;
             }
             return sampler;

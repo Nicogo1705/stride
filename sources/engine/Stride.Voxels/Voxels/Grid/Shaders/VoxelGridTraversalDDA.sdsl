@@ -94,7 +94,9 @@ namespace Stride.Rendering.Voxels.Grid
             int3 samples = SampleCount();
             bool onBorder = any(coord <= 0) || any(coord >= samples - int3(1, 1, 1));
             float density = Density(coord);
-            return (VoxelGridSealBorder > 0.5 && onBorder) ? 0.0 : density;
+            // Below the iso level whatever its sign, as the voxel collider seals it
+            float air = VoxelGridIsoLevel > 0.0 ? 0.0 : VoxelGridIsoLevel - 1.0;
+            return (VoxelGridSealBorder > 0.5 && onBorder) ? air : density;
         }
 
         /// The field between samples, trilinear - the same reconstruction marching cubes and surface
@@ -265,13 +267,12 @@ namespace Stride.Rendering.Voxels.Grid
             ids[6] = MaterialId(cell + int3(0, 1, 1)); weights[6] = (1 - f.x) * f.y * f.z;
             ids[7] = MaterialId(cell + int3(1, 1, 1)); weights[7] = f.x * f.y * f.z;
 
-            // The same id at several corners counts once, with all their weight, on its first
-            // corner. Air, id 0 below the iso level, weighs nothing: a surface is made of what is
-            // solid on either side of it, and air is solid nowhere.
+            // The same id at several corners counts once, with all their weight, on its first corner.
+            // A corner below the iso level is air and weighs nothing, whatever id it carries.
             for (int i = 0; i < 8; i++)
             {
-                if (ids[i] == 0)
-                    weights[i] = 0;
+                int3 corner = cell + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+                weights[i] *= SealedDensity(corner) >= VoxelGridIsoLevel ? 1.0 : 0.0;
                 for (int j = 0; j < i; j++)
                 {
                     if (ids[j] == ids[i])
@@ -470,9 +471,11 @@ namespace Stride.Rendering.Voxels.Grid
             float tHit = 0;
 
             bool startsInside = tEnter <= 0;
+            bool hitAtEntry = false;
             if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
             {
                 hit = true;
+                hitAtEntry = true;
                 running = false;
                 tHit = tEnter;
             }
@@ -708,9 +711,11 @@ namespace Stride.Rendering.Voxels.Grid
             // as its surface and nothing to refine. Only for rays that start inside the box: applied
             // to one arriving from outside it turns the whole boundary into surface.
             bool startsInside = tEnter <= 0;
+            bool hitAtEntry = false;
             if (running && startsInside && smooth && SampleField(origin + safeDirection * (tEnter + 1e-4)) >= VoxelGridIsoLevel)
             {
                 hit = true;
+                hitAtEntry = true;
                 running = false;
                 tHit = tEnter;
             }
@@ -864,7 +869,8 @@ namespace Stride.Rendering.Voxels.Grid
                     axis == 1 ? -sign(safeDirection.y) : 0,
                     axis == 2 ? -sign(safeDirection.z) : 0);
 
-                if (nets)
+                // A ray that starts in matter keeps the box face: no cell was walked to refine it in
+                if (nets && !hitAtEntry)
                 {
                     // Every quad surface nets stitches that can cover a point in this cell, not just the three the cell
                     // owns: a quad spans the four cells round a grid edge. Nineteen cell vertices, twelve quads.

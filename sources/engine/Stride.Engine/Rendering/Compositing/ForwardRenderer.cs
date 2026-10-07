@@ -271,6 +271,15 @@ namespace Stride.Rendering.Compositing
             }
         }
 
+        /// <summary>
+        /// Called once the depth prepass has filled the depth buffer, before the opaque pass, when the prepass runs.
+        /// </summary>
+        /// <param name="context">The render context.</param>
+        /// <param name="drawContext">The draw context, with the depth buffer bound as the depth stencil.</param>
+        protected virtual void AfterDepthPrepass(RenderContext context, RenderDrawContext drawContext)
+        {
+        }
+
         protected virtual void CollectView(RenderContext context)
         {
             // Fill RenderStage formats and register render stages to main view
@@ -507,6 +516,8 @@ namespace Stride.Rendering.Compositing
                     // Draw [main view | z-prepass stage]
                     renderSystem.Draw(drawContext, context.RenderView, GBufferRenderStage);
                 }
+
+                AfterDepthPrepass(context, drawContext);
 
                 // Bake lightprobes against Z-buffer
                 BakeLightProbes(context, drawContext);

@@ -99,8 +99,8 @@ namespace Stride.Rendering.Voxels.Grid
             /// <summary>The materials wanted this frame, compared against the draws; kept so no list is made per frame.</summary>
             public List<(Material material, int id)> Wanted = [];
 
-            /// <summary>The resolve targets' version the materials were last bound to.</summary>
-            public int TargetsVersion = -1;
+            /// <summary>The parameters of every pass of the wrapped materials, for the resolve to bind its targets to.</summary>
+            public List<ParameterCollection> MaterialParameters = [];
 
             /// <summary>Releases the proxy box's buffers.</summary>
             public void ReleaseBuffers()
@@ -119,6 +119,8 @@ namespace Stride.Rendering.Voxels.Grid
         private IGame game;
         private VoxelGridResolveRenderer resolveRenderer;
         private VoxelGridResolvePass resolvePass;
+        private GraphicsCompositor resolveCompositor;
+        private bool warnedTooManyGrids;
 
         // A grid's index is a byte in the resolve targets; one given back is given out again
         // before a new one is minted, so two live grids never share one.
@@ -133,12 +135,20 @@ namespace Stride.Rendering.Voxels.Grid
             game = Services.GetService<IGame>();
         }
 
+        protected override void OnSystemRemove()
+        {
+            RemoveResolvePass();
+            base.OnSystemRemove();
+        }
+
+        // A grid's index is a byte of the resolve targets: past 256 live grids, a grid gets none and is not drawn
         protected override State GenerateComponentData(Entity entity, VoxelGridComponent component)
-            => new() { GridIndex = freeGridIndices.Count > 0 ? freeGridIndices.Pop() : nextGridIndex++ % 256 };
+            => new() { GridIndex = freeGridIndices.Count > 0 ? freeGridIndices.Pop() : nextGridIndex < 256 ? nextGridIndex++ : -1 };
 
         protected override void OnEntityComponentRemoved(Entity entity, VoxelGridComponent component, State state)
         {
-            freeGridIndices.Push(state.GridIndex);
+            if (state.GridIndex >= 0)
+                freeGridIndices.Push(state.GridIndex);
             foreach (var draw in state.Materials)
                 Detach(entity, draw);
             state.Materials.Clear();
@@ -173,7 +183,13 @@ namespace Stride.Rendering.Voxels.Grid
                 var component = pair.Key;
                 var state = pair.Value;
 
-                var live = component.Enabled && component.Traversal?.Source != null;
+                var samples = component.Traversal?.Source?.SampleCount ?? Int3.Zero;
+                var live = component.Enabled && samples.X >= 2 && samples.Y >= 2 && samples.Z >= 2 && state.GridIndex >= 0;
+                if (state.GridIndex < 0 && !warnedTooManyGrids)
+                {
+                    warnedTooManyGrids = true;
+                    Stride.Core.Diagnostics.GlobalLogger.GetLogger(nameof(VoxelGridProcessor)).Warning("More than 256 voxel grids are live; the ones past 256 are not drawn.");
+                }
                 if (!live)
                 {
                     SetEnabled(state, false);
@@ -189,30 +205,20 @@ namespace Stride.Rendering.Voxels.Grid
                 {
                     state.Shadow.Model.IsShadowCaster = component.CastShadows;
                     state.Shadow.Model.Enabled = component.CastShadows;
+                    state.ShadowSurface.Traversal = component.Traversal;
+                    state.ShadowSurface.MaxDistance = state.Extent.Length();
                     state.ShadowSurface.ApplyParameters(state.Shadow.Wrapped.Passes[0].Parameters);
                 }
 
-                // The resolve targets, bound again when the renderer remade them; the field's
-                // parameters, for the voxelizer's view, where the layer walks the field itself;
-                // and the diagnostic view. Every frame.
-                foreach (var draw in state.Materials)
+                // The field's parameters, for the voxelizer's view, where the layer walks the field itself,
+                // and the diagnostic view. The resolve targets are bound by the resolve, per view.
+                foreach (var parameters in state.MaterialParameters)
                 {
-                    foreach (var pass in draw.Wrapped.Passes)
-                    {
-                        component.Traversal.ApplyParameters(pass.Parameters);
-                        pass.Parameters.Set(VoxelGridFieldKeys.MaxDistance, state.Extent.Length());
-                        pass.Parameters.Set(VoxelGridFieldKeys.Debug, component.DebugView);
-                        pass.Parameters.Set(VoxelGridFieldKeys.Injected, component.InjectIntoGI ? 1f : 0f);
-                        if (renderer != null && state.TargetsVersion != renderer.TargetsVersion)
-                        {
-                            pass.Parameters.Set(VoxelGridFieldKeys.ResolveNormal, renderer.Normal);
-                            pass.Parameters.Set(VoxelGridFieldKeys.ResolveMaterial, renderer.Material);
-                            pass.Parameters.Set(VoxelGridFieldKeys.ResolvePosition, renderer.Position);
-                        }
-                    }
+                    component.Traversal.ApplyParameters(parameters);
+                    parameters.Set(VoxelGridFieldKeys.MaxDistance, state.Extent.Length());
+                    parameters.Set(VoxelGridFieldKeys.Debug, component.DebugView);
+                    parameters.Set(VoxelGridFieldKeys.Injected, component.InjectIntoGI ? 1f : 0f);
                 }
-                if (renderer != null)
-                    state.TargetsVersion = renderer.TargetsVersion;
 
                 component.Entity.Transform.UpdateWorldMatrix();
 
@@ -242,6 +248,7 @@ namespace Stride.Rendering.Voxels.Grid
                         LodBias = component.LevelOfDetail ? component.LodBias : float.NaN,
                         Box = state.Box,
                         BeamBlockSize = component.BeamBlockSize,
+                        MaterialParameters = state.MaterialParameters,
                     });
                 }
             }
@@ -252,12 +259,14 @@ namespace Stride.Rendering.Voxels.Grid
         {
             state.Table ??= new VoxelGridInjectionTable(device);
             IReadOnlyList<Material> materials = component.Materials;
-            if (component.Material != null)
+            // One material for every id: the single material, or the grey drawn when none was given
+            var single = component.Material ?? (component.Materials.Count == 0 ? state.Fallback : null);
+            if (single != null)
             {
-                state.SingleMaterial[0] = component.Material;
+                state.SingleMaterial[0] = single;
                 materials = state.SingleMaterial;
             }
-            state.Table.Refresh(game.GraphicsContext.CommandList, materials);
+            state.Table.Refresh(game.GraphicsContext.CommandList, materials, everyId: single != null);
         }
 
         /// <summary>
@@ -266,10 +275,15 @@ namespace Stride.Rendering.Voxels.Grid
         /// </summary>
         private void EnsureResolveRenderer()
         {
+            var compositor = sceneSystem?.GraphicsCompositor;
+            if (compositor != resolveCompositor)
+            {
+                RemoveResolvePass();
+                resolveCompositor = compositor;
+            }
             if (resolveRenderer != null)
                 return;
 
-            var compositor = sceneSystem?.GraphicsCompositor;
             if (compositor?.Game == null)
                 return;
 
@@ -309,6 +323,38 @@ namespace Stride.Rendering.Voxels.Grid
 
                 default:
                     return null;
+            }
+        }
+
+        /// <summary>Takes the pass this processor inserted back out of the compositor it went into.</summary>
+        private void RemoveResolvePass()
+        {
+            if (resolvePass != null && resolveCompositor?.Game != null)
+                Remove(resolveCompositor.Game, resolvePass);
+            resolvePass?.Dispose();
+            resolvePass = null;
+            resolveRenderer = null;
+        }
+
+        private static bool Remove(ISceneRenderer renderer, ISceneRenderer pass)
+        {
+            switch (renderer)
+            {
+                case SceneCameraRenderer camera:
+                    return Remove(camera.Child, pass);
+
+                case SceneRendererCollection collection:
+                    if (collection.Children.Remove(pass))
+                        return true;
+                    foreach (var child in collection.Children)
+                    {
+                        if (Remove(child, pass))
+                            return true;
+                    }
+                    return false;
+
+                default:
+                    return false;
             }
         }
 
@@ -461,8 +507,10 @@ namespace Stride.Rendering.Voxels.Grid
                 state.Materials.Add(draw);
             }
 
-            // Bound on the next update, whatever version the targets are at.
-            state.TargetsVersion = -1;
+            state.MaterialParameters.Clear();
+            foreach (var draw in state.Materials)
+                foreach (var pass in draw.Wrapped.Passes)
+                    state.MaterialParameters.Add(pass.Parameters);
         }
 
         /// <summary>A material, taken as compiled, with the resolve layer at the front of its pixel stage.</summary>

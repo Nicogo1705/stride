@@ -57,6 +57,9 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The resolve pass's position target: the surface's world position, with its depth in w.</summary>
         public static readonly ObjectParameterKey<Texture> ResolvePosition = ParameterKeys.NewObject<Texture>();
 
+        /// <summary>The view-projection the bound resolve targets were made for; a material drawn in another view draws nothing.</summary>
+        public static readonly ValueParameterKey<Matrix> ResolveViewProjection = ParameterKeys.NewValue<Matrix>();
+
         /// <summary>The material id a wrapped material draws, or -1 for every id of its grid.</summary>
         public static readonly ValueParameterKey<int> MaterialId = ParameterKeys.NewValue<int>();
 

@@ -125,7 +125,7 @@ namespace Stride.Rendering.Voxels.Grid
 
                 if (shell)
                 {
-                    float3 normal = normalize(mul(float4(localNormal, 0), VoxelGridWorld).xyz);
+                    float3 normal = normalize(mul((float3x3)VoxelGridWorldInverse, localNormal));
                     int id = clamp(Traversal.SurfaceMaterialId(localPos, int2(0, 0), 0), 0, 255);
                     float3 radiance = VoxelGridInjectTable[id * 2 + 1].rgb;
                     if (BounceScale > 0)

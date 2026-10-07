@@ -34,7 +34,7 @@ namespace Stride.Rendering.Voxels.Grid
 
         // Per level, min and max interleaved, one pair per brick, x fastest as the texture is laid out.
         private readonly byte[][] levels;
-        private readonly int[] sizes;
+        private readonly Int3[] sizes;
 
         /// <summary>Allocates the pyramid for a field of that many samples; nothing is built until the first update.</summary>
         /// <param name="unorderedAccess">
@@ -46,27 +46,33 @@ namespace Stride.Rendering.Voxels.Grid
         {
             SampleCount = sampleCount;
 
-            // A power of two over the cells, so every level divides cleanly and no brick index ever
+            // A power of two over the cells on each axis, so every level divides cleanly and no brick index ever
             // falls off the end of a mip that rounded down. Cells beyond the grid read as air.
-            var cells = Math.Max(Math.Max(sampleCount.X, sampleCount.Y), sampleCount.Z) - 1;
-            var baseSize = 1;
-            while (baseSize * 2 < cells)
-                baseSize *= 2;
+            var baseSize = new Int3(BaseSize(sampleCount.X), BaseSize(sampleCount.Y), BaseSize(sampleCount.Z));
+            var largest = Math.Max(Math.Max(baseSize.X, baseSize.Y), baseSize.Z);
 
             Levels = 1;
-            for (var size = baseSize; size > 1; size /= 2)
+            for (var size = largest; size > 1; size /= 2)
                 Levels++;
 
-            sizes = new int[Levels];
+            sizes = new Int3[Levels];
             levels = new byte[Levels][];
             for (int level = 0; level < Levels; level++)
             {
-                sizes[level] = Math.Max(1, baseSize >> level);
-                levels[level] = new byte[sizes[level] * sizes[level] * sizes[level] * 2];
+                sizes[level] = new Int3(Math.Max(1, baseSize.X >> level), Math.Max(1, baseSize.Y >> level), Math.Max(1, baseSize.Z >> level));
+                levels[level] = new byte[sizes[level].X * sizes[level].Y * sizes[level].Z * 2];
             }
 
             var flags = unorderedAccess ? TextureFlags.ShaderResource | TextureFlags.UnorderedAccess : TextureFlags.ShaderResource;
-            Texture = Texture.New3D(device, baseSize, baseSize, baseSize, Levels, PixelFormat.R8G8_UNorm, flags, GraphicsResourceUsage.Default);
+            Texture = Texture.New3D(device, baseSize.X, baseSize.Y, baseSize.Z, Levels, PixelFormat.R8G8_UNorm, flags, GraphicsResourceUsage.Default);
+        }
+
+        private static int BaseSize(int samples)
+        {
+            var size = 1;
+            while (size * 2 < samples - 1)
+                size *= 2;
+            return size;
         }
 
         /// <summary>Rebuilds the whole pyramid from the samples.</summary>
@@ -85,7 +91,7 @@ namespace Stride.Rendering.Voxels.Grid
             // A base brick b covers samples 2b to 2b + 2 inclusive, so the bricks a sample range
             // touches run from (min - 2) / 2 rounded up to max / 2.
             var first = Int3.Max((minSample - new Int3(1)) / 2, Int3.Zero);
-            var last = Int3.Min(maxSample / 2, new Int3(sizes[0] - 1));
+            var last = Int3.Min(maxSample / 2, sizes[0] - Int3.One);
 
             for (int bz = first.Z; bz <= last.Z; bz++)
                 for (int by = first.Y; by <= last.Y; by++)
@@ -128,15 +134,15 @@ namespace Stride.Rendering.Voxels.Grid
                                 for (int y = 0; y <= 1; y++)
                                     for (int x = 0; x <= 1; x++)
                                     {
-                                        var cx = Math.Min(bx * 2 + x, childSize - 1);
-                                        var cy = Math.Min(by * 2 + y, childSize - 1);
-                                        var cz = Math.Min(bz * 2 + z, childSize - 1);
-                                        var index = ((cz * childSize + cy) * childSize + cx) * 2;
+                                        var cx = Math.Min(bx * 2 + x, childSize.X - 1);
+                                        var cy = Math.Min(by * 2 + y, childSize.Y - 1);
+                                        var cz = Math.Min(bz * 2 + z, childSize.Z - 1);
+                                        var index = ((cz * childSize.Y + cy) * childSize.X + cx) * 2;
                                         low = Math.Min(low, child[index]);
                                         high = Math.Max(high, child[index + 1]);
                                     }
 
-                            var target = ((bz * sizes[level] + by) * sizes[level] + bx) * 2;
+                            var target = ((bz * sizes[level].Y + by) * sizes[level].X + bx) * 2;
                             levels[level][target] = low;
                             levels[level][target + 1] = high;
                         }
@@ -148,7 +154,7 @@ namespace Stride.Rendering.Voxels.Grid
         private void Write(int level, int bx, int by, int bz, float low, float high)
         {
             // Rounded outwards, so a brick never claims to be emptier than it is.
-            var index = ((bz * sizes[level] + by) * sizes[level] + bx) * 2;
+            var index = ((bz * sizes[level].Y + by) * sizes[level].X + bx) * 2;
             levels[level][index] = (byte)Math.Clamp(MathF.Floor(low * 255f), 0f, 255f);
             levels[level][index + 1] = (byte)Math.Clamp(MathF.Ceiling(high * 255f), 0f, 255f);
         }
@@ -164,7 +170,7 @@ namespace Stride.Rendering.Voxels.Grid
             for (int z = 0; z < extent.Z; z++)
                 for (int y = 0; y < extent.Y; y++)
                 {
-                    var from = (((first.Z + z) * size + first.Y + y) * size + first.X) * 2;
+                    var from = (((first.Z + z) * size.Y + first.Y + y) * size.X + first.X) * 2;
                     var to = (z * extent.Y + y) * rowBytes;
                     System.Buffer.BlockCopy(source, from, box, to, rowBytes);
                 }

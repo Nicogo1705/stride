@@ -8,7 +8,7 @@ document is the pipeline end to end, in the order a frame runs it.
 
 | Type | Role |
 |------|------|
-| `VoxelGridComponent` | The field on an entity: `Source`, `Traversal`, `Extent`, `CellSize`, `IsoLevel`, `Materials` (one per id, up to 256), `Dither`, `CastShadows`, `InjectIntoGI`, `DebugView`. |
+| `VoxelGridComponent` | The field on an entity: `Traversal` (which holds the `Source`, `CellSize`, `IsoLevel` and surface form), `Material` or `Materials` (one per id, up to 256), `Dither`, `CastShadows`, `InjectIntoGI`, `InjectBounce`, `LevelOfDetail`, `LodBias`, `BeamBlockSize`, `DebugView`. |
 | `IVoxelGridSource` (`VoxelGridSourceTexture3D`, `VoxelGridSourcePackedBuffer`) | How samples are read: a C# side that binds the resource, an SDSL side that answers `Density(cell)` and `MaterialId(cell)`. |
 | `IVoxelGridTraversal` / `VoxelGridTraversalDDA` | How the surface is found: `Trace` for a hit with a normal, `Occlude` for a yes/no, `SurfaceMaterialId` for which material is at a point, `SurfaceProbe` and `BrickState` for whoever samples the field on its own grid. |
 | `VoxelGridOccupancy` | The min/max pyramid the walk skips with: an RG8 3D texture with mips, each level a brick of 2^L cells holding the least and greatest density inside. Updated by region when the field is edited. |
@@ -19,17 +19,22 @@ document is the pipeline end to end, in the order a frame runs it.
 
 ## A frame
 
-1. **The processor** (`VoxelGridProcessor.Draw`) makes sure the resolve pass is first in the scene
-   camera renderer, the proxy box and the wrapped materials exist, the occupancy pyramid is up to
-   date, and the material table for the injector is uploaded. It then registers the grid with the
-   resolve renderer and lists it on the visibility group for the injector.
+1. **The processor** (`VoxelGridProcessor.Update`) finds the resolve renderer - the one a
+   `ForwardRendererVoxels` hosts, or a `VoxelGridResolvePass` it puts first in the camera's renderer
+   and takes out again when it stops - makes sure the proxy box and the wrapped materials exist and
+   the injector's material table is uploaded, then registers the grid with the resolve renderer and
+   lists it on the visibility groups for the injector. The occupancy pyramid belongs to whoever owns
+   the samples.
 
-2. **The resolve pass** runs before anything else draws. For each grid, a full-screen pass builds
-   the ray through the pixel from the inverse view-projection (so it is right under any
-   projection), transforms it into the grid's space, and calls `Trace`. A hit writes three
-   targets and depth: the normal with a 1 in w that says "resolved"; the material id and grid
-   index, a byte each; the world position with the depth in w. Several grids resolve against one
-   another through the depth buffer.
+2. **The resolve pass** runs before the opaque pass, after the depth prepass when there is one, so
+   a ray stops at the opaque surface in front of a grid. Each grid draws its proxy box, so only the
+   pixels under it march; the ray through the pixel comes from the inverse view-projection (right
+   under any projection) and is walked in the grid's space with `Trace`. A hit writes three targets
+   and depth: the normal with a 1 in w that says "resolved"; the material id and grid index, a byte
+   each; the world position with the depth in w. Several grids resolve against one another through
+   the depth buffer. Each view size keeps its own targets, bound to the grids' materials when that
+   view is resolved, with the view-projection they were made for; a material drawn in a view that
+   was not resolved finds another view-projection and draws nothing.
 
 3. **The materials** draw. Each id of a grid is one draw of the grid's proxy box with the compiled
    material *wrapped*: a copy of its pass parameters with `MaterialSurfaceVoxelGridResolve` put in
@@ -43,8 +48,8 @@ document is the pipeline end to end, in the order a frame runs it.
    `Dither`) decides, so a boundary reads as a dithered blend rather than a hard edge.
 
 4. **Shadows.** With `CastShadows`, a shadow material is drawn in the shadow-map caster passes: it
-   knows it is in one through the `IsShadowMapCasterPass` stream (see below), traces with
-   `Occlude`, and writes the hit's depth. In any other pass it discards.
+   knows it is in one through the view's `ShadowMapViewFlag` (see below), traces with `Occlude`,
+   and writes the hit's depth. In any other pass it discards.
 
 5. **The GI.** After each voxelization pass has rasterised the scene into a ring, the injector
    runs one thread per GI voxel over the field: `BrickState` skips bricks that are all air or all
@@ -61,8 +66,7 @@ document is the pipeline end to end, in the order a frame runs it.
 
 `VoxelGridTraversalDDA` is a level-descending DDA over the occupancy pyramid: at each step it
 reads the coarsest brick that contains the point, skips the whole brick when its max is below the
-iso level (all air) or, for `Occlude`, stops when its min is above it (all solid), and descends a
-level otherwise, down to single cells.
+iso level (all air), and descends a level otherwise, down to single cells.
 
 In a cell the surface can pass through, the eight corners are loaded once (`CornersNear`,
 `CornersFar`) and everything else is computed from them: the straddle test, four probes along the
@@ -78,27 +82,25 @@ Two surface modes are compile-time (`TSurface`): 0 draws cells as cubes, 1 the s
 surface, 2 surface nets (the facet's own orientation is kept for the normal). `SealBorder` closes
 the field at its edges so a ray never sees the inside of a box.
 
-## The two pass streams
+## Which pass a layer is in
 
 Two questions a material layer has to answer are "which pass am I in": the shadow-map caster
-passes and the voxelization pass. Neither can be answered with a `stage` method overridden from
-the pass's shader - that override is never resolved across a composition, and a `stage bool`
-member is a uniform - so both are `stage stream float`s written in the vertex layer to zero, and
-set to one by the pass:
+passes and the voxelization pass.
 
-- `ShadowMapCasterPassInfo.IsShadowMapCasterPass`, set by `ShadowMapCasterPassMarker`, mixed into
-  the three `ShadowMapCaster*.sdfx` effects (in their dithered and discard branches, the only ones
-  that reach a material's pixel stage).
-- `VoxelizationPassInfo.IsVoxelizationPass` and `VoxelizationSkip`, set in
-  `VoxelizeToFragments.PSMain`; the pass stores a fragment only when the skip is below one half.
+- The shadow-map caster passes are told by `ShadowMapCasterPassInfo.ShadowMapViewFlag`, a per-view
+  constant the material render feature writes for shadow-map views.
+- The voxelization pass by `VoxelizationPassInfo.IsVoxelizationPass` and `VoxelizationSkip`, a
+  `stage stream float` written to zero in the vertex layer and set in `VoxelizeToFragments.PSMain`;
+  the pass stores a fragment only when the skip is below one half.
 
 ## Editing at runtime
 
 The field is edited by writing to its texture (or buffer) and calling
-`VoxelGridOccupancy.Invalidate(region)`: the pyramid is rebuilt for the bricks that region touches,
-level by level, not for the whole field. The GI picks the change up on the ring's next injection.
-A material edited at runtime - a colour, an emissive intensity - reaches the injector's table on
-the next frame; it compares values and uploads only on change.
+`VoxelGridOccupancy.Update(commandList, density, min, max)`: the pyramid is rebuilt for the bricks
+that region touches, level by level, not for the whole field. The GI picks the change up on the
+ring's next injection. A material's colour and emission reach the injector's table on the next
+frame; the drawn materials are copies made when the list changes, so other runtime edits to a
+material show once it is set again.
 
 ## What it costs
 

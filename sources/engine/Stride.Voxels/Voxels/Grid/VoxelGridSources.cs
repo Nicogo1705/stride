@@ -19,20 +19,25 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMemberIgnore]
         public Texture Texture { get; set; }
 
+        private Int3 sampleCount;
+
         /// <summary>Samples per axis, one more than the cells per axis. Taken from the texture when left at zero.</summary>
-        public Int3 SampleCount { get; set; }
+        public Int3 SampleCount
+        {
+            get => sampleCount.X > 0 || Texture == null ? sampleCount : new Int3(Texture.Width, Texture.Height, Texture.Depth);
+            set => sampleCount = value;
+        }
 
         /// <summary>The SDSL side of this source.</summary>
-        public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourceTexture3D");
+        public ShaderSource GetShaderSource() => Shader;
+
+        private static readonly ShaderClassSource Shader = new("VoxelGridSourceTexture3D");
 
         /// <summary>Binds the resource and its layout.</summary>
         public void ApplyParameters(ParameterCollection parameters)
         {
             parameters.Set(VoxelGridFieldKeys.Texture, Texture);
-            var count = SampleCount;
-            if (count.X <= 0 && Texture != null)
-                count = new Int3(Texture.Width, Texture.Height, Texture.Depth);
-            parameters.Set(VoxelGridFieldKeys.SampleCount, count);
+            parameters.Set(VoxelGridFieldKeys.SampleCount, SampleCount);
             parameters.Set(VoxelGridFieldKeys.LodLevels, Texture != null ? Texture.MipLevelCount - 1 : 0);
         }
     }
@@ -54,7 +59,9 @@ namespace Stride.Rendering.Voxels.Grid
         public Int3 SampleCount { get; set; }
 
         /// <summary>The SDSL side of this source.</summary>
-        public ShaderSource GetShaderSource() => new ShaderClassSource("VoxelGridSourcePackedBuffer");
+        public ShaderSource GetShaderSource() => Shader;
+
+        private static readonly ShaderClassSource Shader = new("VoxelGridSourcePackedBuffer");
 
         /// <summary>Binds the resource and its layout.</summary>
         public void ApplyParameters(ParameterCollection parameters)

@@ -27,6 +27,9 @@ namespace Stride.Rendering.Voxels.Grid
             stage Texture2D<float4> VoxelGridResolvePosition;
         }
 
+        // Largest summed difference between two view-projections still taken as the same view
+        static const float SameViewTolerance = 1e-3;
+
         cbuffer PerMaterial
         {
             /// The id this material draws, or -1 to draw every id of its grid.
@@ -49,6 +52,17 @@ namespace Stride.Rendering.Voxels.Grid
             /// has nothing to draw here.
             [Link("VoxelGridField.Injected")]
             stage float VoxelGridInjected;
+
+            /// The view-projection the bound resolve targets were made for.
+            [Link("VoxelGridField.ResolveViewProjection")]
+            stage float4x4 VoxelGridResolveViewProjection;
+        }
+
+        bool IsResolvedView()
+        {
+            float4 difference = abs(VoxelGridResolveViewProjection[0] - ViewProjection[0]) + abs(VoxelGridResolveViewProjection[1] - ViewProjection[1])
+                              + abs(VoxelGridResolveViewProjection[2] - ViewProjection[2]) + abs(VoxelGridResolveViewProjection[3] - ViewProjection[3]);
+            return dot(difference, 1) < SameViewTolerance;
         }
 
         override void Compute()
@@ -58,7 +72,8 @@ namespace Stride.Rendering.Voxels.Grid
             float4 idGrid = VoxelGridResolveMaterial.Load(pixel);
             float4 positionDepth = VoxelGridResolvePosition.Load(pixel);
 
-            bool resolved = normalResolved.w > 0.5;
+            // Targets resolved for another view say nothing about this one
+            bool resolved = normalResolved.w > 0.5 && IsResolvedView();
             int material = (int)round(idGrid.r * 255.0);
             int grid = (int)round(idGrid.g * 255.0);
 
@@ -83,7 +98,7 @@ namespace Stride.Rendering.Voxels.Grid
                 material = walked;
                 grid = VoxelGridIndex;
                 positionDepth = float4(mul(float4(hitLocal, 1), World).xyz, 0);
-                normalResolved = float4(normalize(mul(float4(hitNormal, 0), World).xyz), found ? 1 : 0);
+                normalResolved = float4(normalize(mul((float3x3)WorldInverse, hitNormal)), found ? 1 : 0);
                 float4 hitClip = mul(float4(positionDepth.xyz, 1), ViewProjection);
                 positionDepth.w = hitClip.z / hitClip.w;
             }
