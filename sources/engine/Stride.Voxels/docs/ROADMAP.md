@@ -99,6 +99,26 @@ The consequences for a voxel game are the point of the exercise:
 A Bepu collidable that reads the same voxel array and generates contacts on the fly,
 replacing the mesh collider built from a GPU readback.
 
+### 5. Assets and authoring (next)
+
+Physics and rendering both read a field, but nothing in the editor produces one yet: today
+every grid is filled from code. Eideren's heightfield PR (stride3d/stride#3512, draft, 4.5)
+is the 2.5D counterpart of this library and ships the asset side we lack, so line up with it.
+
+- **`VoxelGridAsset` importing MagicaVoxel `.vox`.** The de facto voxel format (open RIFF
+  chunks, models up to 256^3, scenes of several models), readable in a few hundred lines
+  with no dependency. Its 256-entry palette maps one to one onto the grid's 256 material
+  ids. OpenVDB / NanoVDB is the industry standard for density and SDF volumes, but there is
+  no mature .NET reader; keep it for later.
+- **Heightfield generators as a field source.** #3512's layered height functions and
+  Runevision erosion can fill a density field (`density = clamp(height(x, z) - y)`, as the
+  demo's `Hills()` does), giving an eroded terrain that can then be dug in 3D.
+- **One registration scheme for custom Bepu shapes.** #3512 hardcodes
+  `HeightfieldShape.TypeId => 32` and registers its collision tasks in `BepuSimulation`'s
+  constructor; `VoxelCollider` (#3471) assigns ids and registers tasks per simulation on first
+  attach. Agree on a shared mechanism (id allocation + task registration) before both land,
+  or they will collide.
+
 ## Stride.RT
 
 A separate package, later. Hardware ray tracing is D3D12/Vulkan only, so it can never
