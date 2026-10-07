@@ -6,7 +6,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// Mixed in at the front of a material's pixel stage, it replaces the proxy box's surface with the one
     /// the resolve pass found for the pixel and discards pixels that belong to another material or grid.
     /// The rest of the material (diffuse, normal map on the tangent frame built here, emission, lighting) runs unchanged.
-    shader MaterialSurfaceVoxelGridResolve : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, VoxelizationPassInfo
+    shader MaterialSurfaceVoxelGridResolve : IMaterialSurfacePixel, Transformation, PositionStream4, NormalStream, ShaderBaseStream, MaterialPixelStream, IVoxelGridTraversal, VoxelizationPassInfo, VoxelGridLayerPacking
     {
         // The traversal and its source are mixed in beside this, not composed, so the field's
         // resource is declared once: the voxelizer's view has nothing resolved for it, and there
@@ -87,6 +87,7 @@ namespace Stride.Rendering.Voxels.Grid
             int material = (int)round(idGrid.r * 255.0);
             int grid = (int)round(idGrid.g * 255.0);
 
+            streams.VoxelGridThickness = 0;
             if (VoxelGridLayer >= 0)
             {
                 float4 layerNormal = VoxelGridResolveLayerNormal.Load(pixel);
@@ -94,7 +95,8 @@ namespace Stride.Rendering.Voxels.Grid
                 resolved = code >= 0 && IsResolvedView();
                 material = code & 255;
                 grid = code >> 8;
-                normalResolved = float4(layerNormal.xyz, 1);
+                normalResolved = float4(DecodeLayerNormal(layerNormal.xy), 1);
+                streams.VoxelGridThickness = layerNormal.z;
                 positionDepth = VoxelGridResolveLayerPosition.Load(pixel);
             }
 

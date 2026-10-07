@@ -1,0 +1,26 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// Turns a see-through material's opacity into one that grows with the thickness of matter behind the layer:
+    /// the material's alpha is the opacity of VoxelGridOpacityDistance world units of it.
+    /// Put before the material's lighting, after the stream that sets its alpha.
+    shader MaterialSurfaceVoxelGridAbsorption : IMaterialSurfacePixel, MaterialPixelStream, VoxelGridLayerPacking
+    {
+        cbuffer PerMaterial
+        {
+            /// The thickness the material's alpha is the opacity of; 0 keeps the alpha as it is.
+            [Link("VoxelGridField.OpacityDistance")]
+            stage float VoxelGridOpacityDistance;
+        }
+
+        override void Compute()
+        {
+            if (VoxelGridOpacityDistance > 0 && streams.VoxelGridThickness > 0)
+            {
+                float alpha = saturate(streams.matDiffuseSpecularAlphaBlend.r);
+                streams.matDiffuseSpecularAlphaBlend.r = 1.0 - pow(1.0 - alpha, streams.VoxelGridThickness / VoxelGridOpacityDistance);
+            }
+        }
+    };
+}

@@ -226,6 +226,7 @@ namespace Stride.Rendering.Voxels.Grid
                     parameters.Set(VoxelGridFieldKeys.MaxDistance, state.Extent.Length());
                     parameters.Set(VoxelGridFieldKeys.Debug, component.DebugView);
                     parameters.Set(VoxelGridFieldKeys.Injected, component.InjectIntoGI ? 1f : 0f);
+                    parameters.Set(VoxelGridFieldKeys.OpacityDistance, component.OpacityByDistance ? Math.Max(component.OpacityDistance, 0.01f) : 0f);
                 }
 
                 component.Entity.Transform.UpdateWorldMatrix();
@@ -595,8 +596,13 @@ namespace Stride.Rendering.Voxels.Grid
                 var original = parameters.Get(MaterialKeys.PixelStageSurfaceShaders);
                 if (original is ShaderMixinSource mixin && mixin.Compositions.TryGetValue("layers", out var array) && array is ShaderArraySource arraySource)
                 {
+                    // The absorption goes after the stream that sets the alpha and before the lighting that uses it
                     foreach (var layer in arraySource.Values)
+                    {
+                        if (layer is ShaderMixinSource layerMixin && layerMixin.Mixins.Count > 0 && layerMixin.Mixins[0].ClassName == "MaterialSurfaceLightingAndShading")
+                            layers.AddCompositionToArray("layers", new ShaderClassSource("MaterialSurfaceVoxelGridAbsorption"));
                         layers.AddCompositionToArray("layers", layer);
+                    }
                 }
                 else if (original != null)
                 {

@@ -102,6 +102,17 @@ namespace Stride.Rendering.Voxels.Grid
         [DataMember(24)]
         public bool CastShadows { get; set; } = true;
 
+        /// <summary>Whether a see-through material grows more opaque with the thickness of it a ray crosses.</summary>
+        /// <userdoc>Whether see-through materials get more opaque the more of them is looked through: shallow water shows its bottom, deep water does not.</userdoc>
+        [DataMember(25)]
+        public bool OpacityByDistance { get; set; }
+
+        /// <summary>The thickness, in world units, a see-through material's alpha is the opacity of, when <see cref="OpacityByDistance"/> is on.</summary>
+        /// <userdoc>How thick a see-through material is when it is as opaque as its alpha says.</userdoc>
+        [DataMember(26)]
+        [DataMemberRange(0.01, 3)]
+        public float OpacityDistance { get; set; } = 1f;
+
         /// <summary>See <see cref="VoxelGridFieldKeys.Debug"/>.</summary>
         [DataMemberIgnore]
         public float DebugView { get; set; }

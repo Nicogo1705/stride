@@ -63,6 +63,9 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>A see-through layer's world position, with its depth in w.</summary>
         public static readonly ObjectParameterKey<Texture> ResolveLayerPosition = ParameterKeys.NewObject<Texture>();
 
+        /// <summary>The thickness a see-through material's alpha is the opacity of, in world units; 0 keeps the alpha whatever the thickness.</summary>
+        public static readonly ValueParameterKey<float> OpacityDistance = ParameterKeys.NewValue<float>();
+
         /// <summary>Which surface a material draw shades: -1 the opaque one, 0 the nearest see-through layer, 1 the next.</summary>
         public static readonly ValueParameterKey<int> Layer = ParameterKeys.NewValue<int>();
 

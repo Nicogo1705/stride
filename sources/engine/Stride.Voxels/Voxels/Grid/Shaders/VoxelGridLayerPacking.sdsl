@@ -1,0 +1,28 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Voxels.Grid
+{
+    /// A see-through layer as the resolve writes it and the materials read it: the normal folded onto an
+    /// octahedron in xy, the thickness of matter the ray crossed in z, the id and grid in w.
+    shader VoxelGridLayerPacking
+    {
+        /// The thickness of matter behind the layer being shaded, in world units; 0 for an opaque surface.
+        stage stream float VoxelGridThickness;
+
+        float2 EncodeLayerNormal(float3 n)
+        {
+            n /= abs(n.x) + abs(n.y) + abs(n.z);
+            float2 folded = (1.0 - abs(n.yx)) * float2(n.x >= 0 ? 1.0 : -1.0, n.y >= 0 ? 1.0 : -1.0);
+            return n.z >= 0 ? n.xy : folded;
+        }
+
+        float3 DecodeLayerNormal(float2 f)
+        {
+            float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+            float t = saturate(-n.z);
+            n.x += n.x >= 0 ? -t : t;
+            n.y += n.y >= 0 ? -t : t;
+            return normalize(n);
+        }
+    };
+}

@@ -6,7 +6,7 @@ namespace Stride.Rendering.Voxels.Grid
     /// A field is drawn by one draw per material; walking once here and letting each draw read the answer keeps the
     /// material count from multiplying the cost of the walk. Depth is written too, so several grids resolve against one another.
     /// Drawn as the grid's proxy box, so only the pixels under its footprint march; the ray comes from the pixel, not the box.
-    shader VoxelGridResolveShader : ShaderBase, PositionStream4, VoxelGridRay, VoxelGridDither, VoxelGridLodStream
+    shader VoxelGridResolveShader : ShaderBase, PositionStream4, VoxelGridRay, VoxelGridDither, VoxelGridLodStream, VoxelGridLayerPacking
     {
         compose IVoxelGridTraversal Traversal;
 
@@ -56,12 +56,13 @@ namespace Stride.Rendering.Voxels.Grid
             return Traversal.SurfaceMaterialId(localPosition - localNormal * (0.05 * Traversal.CellSizeAtLod()), pixel, VoxelGridDither);
         }
 
-        /// A layer as the materials read it: world normal and the id and grid packed in w (0 is no layer); world position and depth.
-        void PackLayer(float3 localPosition, float3 localNormal, int material, out float4 normalId, out float4 positionDepth)
+        /// A layer as the materials read it (see VoxelGridLayerPacking), and its world position and depth.
+        void PackLayer(float3 localPosition, float3 localNormal, int material, float thickness, out float4 normalId, out float4 positionDepth)
         {
             float3 worldPosition = mul(float4(localPosition, 1), VoxelGridWorld).xyz;
             float4 clip = mul(float4(worldPosition, 1), VoxelGridViewProjection);
-            normalId = float4(normalize(mul((float3x3)VoxelGridWorldInverse, localNormal)), 1 + material + 256 * VoxelGridIndex);
+            float3 worldNormal = normalize(mul((float3x3)VoxelGridWorldInverse, localNormal));
+            normalId = float4(EncodeLayerNormal(worldNormal), thickness, 1 + material + 256 * VoxelGridIndex);
             positionDepth = float4(worldPosition, clip.z / clip.w);
         }
 
@@ -183,12 +184,15 @@ namespace Stride.Rendering.Voxels.Grid
 
             // A see-through surface is kept as a layer and the ray goes on: through the matter, to where it leaves into air
             // or meets another material, and on to the next surface, until an opaque one or the layers run out.
+            // Each layer carries the thickness of matter the ray crossed behind it, for opacity that grows with it.
             float4 layerNormal0 = 0, layerPosition0 = 0, layerNormal1 = 0, layerPosition1 = 0;
             int layerCount = 0;
             bool opaque = true;
             bool walking = IsTransparent(material);
             float step = TransparentStepCells * Traversal.CellSizeAtLod();
-            // A camera inside see-through matter, under water, is not behind a layer of it: the entry hit is skipped
+            float worldPerLocal = length(mul(float4(localDirection, 0), VoxelGridWorld).xyz);
+            // A camera inside see-through matter, under water, is not behind a layer of it: its layer is put where the
+            // ray leaves that matter, into air or onto the bottom, with all the matter between as its thickness
             bool fromInside = walking && hitDistance <= step && Traversal.IsSolid(localOrigin + localDirection * (step * 0.25));
             for (int surface = 0; surface <= MaxTransparentLayers; surface++)
             {
@@ -200,14 +204,9 @@ namespace Stride.Rendering.Voxels.Grid
                     }
                     else
                     {
-                        float4 normalId, positionDepth;
-                        PackLayer(localOrigin + localDirection * hitDistance, localNormal, material, normalId, positionDepth);
-                        bool keep = !(fromInside && surface == 0);
-                        layerNormal0 = keep && layerCount == 0 ? normalId : layerNormal0;
-                        layerPosition0 = keep && layerCount == 0 ? positionDepth : layerPosition0;
-                        layerNormal1 = keep && layerCount == 1 ? normalId : layerNormal1;
-                        layerPosition1 = keep && layerCount == 1 ? positionDepth : layerPosition1;
-                        layerCount += keep ? 1 : 0;
+                        float entry = hitDistance;
+                        float3 entryNormal = localNormal;
+                        int entryMaterial = material;
 
                         float t = hitDistance + step * 0.5;
                         bool inside = true;
@@ -219,6 +218,18 @@ namespace Stride.Rendering.Voxels.Grid
                             next = inside ? Traversal.SurfaceMaterialId(p, pixel, 0) : material;
                             t += inside && next == material ? step : 0;
                         }
+                        bool spanEnded = (inside && next != material) || t < reach;
+
+                        bool atEnd = fromInside && surface == 0;
+                        float4 normalId, positionDepth;
+                        PackLayer(localOrigin + localDirection * (atEnd ? t - step * 0.5 : entry), atEnd ? -localDirection : entryNormal, entryMaterial,
+                                  (t - (atEnd ? 0.0 : entry)) * worldPerLocal, normalId, positionDepth);
+                        bool keep = !atEnd || spanEnded;
+                        layerNormal0 = keep && layerCount == 0 ? normalId : layerNormal0;
+                        layerPosition0 = keep && layerCount == 0 ? positionDepth : layerPosition0;
+                        layerNormal1 = keep && layerCount == 1 ? normalId : layerNormal1;
+                        layerPosition1 = keep && layerCount == 1 ? positionDepth : layerPosition1;
+                        layerCount += keep ? 1 : 0;
 
                         if (inside && next != material)
                         {
@@ -234,16 +245,6 @@ namespace Stride.Rendering.Voxels.Grid
                             float nextDistance;
                             float3 nextNormal;
                             float3 from = localOrigin + localDirection * t;
-
-                            // Seen from inside, the way out is the surface: the water's, from under it
-                            if (fromInside && surface == 0)
-                            {
-                                float4 exitNormal, exitPosition;
-                                PackLayer(from, -localDirection, material, exitNormal, exitPosition);
-                                layerNormal0 = exitNormal;
-                                layerPosition0 = exitPosition;
-                                layerCount = 1;
-                            }
                             bool more = Traversal.Trace(from, localDirection, reach - t, nextDistance, nextNormal);
                             hitDistance = t + nextDistance;
                             localNormal = nextNormal;
