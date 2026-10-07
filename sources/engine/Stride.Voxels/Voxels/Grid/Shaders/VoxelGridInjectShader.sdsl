@@ -158,7 +158,8 @@ namespace Stride.Rendering.Voxels.Grid
                     uint unused;
                     for (int direction = 0; direction < DirectionCount; direction++)
                     {
-                        float weight = weights[direction];
+                        // A see-through material, 0 in the table's w, lets the light through
+                        float weight = weights[direction] * VoxelGridInjectTable[id * 2].w;
                         InterlockedMax(VoxelFragments[address + (uint)(direction * 2)], Float3ToR11G11B10(radiance * weight), unused);
                         InterlockedMax(VoxelFragments[address + (uint)(direction * 2 + 1)], FloatToHalfFloat(weight), unused);
                     }

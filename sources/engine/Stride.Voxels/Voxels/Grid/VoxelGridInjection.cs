@@ -63,7 +63,11 @@ namespace Stride.Rendering.Voxels.Grid
                 var emissive = parameters != null && parameters.ContainsKey(MaterialKeys.EmissiveValue) ? parameters.Get(MaterialKeys.EmissiveValue) : new Color4(0, 0, 0, 0);
                 var intensity = parameters != null && parameters.ContainsKey(MaterialKeys.EmissiveIntensity) ? parameters.Get(MaterialKeys.EmissiveIntensity) : 0f;
 
-                scratch[id * 2] = new Vector4(colour.R, colour.G, colour.B, 1);
+                var seeThrough = false;
+                if (materials[id] != null)
+                    foreach (var pass in materials[id].Passes)
+                        seeThrough |= pass.HasTransparency;
+                scratch[id * 2] = new Vector4(colour.R, colour.G, colour.B, seeThrough ? 0 : 1);
                 scratch[id * 2 + 1] = new Vector4(emissive.R * intensity, emissive.G * intensity, emissive.B * intensity, 1);
             }
             if (everyId && materials.Count > 0)

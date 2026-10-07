@@ -40,6 +40,8 @@ namespace Stride.Rendering.Voxels.Grid
             public Entity Carrier;
             /// <summary>The proxy-box model, one mesh, the wrapped material.</summary>
             public ModelComponent Model;
+            /// <summary>The surface this draw shades: -1 the opaque one, 0 and up a see-through layer.</summary>
+            public int Layer = -1;
         }
 
         /// <summary>What the processor keeps per component.</summary>
@@ -97,10 +99,16 @@ namespace Stride.Rendering.Voxels.Grid
             public Material[] SingleMaterial = new Material[1];
 
             /// <summary>The materials wanted this frame, compared against the draws; kept so no list is made per frame.</summary>
-            public List<(Material material, int id)> Wanted = [];
+            public List<(Material material, int id, int layer)> Wanted = [];
+
+            /// <summary>The materials of the list, before see-through ones are spread over their layers; kept so no list is made per frame.</summary>
+            public List<(Material material, int id)> Requested = [];
+
+            /// <summary>The ids drawn see-through, a bit per id, for the resolve.</summary>
+            public Int4 Transparent0, Transparent1;
 
             /// <summary>The parameters of every pass of the wrapped materials, for the resolve to bind its targets to.</summary>
-            public List<ParameterCollection> MaterialParameters = [];
+            public List<(ParameterCollection Parameters, int Layer)> MaterialParameters = [];
 
             /// <summary>Releases the proxy box's buffers.</summary>
             public void ReleaseBuffers()
@@ -212,7 +220,7 @@ namespace Stride.Rendering.Voxels.Grid
 
                 // The field's parameters, for the voxelizer's view, where the layer walks the field itself,
                 // and the diagnostic view. The resolve targets are bound by the resolve, per view.
-                foreach (var parameters in state.MaterialParameters)
+                foreach (var (parameters, _) in state.MaterialParameters)
                 {
                     component.Traversal.ApplyParameters(parameters);
                     parameters.Set(VoxelGridFieldKeys.MaxDistance, state.Extent.Length());
@@ -249,6 +257,8 @@ namespace Stride.Rendering.Voxels.Grid
                         Box = state.Box,
                         BeamBlockSize = component.BeamBlockSize,
                         MaterialParameters = state.MaterialParameters,
+                        Transparent0 = state.Transparent0,
+                        Transparent1 = state.Transparent1,
                     });
                 }
             }
@@ -457,17 +467,17 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>One model per material, rebuilt when the list changes. A single <see cref="VoxelGridComponent.Material"/> draws every id; an empty list draws every id in grey.</summary>
         private static void EnsureMaterials(GraphicsDevice device, VoxelGridComponent component, State state)
         {
-            var wanted = state.Wanted;
-            wanted.Clear();
+            var requested = state.Requested;
+            requested.Clear();
             if (component.Material != null)
             {
-                wanted.Add((component.Material, -1));
+                requested.Add((component.Material, -1));
             }
             else if (component.Materials.Count > 0)
             {
                 for (int id = 0; id < component.Materials.Count && id < 256; id++)
                     if (component.Materials[id] != null)
-                        wanted.Add((component.Materials[id], id));
+                        requested.Add((component.Materials[id], id));
             }
             else
             {
@@ -482,15 +492,32 @@ namespace Stride.Rendering.Voxels.Grid
                         SpecularModel = new MaterialSpecularMicrofacetModelFeature { Environment = new MaterialSpecularMicrofacetEnvironmentGGXPolynomial() },
                     },
                 });
-                wanted.Add((state.Fallback, -1));
+                requested.Add((state.Fallback, -1));
             }
+
+            // A see-through material draws once per layer, and once more for a surface past the last layer. Its draws are made
+            // farthest first: they sort by distance, which is the same box for all of them, and ties keep the order they were made in.
+            var wanted = state.Wanted;
+            wanted.Clear();
+            state.Transparent0 = state.Transparent1 = Int4.Zero;
+            foreach (var (material, id) in requested)
+            {
+                if (!IsTransparent(material))
+                    wanted.Add((material, id, -1));
+                else
+                    MarkTransparent(state, id);
+            }
+            foreach (var layer in TransparentDrawOrder)
+                foreach (var (material, id) in requested)
+                    if (IsTransparent(material))
+                        wanted.Add((material, id, layer));
 
             // Rebuilt when the list changes, and when the traversal's shader does: the layer mixes
             // the traversal in for the voxelizer's view.
             var shader = component.Traversal.GetShaderSource();
             var same = wanted.Count == state.Materials.Count && Equals(state.MaterialsShader, shader);
             for (int i = 0; same && i < wanted.Count; i++)
-                same = ReferenceEquals(state.Materials[i].Source, wanted[i].material);
+                same = ReferenceEquals(state.Materials[i].Source, wanted[i].material) && state.Materials[i].Layer == wanted[i].layer;
             if (same)
                 return;
             state.MaterialsShader = shader;
@@ -499,10 +526,11 @@ namespace Stride.Rendering.Voxels.Grid
                 Detach(component.Entity, draw);
             state.Materials.Clear();
 
-            foreach (var (material, id) in wanted)
+            foreach (var (material, id, layer) in wanted)
             {
-                var wrapped = Wrap(material, id, state.GridIndex, shader);
+                var wrapped = Wrap(material, id, state.GridIndex, shader, layer);
                 var draw = Attach(component.Entity, $"VoxelGridMaterial{id}", state, material, wrapped);
+                draw.Layer = layer;
                 draw.Model.IsShadowCaster = false;
                 state.Materials.Add(draw);
             }
@@ -510,12 +538,42 @@ namespace Stride.Rendering.Voxels.Grid
             state.MaterialParameters.Clear();
             foreach (var draw in state.Materials)
                 foreach (var pass in draw.Wrapped.Passes)
-                    state.MaterialParameters.Add(pass.Parameters);
+                    state.MaterialParameters.Add((pass.Parameters, draw.Layer));
+        }
+
+        // The layers a see-through material draws, farthest first: past the last layer, then the layers from the back
+        private static readonly int[] TransparentDrawOrder = [-1, 1, 0];
+
+        private static bool IsTransparent(Material material)
+        {
+            foreach (var pass in material.Passes)
+                if (pass.HasTransparency)
+                    return true;
+            return false;
+        }
+
+        /// <summary>Sets the id's bit in the resolve's see-through mask; -1, a material for every id, sets them all.</summary>
+        private static void MarkTransparent(State state, int id)
+        {
+            if (id < 0)
+            {
+                state.Transparent0 = state.Transparent1 = new Int4(-1);
+                return;
+            }
+            var bit = 1 << (id & 31);
+            ref var words = ref id < 128 ? ref state.Transparent0 : ref state.Transparent1;
+            switch ((id >> 5) & 3)
+            {
+                case 0: words.X |= bit; break;
+                case 1: words.Y |= bit; break;
+                case 2: words.Z |= bit; break;
+                default: words.W |= bit; break;
+            }
         }
 
         /// <summary>A material, taken as compiled, with the resolve layer at the front of its pixel stage.</summary>
         /// <remarks>The parameters are copied, so the user's material is untouched and each wrapped copy carries its own id.</remarks>
-        private static Material Wrap(Material source, int id, int gridIndex, ShaderSource traversal)
+        private static Material Wrap(Material source, int id, int gridIndex, ShaderSource traversal, int surface)
         {
             var wrapped = new Material();
             foreach (var sourcePass in source.Passes)
@@ -567,6 +625,7 @@ namespace Stride.Rendering.Voxels.Grid
                 parameters.Set(MaterialKeys.UsePixelShaderWithDepthPass, true);
                 parameters.Set(VoxelGridFieldKeys.MaterialId, id);
                 parameters.Set(VoxelGridFieldKeys.GridIndex, gridIndex);
+                parameters.Set(VoxelGridFieldKeys.Layer, surface);
 
                 wrapped.Passes.Add(new MaterialPass(parameters)
                 {

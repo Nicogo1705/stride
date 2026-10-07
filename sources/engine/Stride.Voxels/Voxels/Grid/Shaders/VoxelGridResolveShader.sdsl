@@ -32,6 +32,39 @@ namespace Stride.Rendering.Voxels.Grid
         /// Which grid this is, so a material of one grid does not claim a pixel of another.
         int VoxelGridIndex;
 
+        /// The ids drawn see-through, a bit per id: ids 0-127 in the first, 128-255 in the second.
+        int4 VoxelGridTransparent0;
+        int4 VoxelGridTransparent1;
+
+        // See-through surfaces kept in front of the opaque one; a further one is drawn as opaque
+        static const int MaxTransparentLayers = 2;
+        // Cells per step when walking through see-through matter, and the most steps one span may take
+        static const float TransparentStepCells = 0.25;
+        static const int MaxTransparentSteps = 256;
+
+        bool IsTransparent(int id)
+        {
+            int word = clamp(id, 0, 255) >> 5;
+            int4 words = word < 4 ? VoxelGridTransparent0 : VoxelGridTransparent1;
+            uint bits = asuint(words[word & 3]);
+            return ((bits >> (uint)(id & 31)) & 1u) != 0;
+        }
+
+        /// The material just inside a surface: a hit on a cell face lands in either cell by rounding.
+        int MaterialInside(float3 localPosition, float3 localNormal, int2 pixel)
+        {
+            return Traversal.SurfaceMaterialId(localPosition - localNormal * (0.05 * Traversal.CellSizeAtLod()), pixel, VoxelGridDither);
+        }
+
+        /// A layer as the materials read it: world normal and the id and grid packed in w (0 is no layer); world position and depth.
+        void PackLayer(float3 localPosition, float3 localNormal, int material, out float4 normalId, out float4 positionDepth)
+        {
+            float3 worldPosition = mul(float4(localPosition, 1), VoxelGridWorld).xyz;
+            float4 clip = mul(float4(worldPosition, 1), VoxelGridViewProjection);
+            normalId = float4(normalize(mul((float3x3)VoxelGridWorldInverse, localNormal)), 1 + material + 256 * VoxelGridIndex);
+            positionDepth = float4(worldPosition, clip.z / clip.w);
+        }
+
         /// Level of detail: how many grid units a pixel covers per unit of distance along the ray,
         /// and a bias in levels (positive is coarser). Zero units turns it off.
         float VoxelGridLodPixel;
@@ -146,24 +179,92 @@ namespace Stride.Rendering.Voxels.Grid
                 discard;
             }
 
+            int material = MaterialInside(localOrigin + localDirection * hitDistance, localNormal, pixel);
+
+            // A see-through surface is kept as a layer and the ray goes on: through the matter, to where it leaves into air
+            // or meets another material, and on to the next surface, until an opaque one or the layers run out.
+            float4 layerNormal0 = 0, layerPosition0 = 0, layerNormal1 = 0, layerPosition1 = 0;
+            int layerCount = 0;
+            bool opaque = true;
+            bool walking = IsTransparent(material);
+            float step = TransparentStepCells * Traversal.CellSizeAtLod();
+            for (int surface = 0; surface <= MaxTransparentLayers; surface++)
+            {
+                if (walking)
+                {
+                    if (layerCount == MaxTransparentLayers)
+                    {
+                        walking = false;
+                    }
+                    else
+                    {
+                        float4 normalId, positionDepth;
+                        PackLayer(localOrigin + localDirection * hitDistance, localNormal, material, normalId, positionDepth);
+                        layerNormal0 = layerCount == 0 ? normalId : layerNormal0;
+                        layerPosition0 = layerCount == 0 ? positionDepth : layerPosition0;
+                        layerNormal1 = layerCount == 1 ? normalId : layerNormal1;
+                        layerPosition1 = layerCount == 1 ? positionDepth : layerPosition1;
+                        layerCount++;
+
+                        float t = hitDistance + step * 0.5;
+                        bool inside = true;
+                        int next = material;
+                        for (int i = 0; i < MaxTransparentSteps && inside && next == material; i++)
+                        {
+                            float3 p = localOrigin + localDirection * t;
+                            inside = t < reach && Traversal.IsSolid(p);
+                            next = inside ? Traversal.SurfaceMaterialId(p, pixel, 0) : material;
+                            t += inside && next == material ? step : 0;
+                        }
+
+                        if (inside && next != material)
+                        {
+                            // Another material inside the matter: its face looks back along the ray
+                            hitDistance = t;
+                            localNormal = -localDirection;
+                            material = next;
+                            walking = IsTransparent(material);
+                        }
+                        else if (t < reach)
+                        {
+                            // Out into air: on to the next surface
+                            float nextDistance;
+                            float3 nextNormal;
+                            float3 from = localOrigin + localDirection * t;
+                            bool more = Traversal.Trace(from, localDirection, reach - t, nextDistance, nextNormal);
+                            hitDistance = t + nextDistance;
+                            localNormal = nextNormal;
+                            material = more ? MaterialInside(localOrigin + localDirection * hitDistance, localNormal, pixel) : material;
+                            walking = more && IsTransparent(material);
+                            opaque = more;
+                        }
+                        else
+                        {
+                            walking = false;
+                            opaque = false;
+                        }
+                    }
+                }
+            }
+
             float3 localPosition = localOrigin + localDirection * hitDistance;
             float3 worldPosition = mul(float4(localPosition, 1), VoxelGridWorld).xyz;
             float3 worldNormal = normalize(mul((float3x3)VoxelGridWorldInverse, localNormal));
 
             float4 hitClip = mul(float4(worldPosition, 1), VoxelGridViewProjection);
             float depth = hitClip.z / hitClip.w;
-            streams.Depth = depth;
+            // Seen only through glass, the grid still owns the pixel at the nearest layer
+            streams.Depth = opaque ? depth : layerPosition0.w;
 
-            // Read the material a little inside the surface: a hit on a cell face lands in either
-            // cell by rounding, and the one in front of a cube is air or a water ramp.
-            float3 materialPosition = localPosition - localNormal * (0.05 * Traversal.CellSizeAtLod());
-            int material = Traversal.SurfaceMaterialId(materialPosition, pixel, VoxelGridDither);
-
-            // Three targets: the normal with a 1 in w that says "resolved"; the material id and
-            // the grid index, a byte each; the world position with the depth in w.
-            streams.ColorTarget1 = float4(material / 255.0, VoxelGridIndex / 255.0, 0, 1);
-            streams.ColorTarget2 = float4(worldPosition, depth);
-            return float4(worldNormal, 1);
+            // The opaque surface: the normal with a 1 in w that says "resolved"; the material id and the grid index, a byte each;
+            // the world position with the depth in w. Then two see-through layers, nearest first.
+            streams.ColorTarget1 = opaque ? float4(material / 255.0, VoxelGridIndex / 255.0, 0, 1) : float4(0, 0, 0, 0);
+            streams.ColorTarget2 = opaque ? float4(worldPosition, depth) : float4(0, 0, 0, 0);
+            streams.ColorTarget3 = layerNormal0;
+            streams.ColorTarget4 = layerPosition0;
+            streams.ColorTarget5 = layerNormal1;
+            streams.ColorTarget6 = layerPosition1;
+            return opaque ? float4(worldNormal, 1) : float4(0, 0, 0, 0);
         }
     };
 }

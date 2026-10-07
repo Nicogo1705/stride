@@ -57,6 +57,15 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The resolve pass's position target: the surface's world position, with its depth in w.</summary>
         public static readonly ObjectParameterKey<Texture> ResolvePosition = ParameterKeys.NewObject<Texture>();
 
+        /// <summary>A see-through layer's normal, with the id and grid packed in w; bound to each draw for the layer it draws.</summary>
+        public static readonly ObjectParameterKey<Texture> ResolveLayerNormal = ParameterKeys.NewObject<Texture>();
+
+        /// <summary>A see-through layer's world position, with its depth in w.</summary>
+        public static readonly ObjectParameterKey<Texture> ResolveLayerPosition = ParameterKeys.NewObject<Texture>();
+
+        /// <summary>Which surface a material draw shades: -1 the opaque one, 0 the nearest see-through layer, 1 the next.</summary>
+        public static readonly ValueParameterKey<int> Layer = ParameterKeys.NewValue<int>();
+
         /// <summary>The view-projection the bound resolve targets were made for; a material drawn in another view draws nothing.</summary>
         public static readonly ValueParameterKey<Matrix> ResolveViewProjection = ParameterKeys.NewValue<Matrix>();
 

@@ -29,8 +29,12 @@ namespace Stride.Rendering.Voxels.Grid
         public MeshDraw Box;
         /// <summary>Pixels along a side of the block one beam ray walks ahead of the resolve; 0 walks every pixel from the box.</summary>
         public int BeamBlockSize;
-        /// <summary>The parameters of every pass of the grid's materials, which read the targets of the view being drawn.</summary>
-        public IReadOnlyList<ParameterCollection> MaterialParameters;
+        /// <summary>The parameters of every pass of the grid's materials, with the layer each draws: -1 the opaque surface, 0 and up the see-through layers.</summary>
+        public IReadOnlyList<(ParameterCollection Parameters, int Layer)> MaterialParameters;
+        /// <summary>The ids drawn see-through, a bit per id: ids 0-127.</summary>
+        public Int4 Transparent0;
+        /// <summary>The ids drawn see-through, a bit per id: ids 128-255.</summary>
+        public Int4 Transparent1;
     }
 
     /// <summary>
@@ -58,6 +62,8 @@ namespace Stride.Rendering.Voxels.Grid
         private sealed class Targets
         {
             public Texture Normal, Material, Position, Depth;
+            // The see-through layers, nearest first: normal with the id and grid in w, and position with depth in w
+            public Texture[] LayerNormal, LayerPosition;
             public long LastFrame;
 
             public void Dispose()
@@ -66,8 +72,15 @@ namespace Stride.Rendering.Voxels.Grid
                 Material.Dispose();
                 Position.Dispose();
                 Depth.Dispose();
+                foreach (var texture in LayerNormal)
+                    texture.Dispose();
+                foreach (var texture in LayerPosition)
+                    texture.Dispose();
             }
         }
+
+        /// <summary>See-through layers resolved in front of the opaque surface.</summary>
+        public const int TransparentLayers = 2;
 
         // Frames a view size's targets survive unused, so an editor viewport and a probe capture do not remake them every frame
         private const int UnusedTargetFrames = 120;
@@ -112,6 +125,11 @@ namespace Stride.Rendering.Voxels.Grid
             commandList.Clear(Normal, new Color4(0, 0, 0, 0));
             commandList.Clear(Material, new Color4(0, 0, 0, 0));
             commandList.Clear(Position, new Color4(0, 0, 0, 0));
+            for (int layer = 0; layer < TransparentLayers; layer++)
+            {
+                commandList.Clear(current.LayerNormal[layer], new Color4(0, 0, 0, 0));
+                commandList.Clear(current.LayerPosition[layer], new Color4(0, 0, 0, 0));
+            }
             cleared = true;
         }
 
@@ -158,10 +176,15 @@ namespace Stride.Rendering.Voxels.Grid
             commandList.ResourceBarrierTransition(Normal, BarrierLayout.RenderTarget);
             commandList.ResourceBarrierTransition(Material, BarrierLayout.RenderTarget);
             commandList.ResourceBarrierTransition(Position, BarrierLayout.RenderTarget);
+            for (int layer = 0; layer < TransparentLayers; layer++)
+            {
+                commandList.ResourceBarrierTransition(current.LayerNormal[layer], BarrierLayout.RenderTarget);
+                commandList.ResourceBarrierTransition(current.LayerPosition[layer], BarrierLayout.RenderTarget);
+            }
             if (sceneDepth != null)
                 commandList.ResourceBarrierTransition(sceneDepth, BarrierLayout.ShaderResource);
             // Depth tested against the grids already resolved, so the nearest surface wins.
-            commandList.SetRenderTargetsAndViewport(depth, Normal, Material, Position);
+            commandList.SetRenderTargetsAndViewport(depth, Normal, Material, Position, current.LayerNormal[0], current.LayerPosition[0], current.LayerNormal[1], current.LayerPosition[1]);
 
             var viewProjection = renderView.ViewProjection;
             Matrix.Invert(ref viewProjection, out var viewProjectionInverse);
@@ -198,7 +221,7 @@ namespace Stride.Rendering.Voxels.Grid
                     beamShader.Draw(context, name: "VoxelGridBeam");
                     // The beam's draw took the targets; the box draws into the resolve's again.
                     commandList.ResourceBarrierTransition(beam, BarrierLayout.ShaderResource);
-                    commandList.SetRenderTargetsAndViewport(depth, Normal, Material, Position);
+                    commandList.SetRenderTargetsAndViewport(depth, Normal, Material, Position, current.LayerNormal[0], current.LayerPosition[0], current.LayerNormal[1], current.LayerPosition[1]);
                 }
 
                 grid.Traversal.ApplyParameters(parameters);
@@ -211,6 +234,8 @@ namespace Stride.Rendering.Voxels.Grid
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridMaxDistance, grid.MaxDistance);
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridDither, (int)grid.Dither);
                 parameters.Set(VoxelGridResolveShaderKeys.VoxelGridIndex, grid.GridIndex);
+                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridTransparent0, grid.Transparent0);
+                parameters.Set(VoxelGridResolveShaderKeys.VoxelGridTransparent1, grid.Transparent1);
 
                 // How many of the grid's units one pixel spans per unit of distance: the pixel's
                 // angle, times how the world's unit reads in the grid's own.
@@ -276,7 +301,14 @@ namespace Stride.Rendering.Voxels.Grid
                     Material = Texture.New2D(device, width, height, PixelFormat.R8G8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget),
                     Position = Texture.New2D(device, width, height, PixelFormat.R32G32B32A32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget),
                     Depth = Texture.New2D(device, width, height, PixelFormat.D32_Float, TextureFlags.DepthStencil),
+                    LayerNormal = new Texture[TransparentLayers],
+                    LayerPosition = new Texture[TransparentLayers],
                 };
+                for (int layer = 0; layer < TransparentLayers; layer++)
+                {
+                    current.LayerNormal[layer] = Texture.New2D(device, width, height, PixelFormat.R32G32B32A32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
+                    current.LayerPosition[layer] = Texture.New2D(device, width, height, PixelFormat.R32G32B32A32_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
+                }
                 targetsBySize.Add((width, height), current);
             }
             current.LastFrame = frame;
@@ -299,11 +331,13 @@ namespace Stride.Rendering.Voxels.Grid
             {
                 if (grid.MaterialParameters == null)
                     continue;
-                foreach (var parameters in grid.MaterialParameters)
+                foreach (var (parameters, layer) in grid.MaterialParameters)
                 {
                     parameters.Set(VoxelGridFieldKeys.ResolveNormal, current.Normal);
                     parameters.Set(VoxelGridFieldKeys.ResolveMaterial, current.Material);
                     parameters.Set(VoxelGridFieldKeys.ResolvePosition, current.Position);
+                    parameters.Set(VoxelGridFieldKeys.ResolveLayerNormal, current.LayerNormal[Math.Max(layer, 0)]);
+                    parameters.Set(VoxelGridFieldKeys.ResolveLayerPosition, current.LayerPosition[Math.Max(layer, 0)]);
                     parameters.Set(VoxelGridFieldKeys.ResolveViewProjection, renderView.ViewProjection);
                 }
             }

@@ -25,6 +25,12 @@ namespace Stride.Rendering.Voxels.Grid
             /// The surface's world position, with its depth in w.
             [Link("VoxelGridField.ResolvePosition")]
             stage Texture2D<float4> VoxelGridResolvePosition;
+
+            /// The see-through layer this draw shades: normal with 1 + id + 256 * grid in w (0 is none), and position with depth.
+            [Link("VoxelGridField.ResolveLayerNormal")]
+            stage Texture2D<float4> VoxelGridResolveLayerNormal;
+            [Link("VoxelGridField.ResolveLayerPosition")]
+            stage Texture2D<float4> VoxelGridResolveLayerPosition;
         }
 
         // Largest summed difference between two view-projections still taken as the same view
@@ -56,6 +62,10 @@ namespace Stride.Rendering.Voxels.Grid
             /// The view-projection the bound resolve targets were made for.
             [Link("VoxelGridField.ResolveViewProjection")]
             stage float4x4 VoxelGridResolveViewProjection;
+
+            /// Which surface this draw shades: -1 the opaque one, 0 the nearest see-through layer, 1 the next.
+            [Link("VoxelGridField.Layer")]
+            stage int VoxelGridLayer;
         }
 
         bool IsResolvedView()
@@ -76,6 +86,17 @@ namespace Stride.Rendering.Voxels.Grid
             bool resolved = normalResolved.w > 0.5 && IsResolvedView();
             int material = (int)round(idGrid.r * 255.0);
             int grid = (int)round(idGrid.g * 255.0);
+
+            if (VoxelGridLayer >= 0)
+            {
+                float4 layerNormal = VoxelGridResolveLayerNormal.Load(pixel);
+                int code = (int)round(layerNormal.w) - 1;
+                resolved = code >= 0 && IsResolvedView();
+                material = code & 255;
+                grid = code >> 8;
+                normalResolved = float4(layerNormal.xyz, 1);
+                positionDepth = VoxelGridResolveLayerPosition.Load(pixel);
+            }
 
             if (streams.IsVoxelizationPass > 0.5)
             {
@@ -103,8 +124,9 @@ namespace Stride.Rendering.Voxels.Grid
                 positionDepth.w = hitClip.z / hitClip.w;
             }
 
+            // A see-through layer is drawn by the camera only: the voxelizer sees the field through its opaque draws
             bool mine = resolved && grid == VoxelGridIndex && (VoxelGridMaterialId < 0 || material == VoxelGridMaterialId)
-                        && !(streams.IsVoxelizationPass > 0.5 && VoxelGridInjected > 0.5);
+                        && !(streams.IsVoxelizationPass > 0.5 && (VoxelGridInjected > 0.5 || VoxelGridLayer >= 0));
 
             // One exit: a return from inside Compute reaches FXC as a loop to unroll, and it does
             // not always manage.
