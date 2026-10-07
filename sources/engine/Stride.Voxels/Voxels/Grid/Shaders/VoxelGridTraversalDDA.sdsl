@@ -270,10 +270,16 @@ namespace Stride.Rendering.Voxels.Grid
             // The same id at several corners counts once, with all their weight, on its first corner.
             // An empty corner is air and weighs nothing, whatever id it carries; a partly filled one, the skin of a
             // surface such as grass over dirt, keeps its material even below the iso level.
+            // With no filled corner at all, a sheet thinner than a cell, the densest corner's material stands for it
+            int densest = ids[0];
+            float densestValue = -1e30;
             for (int i = 0; i < 8; i++)
             {
                 int3 corner = cell + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-                weights[i] *= SealedDensity(corner) > 0.0 ? 1.0 : 0.0;
+                float density = SealedDensity(corner);
+                densest = density > densestValue ? ids[i] : densest;
+                densestValue = max(densestValue, density);
+                weights[i] *= density > 0.0 ? 1.0 : 0.0;
                 for (int j = 0; j < i; j++)
                 {
                     if (ids[j] == ids[i])
@@ -288,7 +294,7 @@ namespace Stride.Rendering.Voxels.Grid
             for (int k = 0; k < 8; k++)
                 total += weights[k];
 
-            int chosen = ids[0];
+            int chosen = densest;
             if (total > 0)
             {
                 float threshold = DitherThreshold(pixel, dither) * total;
