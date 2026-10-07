@@ -71,6 +71,7 @@ namespace Stride.Rendering.Voxels
         {
             VoxelRenderer?.Collect(Context, ShadowMapRenderer_notPrivate);
             base.CollectCore(context);
+            GridResolver.Collect(context);
         }
         protected override void DrawCore(RenderContext context, RenderDrawContext drawContext)
         {

@@ -104,8 +104,7 @@ namespace Stride.Rendering.Voxels.Grid
             if (width <= 0 || height <= 0)
                 return;
 
-            SelectTargets(context, width, height);
-            BindToMaterials(renderView);
+            SelectTargets(context.GraphicsDevice, context.RenderContext.Time?.FrameCount ?? 0, width, height);
 
             var commandList = context.CommandList;
             // Zero in every channel: the normal's w is what says "resolved", and Color4.Black carries a 1 there.
@@ -244,12 +243,33 @@ namespace Stride.Rendering.Voxels.Grid
             }
         }
 
-        private void SelectTargets(RenderDrawContext context, int width, int height)
+        /// <summary>
+        /// Picks the targets of the view about to be drawn and binds them, with its view-projection, to the grids' materials.
+        /// </summary>
+        /// <remarks>
+        /// Call it while the view is collected: material parameters are uploaded before any view draws,
+        /// so a binding made while drawing would only reach the next frame.
+        /// </remarks>
+        /// <param name="context">The render context, with the view being collected.</param>
+        public void Collect(RenderContext context)
         {
-            var frame = context.RenderContext.Time?.FrameCount ?? 0;
+            var renderView = context.RenderView;
+            if (renderView == null || Grids.Count == 0)
+                return;
+
+            var width = (int)renderView.ViewSize.X;
+            var height = (int)renderView.ViewSize.Y;
+            if (width <= 0 || height <= 0)
+                return;
+
+            SelectTargets(context.GraphicsDevice, context.Time?.FrameCount ?? 0, width, height);
+            BindToMaterials(renderView);
+        }
+
+        private void SelectTargets(GraphicsDevice device, long frame, int width, int height)
+        {
             if (!targetsBySize.TryGetValue((width, height), out current))
             {
-                var device = context.GraphicsDevice;
                 current = new Targets
                 {
                     Normal = Texture.New2D(device, width, height, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.RenderTarget),
@@ -325,6 +345,12 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>The renderer this pass drives; grids register with it each frame.</summary>
         [Stride.Core.DataMemberIgnore]
         public VoxelGridResolveRenderer Renderer { get; } = new();
+
+        protected override void CollectCore(RenderContext context)
+        {
+            base.CollectCore(context);
+            Renderer.Collect(context);
+        }
 
         protected override void DrawCore(RenderContext context, RenderDrawContext drawContext)
         {
