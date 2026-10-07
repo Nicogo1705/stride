@@ -63,7 +63,7 @@ namespace Stride.Rendering.Voxels.Grid
         /// <summary>How a boundary between two materials is shared out between pixels.</summary>
         /// <userdoc>How the boundary between two materials is drawn: a hard line, or a dither that reads as a blend.</userdoc>
         [DataMember(18)]
-        public VoxelMaterialDither Dither { get; set; } = VoxelMaterialDither.InterleavedGradientNoise;
+        public VoxelMaterialDither Dither { get; set; } = VoxelMaterialDither.Sharp;
 
         /// <summary>Whether a voxel GI volume takes the field straight from its samples, instead of voxelizing its proxy box.</summary>
         /// <remarks>Carries what the field's materials emit and its occlusion, not the direct light off the field.</remarks>
