@@ -38,6 +38,11 @@
       <Code Type="Class" Source="$(MSBuildThisFileDirectory)StrideDevPackagesTasks.cs" Language="cs" />
     </Task>
   </UsingTask>
+  <UsingTask TaskName="StrideCleanDevPackages" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Code Type="Class" Source="$(MSBuildThisFileDirectory)StrideDevPackagesTasks.cs" Language="cs" />
+    </Task>
+  </UsingTask>
 
   <!-- Is this project's stub fresh? It is stale, and _StrideAdoptDevStub below refreshes it right after Build,
        when:
@@ -135,24 +140,16 @@
       <_StrideDevPackagesStampExisted Condition="Exists('$(_StrideDevPackagesStampCheck)')">true</_StrideDevPackagesStampExisted>
     </PropertyGroup>
 
-    <ReadLinesFromFile File="$(_StrideDevPackagesStampCheck)" Condition="'$(_StrideDevPackagesStampExisted)' == 'true'">
-      <Output TaskParameter="Lines" ItemName="_StrideDevPackagesStubManifest" />
-    </ReadLinesFromFile>
-
-    <ItemGroup>
-      <_StrideDevPackagesToDelete Include="$(LocalAppData)/stride/nugetdev/%(_StrideDevPackagesStubManifest.Identity)"
-                                  Condition="'%(_StrideDevPackagesStubManifest.Identity)' != ''" />
-      <!-- The bin/packages mirrors (GenerateDevPackages copies stubs there so the repo
-           nuget.config's stride-local mapping stays valid in dev mode). -->
-      <_StrideDevPackagesToDelete Include="$(StrideRoot)bin\packages\%(_StrideDevPackagesStubManifest.Identity)"
-                                  Condition="'%(_StrideDevPackagesStubManifest.Identity)' != ''" />
-    </ItemGroup>
-
-    <Delete Files="@(_StrideDevPackagesToDelete)" />
-    <Delete Files="$(_StrideDevPackagesStampCheck);$(_StrideDevPackagesStampCheck).inputs;$(_StrideDevPackagesStampCheck).stubs" Condition="'$(_StrideDevPackagesStampExisted)' == 'true'" />
+    <!-- The bin/packages mirrors (GenerateDevPackages copies stubs there so the repo
+         nuget.config's stride-local mapping stays valid in dev mode). -->
+    <StrideCleanDevPackages StampPath="$(_StrideDevPackagesStampCheck)"
+                            Feeds="$(LocalAppData)/stride/nugetdev;$(StrideRoot)bin\packages"
+                            Condition="'$(_StrideDevPackagesStampExisted)' == 'true'">
+      <Output TaskParameter="Cleaned" PropertyName="_StrideDevPackagesCleaned" />
+    </StrideCleanDevPackages>
 
     <Message Importance="High" Text="Cleaned dev-redirect packages. Next build will generate real packages."
-             Condition="'$(_StrideDevPackagesStampExisted)' == 'true'" />
+             Condition="'$(_StrideDevPackagesCleaned)' == 'true'" />
   </Target>
 
 </Project>
