@@ -284,6 +284,9 @@ public abstract class CollidableComponent : EntityComponent
         return false;
     }
 
+    /// <summary> Whether two bodies owned by this component may collide, called from the narrow phase on any thread </summary>
+    internal virtual bool AllowContactBetween(BodyHandle a, BodyHandle b) => true;
+
     public CollidableComponent()
     {
         _collider = new CompoundCollider();

@@ -21,7 +21,7 @@ namespace Stride.BepuPhysics.Definitions.Colliders;
 [DataContract]
 public sealed class BoneCollider : ICollider
 {
-    private readonly List<(BoneShape Bone, float Scale, TypedIndex Index)> _created = new();
+    private readonly List<(BoneShape Bone, float Scale, TypedIndex Index, BodyInertia Inertia)> _created = new();
     private CollidableComponent? _component;
 
     /// <summary>
@@ -91,11 +91,14 @@ public sealed class BoneCollider : ICollider
 
     internal TypedIndex GetCreatedIndex(int index) => _created[index].Index;
 
+    /// <summary> The inertia of a created shape from its <see cref="ColliderBase.Mass"/>, used when its body is not kinematic </summary>
+    internal BodyInertia GetCreatedInertia(int index) => _created[index].Inertia;
+
     void ICollider.GetLocalTransforms(CollidableComponent collidable, Span<ShapeTransform> transforms)
     {
         for (int i = 0; i < _created.Count; i++)
         {
-            var (bone, scale, _) = _created[i];
+            var (bone, scale, _, _) = _created[i];
             // The node and the local offset are part of the pose of each body
             transforms[i].PositionLocal = Vector3.Zero;
             transforms[i].RotationLocal = Quaternion.Identity;
@@ -122,24 +125,29 @@ public sealed class BoneCollider : ICollider
         foreach (var (bone, scale) in resolved)
         {
             var shape = bone.Shape;
-            var typedIndex = shape switch
+            var created = shape switch
             {
-                BoxCollider box => shapes.Add(new Box(box.Size.X * scale, box.Size.Y * scale, box.Size.Z * scale)),
-                SphereCollider sph => shapes.Add(new Sphere(sph.Radius * scale)),
-                CapsuleCollider cap => shapes.Add(new Capsule(cap.Radius * scale, cap.Length * scale)),
-                CylinderCollider cyl => shapes.Add(new Cylinder(cyl.Radius * scale, cyl.Length * scale)),
+                BoxCollider box => Add(shapes, new Box(box.Size.X * scale, box.Size.Y * scale, box.Size.Z * scale), shape.Mass),
+                SphereCollider sph => Add(shapes, new Sphere(sph.Radius * scale), shape.Mass),
+                CapsuleCollider cap => Add(shapes, new Capsule(cap.Radius * scale, cap.Length * scale), shape.Mass),
+                CylinderCollider cyl => Add(shapes, new Cylinder(cyl.Radius * scale, cyl.Length * scale), shape.Mass),
                 _ => throw new NotSupportedException($"{nameof(BoneCollider)} does not support {shape.GetType().Name}, use a box, sphere, capsule or cylinder"),
             };
-            _created.Add((bone, scale, typedIndex));
+            _created.Add((bone, scale, created.Index, created.Inertia));
         }
 
         index = _created[0].Index;
         return true;
     }
 
+    private static (TypedIndex Index, BodyInertia Inertia) Add<TShape>(Shapes shapes, TShape shape, float mass) where TShape : unmanaged, IConvexShape
+    {
+        return (shapes.Add(shape), shape.ComputeInertia(mass));
+    }
+
     void ICollider.Detach(Shapes shapes, BufferPool pool, TypedIndex index)
     {
-        foreach (var (_, _, typedIndex) in _created)
+        foreach (var (_, _, typedIndex, _) in _created)
             shapes.Remove(typedIndex);
         _created.Clear();
     }
@@ -147,7 +155,7 @@ public sealed class BoneCollider : ICollider
     void ICollider.AppendModel(List<BasicMeshBuffers> buffer, ShapeCacheSystem shapeCache, out object? cache)
     {
         cache = null;
-        foreach (var (bone, _, _) in _created)
+        foreach (var (bone, _, _, _) in _created)
         {
             buffer.Add(bone.Shape switch
             {
