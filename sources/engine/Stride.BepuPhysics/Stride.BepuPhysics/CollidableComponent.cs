@@ -274,6 +274,16 @@ public abstract class CollidableComponent : EntityComponent
         return CollidableReference!.Value;
     }
 
+    /// <summary> The child index reported to users for a hit on <paramref name="collidable"/>, one of the collidables this component owns </summary>
+    internal virtual int GetChildIndex(CollidableReference collidable, int shapeChildIndex) => shapeChildIndex;
+
+    /// <summary> The world pose of the shape behind the debug wireframe <paramref name="index"/>, false when the wireframes follow <see cref="Pose"/> </summary>
+    internal virtual bool TryGetShapePose(int index, out NRigidPose pose)
+    {
+        pose = default;
+        return false;
+    }
+
     public CollidableComponent()
     {
         _collider = new CompoundCollider();
