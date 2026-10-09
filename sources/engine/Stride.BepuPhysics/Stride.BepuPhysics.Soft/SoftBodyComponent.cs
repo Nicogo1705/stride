@@ -278,6 +278,8 @@ public abstract class SoftBodyComponent : CollidableComponent
     /// <summary> Called before each simulation step </summary>
     internal virtual void BeforeStep(float deltaTime) { }
 
+    /// <summary> Whether the entity's transform follows the particles; false when something else moves the entity and the particles follow it </summary>
+    internal virtual bool MovesEntity => true;
 
     internal BodyReference Particle(int index) => Simulation!.Simulation.Bodies[_particles[index]];
 
@@ -556,7 +558,7 @@ public abstract class SoftBodyComponent : CollidableComponent
 
         public void AfterSimulationUpdate(BepuSimulation simulation, float simTimeStep)
         {
-            if (owner._particles.Length > 0 && owner.Particle(owner._islandProbe).Awake)
+            if (owner.MovesEntity && owner._particles.Length > 0 && owner.Particle(owner._islandProbe).Awake)
                 owner.SyncTransform();
         }
     }

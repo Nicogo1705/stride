@@ -8,6 +8,7 @@ using BepuPhysics.CollisionDetection;
 using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.BepuPhysics.Definitions.Contacts;
+using Stride.BepuPhysics.Soft.Topology;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics.GeometricPrimitives;
@@ -158,6 +159,70 @@ public class SoftBodyTests : GameTestBase
             for (int i = 0; i < pinned.Length; i++)
                 Assert.True(Vector3.Distance(cloth.GetParticlePosition(pinned[i]), before[i] + new Vector3(1f, 0.5f, 0f)) < 0.01f, $"Pinned particle {pinned[i]} at {cloth.GetParticlePosition(pinned[i])}");
         });
+    }
+
+    [Fact]
+    public static void ParticlesFollowTheSkeleton()
+    {
+        RunScene(async scene =>
+        {
+            // A capsule standing along a chain of four bones, floating
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.5f, Radius = 0.25f, Tessellation = 16 }, Chain("Bone", 4, new Vector3(0f, -0.75f, 0f), new Vector3(0f, 0.5f, 0f)));
+            var body = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, Gravity = false };
+            var entity = scene.Add(body, model, new Vector3(0f, 2f, 0f));
+
+            await Seconds(body, 1f);
+            Assert.InRange(MaximumDistanceToSkeleton(body, entity), 0f, 0.01f);
+
+            // Bending the last bone and moving the entity: the particles get there, the entity is not moved by them
+            var skeleton = entity.Get<ModelComponent>()!.Skeleton;
+            skeleton.NodeTransformations[4].Transform.Rotation = Quaternion.RotationZ(MathF.PI / 3f);
+            entity.Transform.Position += new Vector3(1f, 0f, 0f);
+            await Seconds(body, 0.1f);
+            Assert.True(MaximumDistanceToSkeleton(body, entity) > 0.1f, "The particles should lag behind the skeleton");
+            await Seconds(body, 2f);
+            Assert.InRange(MaximumDistanceToSkeleton(body, entity), 0f, 0.01f);
+            Assert.Equal(new Vector3(1f, 2f, 0f), entity.Transform.Position);
+        });
+    }
+
+    [Fact]
+    public static void BodyFollowingTheSkeletonDentsOnContactThenRecovers()
+    {
+        RunScene(async scene =>
+        {
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.5f, Radius = 0.25f, Tessellation = 16 }, Chain("Bone", 4, new Vector3(0f, -0.75f, 0f), new Vector3(0f, 0.5f, 0f)));
+            var body = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, Gravity = false };
+            var entity = scene.Add(body, model, new Vector3(0f, 2f, 0f));
+            entity.Transform.Rotation = Quaternion.RotationZ(MathF.PI / 2f); // Lying along x
+
+            var ball = new Entity { new BodyComponent { Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = 0.2f, Mass = 20f } } } } };
+            ball.Transform.Position = new Vector3(0f, 3f, 0f);
+            scene.Add(ball);
+
+            float deepest = 0f;
+            for (int step = 0; step < 60; step++)
+            {
+                await body.Simulation!.AfterUpdate();
+                deepest = MathF.Max(deepest, MaximumDistanceToSkeleton(body, entity));
+            }
+            Assert.True(deepest > 0.05f, $"The ball should dent the body, deepest {deepest}");
+
+            scene.Remove(ball);
+            await Seconds(body, 2f);
+            Assert.InRange(MaximumDistanceToSkeleton(body, entity), 0f, 0.01f);
+        });
+    }
+
+    /// <summary> How far the free particle farthest from its place on the skeleton is </summary>
+    private static float MaximumDistanceToSkeleton(VolumetricSoftBodyComponent body, Entity entity)
+    {
+        var skeleton = ModelNodes.Refresh(entity)!;
+        var binding = SkeletonBinding.Build(body.SourceModel!.Skeleton, body.Topology!.RestPositions)!;
+        float maximum = 0f;
+        for (int i = 0; i < body.ParticleCount; i++)
+            maximum = MathF.Max(maximum, Vector3.Distance(body.GetParticlePosition(i), binding.Target(i, skeleton.NodeTransformations)));
+        return maximum;
     }
 
     /// <summary> A root node then <paramref name="count"/> nodes named <paramref name="name"/>0, 1… each one <paramref name="step"/> from its parent </summary>
