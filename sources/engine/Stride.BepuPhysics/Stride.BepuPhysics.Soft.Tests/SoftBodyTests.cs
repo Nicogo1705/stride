@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using BepuPhysics.CollisionDetection;
 using Stride.BepuPhysics.Definitions;
@@ -11,6 +12,7 @@ using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics.GeometricPrimitives;
 using Stride.Graphics.Regression;
+using Stride.Rendering;
 using Stride.Rendering.ProceduralModels;
 using Xunit;
 
@@ -131,6 +133,43 @@ public class SoftBodyTests : GameTestBase
         });
     }
 
+    [Fact]
+    public static void PinsFollowAnAnchorNode()
+    {
+        RunScene(async scene =>
+        {
+            // A skeleton whose second node sits at the cloth's pinned edge
+            var anchorModel = scene.Model(new CubeProceduralModel { Size = new Vector3(0.1f) }, Chain("Hand", 1, new Vector3(-0.5f, 2f, 0f), Vector3.UnitY));
+            var anchor = scene.Add(null, anchorModel, Vector3.Zero);
+
+            var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor, AnchorNode = "Hand0" } } };
+            scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
+            await Seconds(cloth, 0.1f);
+
+            var pinned = Enumerable.Range(0, cloth.ParticleCount).Where(cloth.IsParticlePinned).ToArray();
+            Assert.NotEmpty(pinned);
+            var before = pinned.Select(cloth.GetParticlePosition).ToArray();
+
+            // Moving the node, not the entity, carries the pinned particles along
+            anchor.Get<ModelComponent>()!.Skeleton.NodeTransformations[1].Transform.Position += new Vector3(1f, 0.5f, 0f);
+            await Seconds(cloth, 0.5f);
+
+            for (int i = 0; i < pinned.Length; i++)
+                Assert.True(Vector3.Distance(cloth.GetParticlePosition(pinned[i]), before[i] + new Vector3(1f, 0.5f, 0f)) < 0.01f, $"Pinned particle {pinned[i]} at {cloth.GetParticlePosition(pinned[i])}");
+        });
+    }
+
+    /// <summary> A root node then <paramref name="count"/> nodes named <paramref name="name"/>0, 1… each one <paramref name="step"/> from its parent </summary>
+    private static Skeleton Chain(string name, int count, Vector3 first, Vector3 step)
+    {
+        var nodes = new ModelNodeDefinition[count + 1];
+        nodes[0] = new ModelNodeDefinition { Name = "Root", ParentIndex = -1, Transform = { Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default };
+        for (int i = 1; i <= count; i++)
+            nodes[i] = new ModelNodeDefinition { Name = name + (i - 1), ParentIndex = i - 1, Transform = { Position = i == 1 ? first : step, Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default };
+        return new Skeleton { Nodes = nodes };
+    }
+
     private sealed class CountingHandler : IContactHandler
     {
         public bool NoContactResponse => false;
@@ -194,12 +233,28 @@ public class SoftBodyTests : GameTestBase
     private sealed class TestScene(TestGame game)
     {
         /// <summary> Adds an entity with a model generated from <paramref name="shape"/> and <paramref name="body"/> </summary>
-        public Entity Add(SoftBodyComponent body, PrimitiveProceduralModelBase shape, Vector3 position)
+        public Entity Add(SoftBodyComponent body, PrimitiveProceduralModelBase shape, Vector3 position) => Add(body, Model(shape, null), position);
+
+        /// <summary> Adds an entity with <paramref name="model"/> and, if any, <paramref name="body"/> </summary>
+        public Entity Add(SoftBodyComponent? body, Model model, Vector3 position)
         {
-            var entity = new Entity { new ModelComponent(new ProceduralModelDescriptor(shape).GenerateModel(game.Services)), body };
+            var entity = new Entity { new ModelComponent(model) };
+            if (body is not null)
+                entity.Add(body);
             entity.Transform.Position = position;
-            game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
+            Add(entity);
             return entity;
+        }
+
+        public void Add(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
+
+        public void Remove(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
+
+        public Model Model(PrimitiveProceduralModelBase shape, Skeleton? skeleton)
+        {
+            var model = new ProceduralModelDescriptor(shape).GenerateModel(game.Services);
+            model.Skeleton = skeleton;
+            return model;
         }
     }
 

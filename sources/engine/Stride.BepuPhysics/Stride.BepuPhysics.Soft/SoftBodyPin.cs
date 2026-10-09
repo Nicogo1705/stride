@@ -22,4 +22,10 @@ public sealed class SoftBodyPin
     /// The entity the pinned particles follow, keeping the offset they had when the soft body was created. Null keeps them where they were created.
     /// </summary>
     public Entity? Anchor { get; set; }
+
+    /// <summary>
+    /// The name of a node of the <see cref="Anchor"/>'s model, such as a bone, the pinned particles follow instead of the entity itself.
+    /// </summary>
+    /// <remarks> Null or empty follows the entity; a name the model does not have is reported once and the entity is followed instead. </remarks>
+    public string? AnchorNode { get; set; }
 }
