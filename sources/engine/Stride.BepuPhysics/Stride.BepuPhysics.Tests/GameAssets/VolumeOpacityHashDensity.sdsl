@@ -1,0 +1,42 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+// Density of a drifting gas: hashed value noise of the world position, moving slowly with time, kept between MinDensity and
+// MaxDensity, and fading out near the sides of its mesh (a unit cube scaled by its entity)
+shader VolumeOpacityHashDensity : ComputeColor, Global, PositionStream4, Transformation
+{
+    static const float3 Drift = float3(0.12, 0.03, 0.07);
+    static const float MinDensity = 0;
+    static const float MaxDensity = 1;
+    // World distance over which the density fades out towards the sides
+    static const float EdgeFade = 0.35;
+
+    float Hash(float3 p)
+    {
+        p = frac(p * 0.3183099 + 0.1) * 17.0;
+        return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+
+    float Noise(float3 x)
+    {
+        float3 i = floor(x);
+        float3 f = frac(x);
+        f = f * f * (3 - 2 * f);
+        return lerp(lerp(lerp(Hash(i), Hash(i + float3(1, 0, 0)), f.x), lerp(Hash(i + float3(0, 1, 0)), Hash(i + float3(1, 1, 0)), f.x), f.y),
+                    lerp(lerp(Hash(i + float3(0, 0, 1)), Hash(i + float3(1, 0, 1)), f.x), lerp(Hash(i + float3(0, 1, 1)), Hash(i + float3(1, 1, 1)), f.x), f.y), f.z);
+    }
+
+    override float4 Compute()
+    {
+        float3 p = streams.PositionWS.xyz * 1.2 + Drift * Time;
+        float n = Noise(p) * 0.65 + Noise(p * 2.3) * 0.35;
+        float density = lerp(MinDensity, MaxDensity, saturate(n * 2.5 - 1.1));
+
+        // Distance to the sides of the unit cube, in world units
+        float3 local = mul(float4(streams.PositionWS.xyz, 1), WorldInverse).xyz;
+        float3 scale = float3(length(World[0].xyz), length(World[1].xyz), length(World[2].xyz));
+        float3 edge = (0.5 - abs(local)) * scale;
+        float fade = saturate(min(edge.x, min(edge.y, edge.z)) / EdgeFade);
+        return density * fade;
+    }
+};
