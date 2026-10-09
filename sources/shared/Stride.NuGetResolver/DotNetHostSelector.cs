@@ -57,6 +57,10 @@ public static class DotNetHostSelector
         var relaunched = argList.Contains(RelaunchedArg);
         var forced = !relaunched && Environment.GetEnvironmentVariable(ForceRelaunchEnv) == "1";
 
+        // An empty path (a blank recent-project entry) names no session; opening it reports the missing file.
+        if (string.IsNullOrWhiteSpace(sessionPath))
+            sessionPath = null;
+
         // The common case, a session on our own major, is settled without looking at the .NET installation.
         var sessionDirectory = sessionPath != null ? Path.GetDirectoryName(Path.GetFullPath(sessionPath)) : null;
         var overrideMajor = ReadOverride(argList);

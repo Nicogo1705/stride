@@ -230,6 +230,24 @@ public class DotNetHostSelectorTests
         Assert.Null(GetGlobalJsonSdkMajor(temp.Path("a/b")));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BlankSessionUsesCurrent(string sessionPath)
+    {
+        var decision = ResolveFor("GameStudio.dll", 10, sessionPath, []);
+        Assert.Equal(DecisionKind.UseCurrent, decision.Kind);
+        Assert.Equal(10, decision.Major);
+    }
+
+    [Fact]
+    public void MissingSessionUsesCurrent()
+    {
+        using var temp = new TempDirectory();
+        var decision = ResolveFor("GameStudio.dll", 10, temp.Path("Missing/Missing.sln"), []);
+        Assert.Equal(DecisionKind.UseCurrent, decision.Kind);
+    }
+
     [Fact]
     public void RuntimeConfigIsRewrittenForEveryFramework()
     {

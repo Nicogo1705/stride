@@ -59,6 +59,9 @@ namespace Stride.Core.MostRecentlyUsedFiles
 
         public void AddFile(UFile filePath, string strideVersion)
         {
+            if (UPath.IsNullOrEmpty(filePath))
+                return;
+
             // Reload settings in case concurrent Game Studio instances are running.
             LoadFromSettings();
             // Remove it if it was already in the list
