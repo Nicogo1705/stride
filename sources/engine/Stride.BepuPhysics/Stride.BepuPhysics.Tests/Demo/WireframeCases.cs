@@ -98,27 +98,93 @@ public class WireframeCases : GameTestBase
     private static void MeasureCost()
     {
         var pile = RigidScenes.All().First();
-        var game = new BepuDemoGame(new DemoScene[] { pile }, DemoSettings.Label, DemoSettings.CaptureFolder);
+        var sphere = OcclusionCases().First();
+        var game = new CostGame(new DemoScene[] { pile, sphere });
         var folder = Environment.GetEnvironmentVariable("STRIDE_WIREFRAME_CASES_FOLDER") ?? DemoSettings.TourFolder;
         var tag = Environment.GetEnvironmentVariable("STRIDE_WIREFRAME_CASES_TAG") ?? "capture";
+        var frames = int.TryParse(Environment.GetEnvironmentVariable("STRIDE_WIREFRAME_COST_FRAMES"), out var f) ? f : 400;
         DemoSettings.RunTour(game, async () =>
         {
             game.OverlayVisible = false;
+            var lines = new List<string> { $"{frames} frames per case after 120 of warm-up, {game.GraphicsDevice.Adapter.Description}, back buffer {game.GraphicsDevice.Presenter.BackBuffer.Width}x{game.GraphicsDevice.Presenter.BackBuffer.Height}" };
+            async System.Threading.Tasks.Task Measure(string label)
+            {
+                await game.Frames(120);
+                game.Start();
+                await game.Frames(frames);
+                lines.Add($"{label}: {game.Stop()}");
+            }
+
             game.LoadScene(pile);
             await game.Steps(200);
             await game.Press(Keys.Space);
             game.SetCamera(new Vector3(10f, 9f, 13f), new Vector3(0f, 2f, 0f));
-            var lines = new List<string>();
-            foreach (var label in new[] { "debug off", "debug on" })
-            {
-                await game.Frames(120);
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                await game.Frames(600);
-                lines.Add($"{label}: {watch.Elapsed.TotalMilliseconds / 600:0.000} ms/frame");
-                await game.Press(Keys.V);
-            }
+            await Measure("pile 1500, debug off");
+            await game.Press(Keys.V);
+            await Measure("pile 1500, debug on ");
+            await game.Press(Keys.V);
+
+            game.LoadScene(sphere);
+            game.SetCamera(sphere.Eye, sphere.Target);
+            await Measure("one sphere, debug off");
+            await game.Press(Keys.V);
+            await Measure("one sphere, debug on ");
             File.WriteAllLines(Path.Combine(folder, $"cout-{tag}.txt"), lines);
         }, g => RunGameTest(g));
+    }
+
+    /// <summary> Records, per frame, the time between frames, the CPU time of Draw, and the GPU time of Draw from timestamp queries </summary>
+    private sealed class CostGame(IEnumerable<DemoScene> scenes) : BepuDemoGame(scenes, DemoSettings.Label, DemoSettings.CaptureFolder)
+    {
+        private const int Ring = 8;
+        private readonly QueryPool?[] _pools = new QueryPool?[Ring];
+        private readonly bool[] _pending = new bool[Ring];
+        private readonly bool[] _recorded = new bool[Ring];
+        private readonly long[] _data = new long[2];
+        private readonly List<double> _period = new(), _cpu = new(), _gpu = new();
+        private bool _recording;
+        private long _last;
+        private int _frame;
+
+        public void Start()
+        {
+            _period.Clear(); _cpu.Clear(); _gpu.Clear();
+            _recording = true;
+        }
+
+        public string Stop()
+        {
+            _recording = false;
+            static string Stats(List<double> values)
+            {
+                if (values.Count == 0)
+                    return "n/a";
+                var sorted = values.OrderBy(v => v).ToArray();
+                return $"median {sorted[sorted.Length / 2]:0.000} p95 {sorted[(int)(sorted.Length * 0.95)]:0.000} (n={sorted.Length})";
+            }
+            return $"frame {Stats(_period)} | cpu draw {Stats(_cpu)} | gpu draw {Stats(_gpu)}";
+        }
+
+        protected override void Draw(Stride.Games.GameTime gameTime)
+        {
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_recording && _last != 0)
+                _period.Add((now - _last) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+            _last = now;
+
+            var slot = _frame++ % Ring;
+            var pool = _pools[slot] ??= QueryPool.New(GraphicsDevice, QueryType.Timestamp, 2);
+            if (_pending[slot] && pool.TryGetData(_data) && _recorded[slot] && GraphicsDevice.TimestampFrequency > 0)
+                _gpu.Add((_data[1] - _data[0]) * 1000.0 / GraphicsDevice.TimestampFrequency);
+
+            GraphicsContext.CommandList.WriteTimestamp(pool, 0);
+            base.Draw(gameTime);
+            GraphicsContext.CommandList.WriteTimestamp(pool, 1);
+            _pending[slot] = true;
+            _recorded[slot] = _recording;
+            if (_recording)
+                _cpu.Add((System.Diagnostics.Stopwatch.GetTimestamp() - now) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+        }
     }
 
     private static IEnumerable<Case> OcclusionCases()
