@@ -62,7 +62,8 @@ internal sealed class DeformableModel : IDisposable
         _vertexBuffer = Buffer.Vertex.New(device, bufferSize: vertexCount * Vertex.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
         _indexBuffer = Buffer.Index.New(device, mesh.Indices);
 
-        Model = new Model();
+        // The skeleton stays, so an animation of the source model still plays and the soft body can follow it
+        Model = new Model { Skeleton = source.Skeleton };
         SourceOfModel.AddOrUpdate(Model, source);
         foreach (var material in source.Materials)
             Model.Materials.Add(material);

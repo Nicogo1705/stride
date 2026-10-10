@@ -2,15 +2,18 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using BepuPhysics.CollisionDetection;
 using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.BepuPhysics.Definitions.Contacts;
+using Stride.BepuPhysics.Soft.Topology;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics.GeometricPrimitives;
 using Stride.Graphics.Regression;
+using Stride.Rendering;
 using Stride.Rendering.ProceduralModels;
 using Xunit;
 
@@ -131,6 +134,107 @@ public class SoftBodyTests : GameTestBase
         });
     }
 
+    [Fact]
+    public static void PinsFollowAnAnchorNode()
+    {
+        RunScene(async scene =>
+        {
+            // A skeleton whose second node sits at the cloth's pinned edge
+            var anchorModel = scene.Model(new CubeProceduralModel { Size = new Vector3(0.1f) }, Chain("Hand", 1, new Vector3(-0.5f, 2f, 0f), Vector3.UnitY));
+            var anchor = scene.Add(null, anchorModel, Vector3.Zero);
+
+            var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor, AnchorNode = "Hand0" } } };
+            scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
+            await Seconds(cloth, 0.1f);
+
+            var pinned = Enumerable.Range(0, cloth.ParticleCount).Where(cloth.IsParticlePinned).ToArray();
+            Assert.NotEmpty(pinned);
+            var before = pinned.Select(cloth.GetParticlePosition).ToArray();
+
+            // Moving the node, not the entity, carries the pinned particles along
+            anchor.Get<ModelComponent>()!.Skeleton.NodeTransformations[1].Transform.Position += new Vector3(1f, 0.5f, 0f);
+            await Seconds(cloth, 0.5f);
+
+            for (int i = 0; i < pinned.Length; i++)
+                Assert.True(Vector3.Distance(cloth.GetParticlePosition(pinned[i]), before[i] + new Vector3(1f, 0.5f, 0f)) < 0.01f, $"Pinned particle {pinned[i]} at {cloth.GetParticlePosition(pinned[i])}");
+        });
+    }
+
+    [Fact]
+    public static void ParticlesFollowTheSkeleton()
+    {
+        RunScene(async scene =>
+        {
+            // A capsule standing along a chain of four bones, floating
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.5f, Radius = 0.25f, Tessellation = 16 }, Chain("Bone", 4, new Vector3(0f, -0.75f, 0f), new Vector3(0f, 0.5f, 0f)));
+            var body = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, Gravity = false };
+            var entity = scene.Add(body, model, new Vector3(0f, 2f, 0f));
+
+            await Seconds(body, 1f);
+            Assert.InRange(MaximumDistanceToSkeleton(body, entity), 0f, 0.01f);
+
+            // Bending the last bone and moving the entity: the particles get there, the entity is not moved by them
+            var skeleton = entity.Get<ModelComponent>()!.Skeleton;
+            skeleton.NodeTransformations[4].Transform.Rotation = Quaternion.RotationZ(MathF.PI / 3f);
+            entity.Transform.Position += new Vector3(1f, 0f, 0f);
+            await Seconds(body, 0.1f);
+            Assert.True(MaximumDistanceToSkeleton(body, entity) > 0.1f, "The particles should lag behind the skeleton");
+            await Seconds(body, 2f);
+            Assert.InRange(MaximumDistanceToSkeleton(body, entity), 0f, 0.01f);
+            Assert.Equal(new Vector3(1f, 2f, 0f), entity.Transform.Position);
+        });
+    }
+
+    [Fact]
+    public static void BodyFollowingTheSkeletonDentsOnContactThenRecovers()
+    {
+        RunScene(async scene =>
+        {
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.5f, Radius = 0.25f, Tessellation = 16 }, Chain("Bone", 4, new Vector3(0f, -0.75f, 0f), new Vector3(0f, 0.5f, 0f)));
+            var body = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, Gravity = false };
+            var entity = scene.Add(body, model, new Vector3(0f, 2f, 0f));
+            entity.Transform.Rotation = Quaternion.RotationZ(MathF.PI / 2f); // Lying along x
+
+            var ball = new Entity { new BodyComponent { Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = 0.2f, Mass = 20f } } } } };
+            ball.Transform.Position = new Vector3(0f, 3f, 0f);
+            scene.Add(ball);
+
+            float deepest = 0f;
+            for (int step = 0; step < 60; step++)
+            {
+                await body.Simulation!.AfterUpdate();
+                deepest = MathF.Max(deepest, MaximumDistanceToSkeleton(body, entity));
+            }
+            Assert.True(deepest > 0.05f, $"The ball should dent the body, deepest {deepest}");
+
+            scene.Remove(ball);
+            await Seconds(body, 2f);
+            Assert.InRange(MaximumDistanceToSkeleton(body, entity), 0f, 0.01f);
+        });
+    }
+
+    /// <summary> How far the free particle farthest from its place on the skeleton is </summary>
+    private static float MaximumDistanceToSkeleton(VolumetricSoftBodyComponent body, Entity entity)
+    {
+        var skeleton = ModelNodes.Refresh(entity)!;
+        var binding = SkeletonBinding.Build(body.SourceModel!.Skeleton, body.Topology!.RestPositions)!;
+        float maximum = 0f;
+        for (int i = 0; i < body.ParticleCount; i++)
+            maximum = MathF.Max(maximum, Vector3.Distance(body.GetParticlePosition(i), binding.Target(i, skeleton.NodeTransformations)));
+        return maximum;
+    }
+
+    /// <summary> A root node then <paramref name="count"/> nodes named <paramref name="name"/>0, 1… each one <paramref name="step"/> from its parent </summary>
+    private static Skeleton Chain(string name, int count, Vector3 first, Vector3 step)
+    {
+        var nodes = new ModelNodeDefinition[count + 1];
+        nodes[0] = new ModelNodeDefinition { Name = "Root", ParentIndex = -1, Transform = { Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default };
+        for (int i = 1; i <= count; i++)
+            nodes[i] = new ModelNodeDefinition { Name = name + (i - 1), ParentIndex = i - 1, Transform = { Position = i == 1 ? first : step, Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default };
+        return new Skeleton { Nodes = nodes };
+    }
+
     private sealed class CountingHandler : IContactHandler
     {
         public bool NoContactResponse => false;
@@ -194,12 +298,28 @@ public class SoftBodyTests : GameTestBase
     private sealed class TestScene(TestGame game)
     {
         /// <summary> Adds an entity with a model generated from <paramref name="shape"/> and <paramref name="body"/> </summary>
-        public Entity Add(SoftBodyComponent body, PrimitiveProceduralModelBase shape, Vector3 position)
+        public Entity Add(SoftBodyComponent body, PrimitiveProceduralModelBase shape, Vector3 position) => Add(body, Model(shape, null), position);
+
+        /// <summary> Adds an entity with <paramref name="model"/> and, if any, <paramref name="body"/> </summary>
+        public Entity Add(SoftBodyComponent? body, Model model, Vector3 position)
         {
-            var entity = new Entity { new ModelComponent(new ProceduralModelDescriptor(shape).GenerateModel(game.Services)), body };
+            var entity = new Entity { new ModelComponent(model) };
+            if (body is not null)
+                entity.Add(body);
             entity.Transform.Position = position;
-            game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
+            Add(entity);
             return entity;
+        }
+
+        public void Add(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
+
+        public void Remove(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
+
+        public Model Model(PrimitiveProceduralModelBase shape, Skeleton? skeleton)
+        {
+            var model = new ProceduralModelDescriptor(shape).GenerateModel(game.Services);
+            model.Skeleton = skeleton;
+            return model;
         }
     }
 

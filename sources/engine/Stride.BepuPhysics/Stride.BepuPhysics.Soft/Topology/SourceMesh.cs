@@ -195,20 +195,6 @@ internal sealed class SourceMesh
         }
     }
 
-    private static Matrix[]? NodeTransforms(Model model)
-    {
-        if (model.Skeleton is null)
-            return null;
-
-        var nodes = model.Skeleton.Nodes;
-        var transforms = new Matrix[nodes.Length];
-        transforms[0] = Matrix.Identity; // Same as the colliders, the root node is the model's own space
-        for (int i = 1; i < nodes.Length; i++)
-        {
-            var node = nodes[i];
-            Matrix.Transformation(ref node.Transform.Scale, ref node.Transform.Rotation, ref node.Transform.Position, out var local);
-            transforms[i] = node.ParentIndex >= 0 ? local * transforms[node.ParentIndex] : local;
-        }
-        return transforms;
-    }
+    // Same as the colliders, the root node is the model's own space
+    private static Matrix[]? NodeTransforms(Model model) => model.Skeleton is null ? null : ModelNodes.BindPose(model.Skeleton);
 }

@@ -49,7 +49,8 @@ public abstract class SoftBodyComponent : CollidableComponent
 
     private BodyHandle[] _particles = [];
     private bool[] _pinned = [];
-    private (int Particle, SoftBodyPin Pin, Vector3 Offset)[] _pinTargets = [];
+    private PinTarget[] _pinTargets = [];
+    private Entity[] _nodeAnchors = []; // Anchors whose node matrices are refreshed before each step
     private Vector3[] _restOffsets = [];
     private Vector3 _restCentroid;
     private Quaternion _rotation = Quaternion.Identity;
@@ -277,6 +278,9 @@ public abstract class SoftBodyComponent : CollidableComponent
     /// <summary> Called before each simulation step </summary>
     internal virtual void BeforeStep(float deltaTime) { }
 
+    /// <summary> Whether the entity's transform follows the particles; false when something else moves the entity and the particles follow it </summary>
+    internal virtual bool MovesEntity => true;
+
     internal BodyReference Particle(int index) => Simulation!.Simulation.Bodies[_particles[index]];
 
     /// <summary> Builds the topology for the current model if it changed, false when this body cannot be created yet </summary>
@@ -340,19 +344,22 @@ public abstract class SoftBodyComponent : CollidableComponent
             _restCentroid += rest;
         _restCentroid /= count;
 
-        var pinTargets = new List<(int, SoftBodyPin, Vector3)>();
+        var anchorNodes = ResolveAnchorNodes();
+        var pinTargets = new List<PinTarget>();
         for (int i = 0; i < count; i++)
         {
             var rest = topology.RestPositions[i];
-            foreach (var pin in Pins)
+            for (int p = 0; p < Pins.Count; p++)
             {
+                var pin = Pins[p];
                 var region = pin.Region;
                 if (region.Contains(ref rest) != ContainmentType.Disjoint)
                 {
                     _pinned[i] = true;
                     var worldPosition = Vector3.TransformCoordinate(topology.RestPositions[i], world);
-                    var offset = pin.Anchor is { } anchor ? Vector3.TransformCoordinate(worldPosition, Matrix.Invert(anchor.Transform.WorldMatrix)) : worldPosition;
-                    pinTargets.Add((i, pin, offset));
+                    var target = new PinTarget(i, pin.Anchor, anchorNodes[p], default);
+                    var offset = pin.Anchor is null ? worldPosition : Vector3.TransformCoordinate(worldPosition, Matrix.Invert(AnchorWorld(target)));
+                    pinTargets.Add(target with { Offset = offset });
                     break;
                 }
             }
@@ -400,6 +407,7 @@ public abstract class SoftBodyComponent : CollidableComponent
         _particles = [];
         _pinned = [];
         _pinTargets = [];
+        _nodeAnchors = [];
     }
 
     internal override void OnMaterialPropertiesUpdated()
@@ -466,11 +474,49 @@ public abstract class SoftBodyComponent : CollidableComponent
         return scale;
     }
 
+    /// <summary> Per pin, the index of the anchor node it follows, or -1 for the anchor entity itself; refreshes the anchors' node matrices </summary>
+    private int[] ResolveAnchorNodes()
+    {
+        var nodes = new int[Pins.Count];
+        var anchors = new List<Entity>();
+        for (int p = 0; p < Pins.Count; p++)
+        {
+            nodes[p] = -1;
+            var pin = Pins[p];
+            if (pin.Anchor is not { } anchor || string.IsNullOrEmpty(pin.AnchorNode))
+                continue;
+
+            if (ModelNodes.Refresh(anchor) is { } skeleton && ModelNodes.Find(skeleton, pin.AnchorNode) is var node and >= 0)
+            {
+                nodes[p] = node;
+                if (anchors.Contains(anchor) == false)
+                    anchors.Add(anchor);
+            }
+            else
+            {
+                Logger.Warning($"A pin of {GetType().Name} on '{Entity?.Name}' follows the node '{pin.AnchorNode}', which the model of '{anchor.Name}' does not have; it follows the entity instead");
+            }
+        }
+        _nodeAnchors = anchors.ToArray();
+        return nodes;
+    }
+
+    private static Matrix AnchorWorld(in PinTarget target)
+    {
+        if (target.Node < 0)
+            return target.Anchor!.Transform.WorldMatrix;
+        return target.Anchor!.Get<ModelComponent>()!.Skeleton.NodeTransformations[target.Node].WorldMatrix;
+    }
+
     private void DrivePins(float deltaTime)
     {
-        foreach (var (particle, pin, offset) in _pinTargets)
+        foreach (var anchor in _nodeAnchors)
+            ModelNodes.Refresh(anchor);
+
+        foreach (var pinTarget in _pinTargets)
         {
-            var target = pin.Anchor is { } anchor ? Vector3.TransformCoordinate(offset, anchor.Transform.WorldMatrix) : offset;
+            var (particle, anchor, _, offset) = pinTarget;
+            var target = anchor is null ? offset : Vector3.TransformCoordinate(offset, AnchorWorld(pinTarget));
             var body = Particle(particle);
             var velocity = (target - body.Pose.Position.ToStride()) / deltaTime;
             body.Velocity.Linear = velocity.ToNumeric();
@@ -512,8 +558,11 @@ public abstract class SoftBodyComponent : CollidableComponent
 
         public void AfterSimulationUpdate(BepuSimulation simulation, float simTimeStep)
         {
-            if (owner._particles.Length > 0 && owner.Particle(owner._islandProbe).Awake)
+            if (owner.MovesEntity && owner._particles.Length > 0 && owner.Particle(owner._islandProbe).Awake)
                 owner.SyncTransform();
         }
     }
+
+    /// <summary> A pinned particle and where it goes: <see cref="Offset"/> in the space of the anchor's node, of the anchor, or of the world without an anchor </summary>
+    private readonly record struct PinTarget(int Particle, Entity? Anchor, int Node, Vector3 Offset);
 }
