@@ -51,9 +51,8 @@ internal sealed class TitleScene : VideoScene
     public override string Title => "Stride : mes PR en cours";
     public override string Pr => "un build qui les réunit toutes";
     public override string Description => "Échap : menu des scènes  |  H : masquer l'overlay pour filmer";
-    public override Vector3 Eye => new(4.6f, 2.4f, 5.2f);
-    public override Vector3 Target => new(0.9f, 1.0f, 0f);
-    public override bool AutoOrbit => true;
+    public override Vector3 Eye => new(-2.6f, 2.4f, 5.4f);
+    public override Vector3 Target => new(-1.2f, 1.1f, -0.2f);
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -79,7 +78,7 @@ internal sealed class TitleScene : VideoScene
 
         _standing = ProceduralCharacter.CreateHitboxes();
         _standing.Mode = SkeletonBodyMode.Standing;
-        var character = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(device, Look.Paint(device, Look.Teal, 0.5f)), new ProceduralCharacter.Animator { Speed = 0.5f }, _standing);
+        var character = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(device, Look.Paint(device, Look.Teal, 0.5f)), new ProceduralCharacter.Animator { Paused = true }, _standing);
         character.Transform.Position = new Vector3(1.0f, 0.4f, -1.2f);
         character.Transform.Rotation = Quaternion.RotationY(0.6f);
         game.AddToScene(character);
@@ -175,7 +174,7 @@ internal sealed class FinaleScene : VideoScene
             character.Add(walker);
             _walkers.Add(walker);
         }
-        _cannon = new Cannon(game, _walkers, new Vector3(-6.5f, 0.6f, 4.5f), 6f);
+        _cannon = new Cannon(game, _walkers, new Vector3(-6.5f, 0.6f, -4.5f), 6f);
         game.AddToScene(new Entity("canon") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.22f, Height = 0.9f, Tessellation = 24 }, Look.Navy, 0.6f)), _cannon });
         game.AddToScene(new Entity("ascenseur") { new Lifter(_walkers, 12f) });
 

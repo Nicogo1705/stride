@@ -12,6 +12,7 @@ using Stride.BepuPhysics.Debug;
 using Stride.BepuPhysics.Definitions;
 using Stride.Core.Mathematics;
 using Stride.Engine;
+using Stride.Extensions;
 using Stride.Harness.Demo;
 using Stride.Input;
 using Stride.Rendering.Compositing;
@@ -105,20 +106,23 @@ internal sealed class VideoDemoGame : BepuDemoGame
         fill.Transform.Rotation = Quaternion.RotationYawPitchRoll(0.75f + MathUtil.Pi, -0.45f, 0f);
         root.Add(fill);
 
-        _sky = new Entity("ciel") { new ModelComponent(Look.Model(this, new SphereProceduralModel { Radius = 400f, Tessellation = 48 }, Look.Sky(GraphicsDevice))) { IsShadowCaster = false } };
+        // The sphere's triangles turned inside out, so it is seen from the camera at its center
+        var skyData = Stride.Graphics.GeometricPrimitives.GeometricPrimitive.Sphere.New(400f, 48, toLeftHanded: true);
+        var skyBounds = new BoundingBox(new Vector3(-400f), new Vector3(400f));
+        var skyModel = new Stride.Rendering.Model { Look.Sky(GraphicsDevice) };
+        skyModel.Add(new Stride.Rendering.Mesh { Draw = new Stride.Graphics.GeometricPrimitives.GeometricPrimitive(GraphicsDevice, skyData).ToMeshDraw(), MaterialIndex = 0, BoundingBox = skyBounds });
+        _sky = new Entity("ciel") { new ModelComponent(skyModel) { IsShadowCaster = false } };
         root.Add(_sky);
 
-        // Antialiasing and a touch of bloom on top of the tone mapping of the default compositor
+        // A touch of bloom on top of the tone mapping of the default compositor
         if (FindForwardRenderer(SceneSystem.GraphicsCompositor.Game) is { PostEffects: PostProcessingEffects effects })
         {
-            if (effects.Antialiasing is ImageEffect antialiasing)
-                antialiasing.Enabled = true;
+            // FXAA is left off: enabled from code over this compositor it turns the image black
             effects.BrightFilter.Enabled = true;
             effects.BrightFilter.Threshold = 1.6f;
             effects.Bloom.Enabled = true;
             effects.Bloom.Amount = 0.08f;
             effects.Bloom.Radius = 12f;
-            effects.AmbientOcclusion.Enabled = true;
         }
     }
 

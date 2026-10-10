@@ -184,7 +184,6 @@ internal static class Look
             Attributes =
             {
                 Emissive = new MaterialEmissiveMapFeature(new ComputeTextureColor(texture) { Filtering = TextureFilter.Linear, AddressModeU = TextureAddressMode.Wrap, AddressModeV = TextureAddressMode.Clamp }) { Intensity = new ComputeFloat(1f) },
-                CullMode = CullMode.Front,
             },
         };
         return _sky = Material.New(device, descriptor);

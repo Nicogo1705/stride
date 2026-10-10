@@ -25,8 +25,8 @@ internal sealed class JellyScene : VideoScene
     public override string Title => "Corps mous volumiques + subdivisions des primitives";
     public override string Pr => "PR #3528, #3564";
     public override string Description => "les gelées s'écrasent et rebondissent ; à droite, LengthRings et Subdivisions permettent au maillage de se plier";
-    public override Vector3 Eye => new(1.2f, 4.4f, 8.2f);
-    public override Vector3 Target => new(0.4f, 0.7f, 0f);
+    public override Vector3 Eye => new(0.9f, 3.0f, 7.8f);
+    public override Vector3 Target => new(0.4f, 0.8f, 0.2f);
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -43,36 +43,36 @@ internal sealed class JellyScene : VideoScene
 
         // Two soft capsules held at one end over a post: only the one with rings along its length can bend
         var posts = Look.Paint(game.GraphicsDevice, Look.Navy, 0.35f);
-        foreach (var (rings, z, color) in new[] { (0, -1.6f, Look.Blue), (16, -0.5f, Look.Violet) })
+        foreach (var (rings, z, color) in new[] { (0, -2.0f, Look.Blue), (16, -0.8f, Look.Violet) })
         {
-            Look.StaticBox(game, new Vector3(0.5f, 1.4f, 0.5f), new Vector3(1.0f, 0.7f, z), posts, "poteau");
-            var body = new VolumetricSoftBodyComponent { Resolution = 12, Stiffness = 5f, ShearStiffness = 5f, VolumeStiffness = 10f, Damping = 0.25f, Mass = 2f };
+            Look.StaticBox(game, new Vector3(0.5f, 1.4f, 0.5f), new Vector3(0.4f, 0.7f, z), posts, "poteau");
+            var body = new VolumetricSoftBodyComponent { Resolution = 12, Stiffness = 28f, ShearStiffness = 28f, VolumeStiffness = 20f, Damping = 0.2f, Mass = 1.5f };
             // The capsule runs along its local Y: turned to lie along +X, its bottom end inside the post is pinned
-            body.Pins.Add(new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -1.4f, -1f), new Vector3(1f, -0.85f, 1f)) });
+            body.Pins.Add(new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -1.2f, -1f), new Vector3(1f, -0.65f, 1f)) });
             var capsule = new Entity("capsule molle")
             {
-                new ModelComponent(Look.Model(game, new CapsuleProceduralModel { Length = 2.2f, Radius = 0.2f, Tessellation = 20, LengthRings = rings }, color, 0.6f)),
+                new ModelComponent(Look.Model(game, new CapsuleProceduralModel { Length = 1.8f, Radius = 0.2f, Tessellation = 20, LengthRings = rings }, color, 0.6f)),
                 body,
             };
-            capsule.Transform.Position = new Vector3(2.15f, 1.65f, z);
+            capsule.Transform.Position = new Vector3(1.3f, 1.65f, z);
             capsule.Transform.Rotation = Quaternion.RotationZ(-MathUtil.PiOverTwo);
             game.AddToScene(capsule);
-            _labelled.Add((capsule, $"LengthRings = {rings}", new Vector3(1.6f, 0.55f, 0f)));
+            _labelled.Add((capsule, $"LengthRings = {rings}", Vector3.Zero));
         }
 
         // Two soft cubes pressed by a piston: the cube without subdivisions cannot bulge
-        var piston = new BodyComponent { Kinematic = true, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(0.9f, 0.3f, 2.6f) } } } };
-        var pistonEntity = new Entity("piston") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.9f, 0.3f, 2.6f) }, Look.Navy, 0.6f)), piston };
-        pistonEntity.Transform.Position = new Vector3(2.6f, 2.2f, 1.6f);
+        var piston = new BodyComponent { Kinematic = true, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(2.6f, 0.2f, 1.0f) } } } };
+        var pistonEntity = new Entity("piston") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(2.6f, 0.2f, 1.0f) }, Look.Stone, 0.6f)), piston };
+        pistonEntity.Transform.Position = new Vector3(2.9f, 1.75f, 1.3f);
         game.AddToScene(pistonEntity);
-        foreach (var (subdivisions, z, color) in new[] { (0, 1.0f, Look.Sun), (6, 2.2f, Look.Coral) })
+        foreach (var (subdivisions, x, color) in new[] { (0, 2.3f, Look.Sun), (6, 3.5f, Look.Coral) })
         {
             var cube = new Entity("cube mou")
             {
                 new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.8f), Subdivisions = subdivisions }, color, 0.7f)),
                 new VolumetricSoftBodyComponent { Resolution = 6, Stiffness = 9f, Damping = 0.3f },
             };
-            cube.Transform.Position = new Vector3(2.6f, 0.45f, z);
+            cube.Transform.Position = new Vector3(x, 0.45f, 1.3f);
             game.AddToScene(cube);
             _labelled.Add((cube, $"Subdivisions = {subdivisions}", new Vector3(0f, 0.85f, 0f)));
         }
@@ -83,7 +83,7 @@ internal sealed class JellyScene : VideoScene
                 // Down to squash the cubes to half their height, then back up, every 3 s
                 float phase = time % 3f;
                 float press = phase < 1.2f ? MathF.Sin(phase / 1.2f * MathF.PI) : 0f;
-                piston.SetTargetPose(new Vector3(2.6f, 1.25f - press * 0.6f, 1.6f));
+                piston.SetTargetPose(new Vector3(2.9f, 1.75f - press * 1.15f, 1.3f));
                 // A flick under the tip of each capsule every 4 s keeps them swinging
                 if (time % 4f < 1f / 60f)
                 {
@@ -91,7 +91,7 @@ internal sealed class JellyScene : VideoScene
                     {
                         for (int p = 0; p < soft!.ParticleCount; p++)
                         {
-                            if (soft.GetParticlePosition(p).X > 2.9f)
+                            if (soft.GetParticlePosition(p).X > 1.9f)
                                 soft.SetParticleVelocity(p, new Vector3(0f, 3.2f, 0f));
                         }
                     }
@@ -120,7 +120,7 @@ internal sealed class JellyScene : VideoScene
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
         foreach (var (entity, text, offset) in _labelled)
-            yield return (text.StartsWith("Length", StringComparison.Ordinal) ? new Vector3(2.0f, 2.25f, entity.Transform.Position.Z) : new Vector3(2.6f, 0f, entity.Transform.Position.Z) + offset, text);
+            yield return (text.StartsWith("Length", StringComparison.Ordinal) ? (text.EndsWith(" 0", StringComparison.Ordinal) ? new Vector3(1.6f, 2.35f, entity.Transform.Position.Z) : new Vector3(2.4f, 0.9f, entity.Transform.Position.Z)) : new Vector3(entity.Transform.Position.X, 1.1f, 1.3f), text);
     }
 
     public override IEnumerable<string> Status()
@@ -279,7 +279,7 @@ internal sealed class MolluscScene : VideoScene
         }
 
         // A coral one with a sail pinned to its head bone
-        var sailPath = Mollusc.Circle(new Vector3(2.2f, 0f, -0.2f), 1.5f, 0.6f, 2f);
+        var sailPath = Mollusc.Circle(new Vector3(2.7f, 0f, -0.6f), 1.3f, 0.6f, 2f);
         var coral = Mollusc.Add(game, Look.Coral, _driver, sailPath);
         _molluscs.Add(coral);
         var (position, yaw) = sailPath(0f);

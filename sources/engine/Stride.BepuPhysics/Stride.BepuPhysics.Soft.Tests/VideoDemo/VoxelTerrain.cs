@@ -68,8 +68,8 @@ internal sealed class VoxelTerrain
             for (int z = 0; z < samples - 1; z++)
             {
                 int a = x * samples + z, b = (x + 1) * samples + z, c = (x + 1) * samples + z + 1, d = x * samples + z + 1;
-                indices[i++] = a; indices[i++] = d; indices[i++] = c;
-                indices[i++] = a; indices[i++] = c; indices[i++] = b;
+                indices[i++] = a; indices[i++] = c; indices[i++] = d;
+                indices[i++] = a; indices[i++] = b; indices[i++] = c;
             }
         }
         RefreshVertices(0, samples - 1, 0, samples - 1);
@@ -104,7 +104,8 @@ internal sealed class VoxelTerrain
         model.Materials.Add(new MaterialInstance(material));
 
         Entity = new Entity("terrain voxel") { new StaticComponent { Collider = _collider }, new ModelComponent(model) };
-        Entity.Transform.Position = center - new Vector3(Size / 2f, 0f, Size / 2f);
+        // The lowest surface the field allows sits on the ground
+        Entity.Transform.Position = center - new Vector3(Size / 2f, cell * 1.5f - 0.02f, Size / 2f);
         game.AddToScene(Entity);
     }
 

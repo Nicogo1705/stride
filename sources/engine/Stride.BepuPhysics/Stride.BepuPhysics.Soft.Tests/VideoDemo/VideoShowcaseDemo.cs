@@ -58,13 +58,24 @@ public class VideoShowcaseDemo : GameTestBase
         var report = new List<string>();
         DemoSettings.RunTour(game, async () =>
         {
-            await game.Press(Keys.Escape);
+            // Shaders compile in the background on first use: warm every scene up before the shots
+            foreach (var scene in game.Scenes.Where((_, i) => Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY") is null || Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY")!.Split(',').Contains((i + 1).ToString())))
+            {
+                game.LoadScene(scene);
+                await game.Steps(150);
+            }
             int index = 1;
+            var only = Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY")?.Split(',').Select(int.Parse).ToHashSet();
             foreach (var scene in game.Scenes)
             {
+                if (only is not null && !only.Contains(index))
+                {
+                    index++;
+                    continue;
+                }
                 string Shot(string name) => Path.Combine(folder, $"{index:00}-{name}");
                 game.LoadScene(scene);
-                await game.Frames(120);
+                await game.Steps(120);
                 await game.CaptureTo(Shot("a"));
                 game.ClearFrameTimes();
                 switch (scene)
@@ -76,7 +87,7 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.Press(Keys.X);
                         break;
                     case OpacityScene:
-                        await game.Frames(240);
+                        await game.Steps(240);
                         await game.CaptureTo(Shot("a2-on"));
                         await game.Press(Keys.O);
                         await game.Frames(2);
@@ -84,7 +95,7 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.Press(Keys.O);
                         break;
                     case TargetPoseScene:
-                        await game.Frames(200);
+                        await game.Steps(200);
                         await game.Press(Keys.V);
                         await game.Press(Keys.V);
                         await game.Frames(2);
@@ -97,10 +108,10 @@ public class VideoShowcaseDemo : GameTestBase
                         break;
                     case FinaleScene:
                         game.SetOverlay(false);
-                        await game.Frames(240);
+                        await game.Steps(240);
                         await game.CaptureTo(Shot("b-sans-overlay"));
                         game.SetCamera(new Vector3(-2f, 3f, 6f), new Vector3(-1f, 0.8f, 0f));
-                        await game.Frames(180);
+                        await game.Steps(180);
                         await game.CaptureTo(Shot("c-proche"));
                         game.SetOverlay(true);
                         break;
@@ -108,7 +119,7 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.Press(Keys.F);
                         break;
                 }
-                await game.Frames(300);
+                await game.Steps(300);
                 await game.CaptureTo(Shot("b"));
                 report.Add($"{index:00} {scene.Name} : {game.FpsText()}");
                 index++;

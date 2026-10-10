@@ -220,7 +220,7 @@ internal sealed class TargetPoseScene : VideoScene
 
     public override string Title => "SetTargetPose en un pas + wireframes de debug";
     public override string Pr => "PR #3563, #3565";
-    public override string Description => "fantôme = orientation cible : le bras de gauche la rejoint à chaque pas, l'ancien calcul (à droite) traîne derrière ; les wireframes ne transparaissent plus à travers leur modèle";
+    public override string Description => "fantôme jaune = orientation cible : le tourniquet de gauche la rejoint à chaque pas, l'ancien calcul (à droite) traîne derrière ; les wireframes ne transparaissent plus";
     public override Vector3 Eye => new(0.6f, 3.6f, 7.6f);
     public override Vector3 Target => new(0.4f, 0.9f, 0f);
     public override bool WireframeByDefault => true;
@@ -238,12 +238,12 @@ internal sealed class TargetPoseScene : VideoScene
         {
             var pivot = new Vector3(x, 0.9f, 0f);
             Look.StaticBox(game, new Vector3(0.25f, 0.8f, 0.25f), pivot - new Vector3(0f, 0.5f, 0f), navy, "axe");
-            var size = new Vector3(2f, 0.16f, 0.5f);
+            var size = new Vector3(2f, 0.16f, 0.3f);
             var body = new BodyComponent { Kinematic = true, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = size } } } };
             var arm = new Entity(isFixed ? "bras SetTargetPose" : "bras ancien calcul") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = size }, color, 0.6f)), body };
             arm.Transform.Position = pivot;
             game.AddToScene(arm);
-            var ghost = new Entity("fantôme") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = size * 1.02f }, Look.Ghost(device, Color.White, 0.3f))) { IsShadowCaster = false } };
+            var ghost = new Entity("fantôme") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = size * new Vector3(1.01f, 1.6f, 1.15f) }, Look.Ghost(device, Look.Sun, 0.35f))) { IsShadowCaster = false } };
             ghost.Transform.Position = pivot;
             game.AddToScene(ghost);
             arms.Add((body, ghost, isFixed, pivot));
@@ -254,8 +254,9 @@ internal sealed class TargetPoseScene : VideoScene
             new StepDriver((time, step) =>
             {
                 // A swing of ±100 degrees around Z, faster and slower
-                float angle = 1.75f * MathF.Sin(time * 2.2f + 0.8f * MathF.Sin(time * 0.7f));
-                var target = Quaternion.RotationZ(angle) * Quaternion.RotationY(0.25f);
+                // A turnstile whose speed goes from 2 to 9 rad/s and back
+                float angle = 5.5f * time - 3.5f * MathF.Cos(time * 0.6f) / 0.6f;
+                var target = Quaternion.RotationY(angle);
                 foreach (var (body, ghost, isFixed, pivot) in arms)
                 {
                     // How far the last step landed from the target it was given
@@ -306,10 +307,10 @@ internal sealed class TargetPoseScene : VideoScene
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
         foreach (var (arm, _, text) in _arms)
-            yield return (arm.Transform.Position + new Vector3(0f, 1.5f, 0f), text);
-        yield return (new Vector3(2.5f, 1.45f, -0.5f), "collider = modèle : lignes visibles");
-        yield return (new Vector3(4.3f, 1.25f, -0.5f), "plus petit (jaune)");
-        yield return (new Vector3(2.0f, 1.2f, 0.3f), "plus grand (vermillon)");
+            yield return (arm.Transform.Position + new Vector3(0f, 1.3f, 0f), text);
+        yield return (new Vector3(2.5f, 1.75f, -0.5f), "collider = modèle : lignes visibles");
+        yield return (new Vector3(4.4f, 1.3f, -0.5f), "collider plus petit (jaune)");
+        yield return (new Vector3(2.0f, 0.2f, 0.9f), "collider plus grand (vermillon)");
     }
 
     public override IEnumerable<string> Status()

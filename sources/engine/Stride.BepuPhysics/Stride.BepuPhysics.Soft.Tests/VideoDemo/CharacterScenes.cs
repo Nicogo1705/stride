@@ -69,7 +69,7 @@ internal sealed class HitboxScene : VideoScene
     {
         foreach (var (character, body, text) in _characters)
         {
-            var at = body.BodyCount > 0 ? body.GetBodyPosition(0) : character.Transform.Position;
+            var at = character.Transform.Position;
             yield return (new Vector3(at.X, 2.25f, at.Z), text);
         }
     }
