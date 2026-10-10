@@ -172,6 +172,24 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
 
         foreach (var (collidable, (wireframes, cache)) in _wireFrameRenderObject)
         {
+            // Shapes on bodies of their own follow those bodies, whatever the mode
+            if (collidable.TryGetShapePose(0, out _))
+            {
+                for (int i = 0; i < wireframes.Length; i++)
+                {
+                    if (collidable.TryGetShapePose(i, out var shapePose))
+                    {
+                        var shapePosition = shapePose.Position.ToStride();
+                        var shapeRotation = shapePose.Orientation.ToStride();
+                        var unitScale = Vector3.One;
+                        Matrix.Transformation(ref unitScale, ref shapeRotation, ref shapePosition, out var shapeMatrix);
+                        wireframes[i].WorldMatrix = wireframes[i].CollidableBaseMatrix * shapeMatrix;
+                    }
+                    wireframes[i].Color = GetCurrentColor(collidable);
+                }
+                continue;
+            }
+
             Matrix matrix;
             switch (Mode)
             {
