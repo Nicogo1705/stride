@@ -11,11 +11,15 @@
     <!-- Force msbuild to check to rebuild this assembly instead of letting VS IDE guess -->
     <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
     <Nullable>enable</Nullable>
+    <StrideHarnessBepu>true</StrideHarnessBepu>
   </PropertyGroup>
+  <Import Project="$(USERPROFILE)\.claude\skills\stride-pr\harness\Harness.props" Condition="Exists('$(USERPROFILE)\.claude\skills\stride-pr\harness\Harness.props')" />
   <ItemGroup>
     <ProjectReference Include="..\..\..\tests\xunit.runner.stride\xunit.runner.stride.csproj" />
     <ProjectReference Include="..\..\Stride.Engine\Stride.Engine.csproj" />
     <ProjectReference Include="..\Stride.BepuPhysics\Stride.BepuPhysics.csproj" />
+    <!-- Video showcase demo: Bepu wireframe debug view -->
+    <ProjectReference Include="..\Stride.BepuPhysics.Debug\Stride.BepuPhysics.Debug.csproj" />
     <ProjectReference Include="..\Stride.BepuPhysics.Soft\Stride.BepuPhysics.Soft.csproj" />
     <ProjectReference Include="..\..\Stride.Graphics.Regression\Stride.Graphics.Regression.csproj" />
   </ItemGroup>
