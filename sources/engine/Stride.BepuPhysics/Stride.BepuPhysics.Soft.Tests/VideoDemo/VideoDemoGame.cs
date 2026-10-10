@@ -64,11 +64,11 @@ internal sealed class VideoDemoGame : BepuDemoGame
     // They sit inside the soft models, the view that shows them with the colliders hides those models
     protected override IReadOnlyList<string> DebugViews { get; } = new[]
     {
-        "Auto (selon la scène)",
-        "Colliders (wireframe Bepu)",
-        "Colliders + faces arrière",
-        "Colliders + particules (corps mous masqués)",
-        "Particules + modèles",
+        "Auto (per scene)",
+        "Colliders (Bepu wireframe)",
+        "Colliders + back faces",
+        "Colliders + particles (soft bodies hidden)",
+        "Particles + models",
         "Off",
     };
 
@@ -198,7 +198,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
         if (Input.IsKeyPressed(Keys.R) && CurrentScene is { } current)
         {
             LoadScene(current);
-            Flash("Scène remise à zéro");
+            Flash("Scene reset");
             return;
         }
         if (Input.IsKeyPressed(Keys.C))
@@ -206,7 +206,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
             _orbit = !_orbit;
             if (_orbit)
                 StartOrbit();
-            Flash("Caméra orbitale : " + (_orbit ? "on" : "off"));
+            Flash("Orbit camera: " + (_orbit ? "on" : "off"));
         }
         if (_orbit && CurrentScene is { } scene)
         {
@@ -234,16 +234,16 @@ internal sealed class VideoDemoGame : BepuDemoGame
     // One help for the whole demo: every key once, R is the scene reset (it also puts the camera back)
     protected override IEnumerable<(string Theme, string Keys)> SharedKeys()
     {
-        yield return ("Caméra", "Z Q S D : bouger  |  A / E : descendre / monter  |  clic droit : regarder  |  molette, Maj : vitesse  |  C : caméra orbitale");
-        yield return ("Démo", "Échap : scènes  |  R : remettre la scène à zéro  |  H : overlay complet / rien / compact  |  P : capture  |  " + FpsLimitKeyHelp);
-        yield return ("Vue", "V : vue debug suivante (" + string.Join(", ", DebugViews) + ")");
+        yield return ("Camera", "Z Q S D: move  |  A / E: down / up  |  right click: look  |  wheel, Shift: speed  |  C: orbit camera");
+        yield return ("Demo", "Esc: scenes  |  R: reset the scene  |  H: overlay full / none / compact  |  P: capture  |  " + FpsLimitKeyHelp);
+        yield return ("View", "V: next debug view (" + string.Join(", ", DebugViews) + ")");
     }
 
     protected override IEnumerable<(string Theme, string Keys)> SubjectKeys()
     {
-        yield return ("Physique", "clic gauche : attraper (rigides, corps mous, os)  |  molette : distance  |  F : lancer / balle  |  G : pluie d'objets  |  Espace : pause  |  N : un pas");
+        yield return ("Physics", "left click: grab (rigid bodies, soft bodies, bones)  |  wheel: distance  |  F: throw / ball  |  G: object rain  |  Space: pause  |  N: one step");
         if (CurrentScene is VideoScene { SceneKeys: { } keys })
-            yield return ("Scène", keys);
+            yield return ("Scene", keys);
     }
 
     protected override (string Theme, string Keys)? CollapsedKeyHint => null;
@@ -266,7 +266,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override IEnumerable<string> SubjectStatus()
     {
         if (Simulation is { Enabled: false })
-            yield return "EN PAUSE (Espace)";
+            yield return "PAUSED (Space)";
         if (CurrentScene is VideoScene scene)
         {
             foreach (var line in scene.Status())
@@ -306,11 +306,11 @@ internal sealed class VideoDemoGame : BepuDemoGame
 
     protected override string? DescribeGrabbable(CollidableComponent collidable) => collidable switch
     {
-        ClothComponent => "tissu (attrapable)",
-        SoftBodyComponent when collidable.Entity.Get<SkeletonBodyComponent>() is not null => "chair sur un squelette physique (attrapable par l'os le plus proche)",
-        SoftBodyComponent => "corps mou (attrapable)",
-        SkeletonBodyComponent { Mode: SkeletonBodyMode.Animated } => "os animé (attrapable : le perso passe en Ragdoll)",
-        SkeletonBodyComponent bones => $"os en {bones.Mode} (attrapable)",
+        ClothComponent => "cloth (grabbable)",
+        SoftBodyComponent when collidable.Entity.Get<SkeletonBodyComponent>() is not null => "flesh on a physical skeleton (grabbed by the nearest bone)",
+        SoftBodyComponent => "soft body (grabbable)",
+        SkeletonBodyComponent { Mode: SkeletonBodyMode.Animated } => "animated bone (grabbable: the character goes Ragdoll)",
+        SkeletonBodyComponent bones => $"{bones.Mode} bone (grabbable)",
         _ => base.DescribeGrabbable(collidable),
     };
 
@@ -515,6 +515,6 @@ internal sealed class VideoDemoGame : BepuDemoGame
     public string FpsText()
     {
         var (median, low) = Fps();
-        return string.Format(CultureInfo.InvariantCulture, "{0:0} FPS médian, {1:0} au 95e centile lent ({2} frames)", median, low, _frameTimes.Count);
+        return string.Format(CultureInfo.InvariantCulture, "{0:0} FPS median, {1:0} at the slow 95th percentile ({2} frames)", median, low, _frameTimes.Count);
     }
 }

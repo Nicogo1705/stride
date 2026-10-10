@@ -21,12 +21,12 @@ internal sealed class HitboxScene : VideoScene
 {
     private readonly List<(Entity Character, SkeletonBodyComponent Body, string Text)> _characters = new();
 
-    public override string Title => "Hitboxes d'os et ragdoll (passif, actif)";
-    public override string Pr => "PR à venir (sur #3528)";
-    public override string Description => "au centre, les hitboxes animées frappent la balle ; à gauche Ragdoll, à droite Active (les servos tiennent la pose) ; V : voir les hitboxes";
+    public override string Title => "Bone hitboxes and ragdoll (passive, active)";
+    public override string Pr => "upcoming PR (on #3528)";
+    public override string Description => "center: animated hitboxes kick the ball; left: Ragdoll, right: Active (servos hold the pose); V: show the hitboxes";
     public override Vector3 Eye => new(0.4f, 2.3f, 6.4f);
     public override Vector3 Target => new(0f, 0.85f, -0.6f);
-    public override string SceneKeys => "V : hitboxes en wireframe  |  M : mode de tous (Animated / Ragdoll / Active / Standing)  |  clic sur un os : le perso passe en Ragdoll";
+    public override string SceneKeys => "V: hitbox wireframes  |  M: mode of all (Animated / Ragdoll / Active / Standing)  |  click a bone: the character goes Ragdoll";
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -41,7 +41,7 @@ internal sealed class HitboxScene : VideoScene
         kicker.Transform.Rotation = Quaternion.RotationY(MathUtil.Pi * 0.82f);
         game.AddToScene(kicker);
         game.AddToScene(new Entity { new KickBall(game, kicker, animator) });
-        _characters.Add((kicker, kickerBody, "Animated : hitboxes cinématiques"));
+        _characters.Add((kicker, kickerBody, "Animated: kinematic hitboxes"));
 
         foreach (var (mode, x, color) in new[] { (SkeletonBodyMode.Ragdoll, -2.7f, Look.Coral), (SkeletonBodyMode.Active, 2.7f, Look.Teal) })
         {
@@ -51,7 +51,7 @@ internal sealed class HitboxScene : VideoScene
             character.Transform.Position = new Vector3(x, 0f, -0.4f);
             game.AddToScene(character);
             game.AddToScene(new Entity { new HitReplay(game, character, body, mode, x > 0 ? 3f : 0f) });
-            _characters.Add((character, body, mode == SkeletonBodyMode.Ragdoll ? "Ragdoll, puis retour à l'animation" : "Active : servos vers la pose animée"));
+            _characters.Add((character, body, mode == SkeletonBodyMode.Ragdoll ? "Ragdoll, then back to the animation" : "Active: servos toward the animated pose"));
         }
     }
 
@@ -77,7 +77,7 @@ internal sealed class HitboxScene : VideoScene
     public override IEnumerable<string> Status()
     {
         if (_characters.Count == 3)
-            yield return string.Format(CultureInfo.InvariantCulture, "modes : {0} / {1} / {2}  |  {3} corps par perso", _characters[0].Body.Mode, _characters[1].Body.Mode, _characters[2].Body.Mode, _characters[0].Body.BodyCount);
+            yield return string.Format(CultureInfo.InvariantCulture, "modes: {0} / {1} / {2}  |  {3} bodies per character", _characters[0].Body.Mode, _characters[1].Body.Mode, _characters[2].Body.Mode, _characters[0].Body.BodyCount);
     }
 
     /// <summary> A new ball in front of the kicking foot at the start of each kick of the animator </summary>
@@ -155,11 +155,11 @@ internal sealed class StandingScene : VideoScene
     private Cannon? _cannon;
 
     public override string Title => "Ragdoll Standing";
-    public override string Pr => "PR à venir (sur #3528)";
-    public override string Description => "ils marchent, encaissent les boulets, tombent et se relèvent là où ils atterrissent ; lâchés de 6 m, ils retombent sur leurs pieds";
+    public override string Pr => "upcoming PR (on #3528)";
+    public override string Description => "they walk, take cannonballs, fall and get up where they land; dropped from 6 m, they land on their feet";
     public override Vector3 Eye => new(0.5f, 3.6f, 8.6f);
     public override Vector3 Target => new(0f, 0.9f, 0f);
-    public override string SceneKeys => "clic sur un os : attraper, lancer (F) ; relâché, il se relève  |  B : boulet maintenant  |  L : lâcher le plus proche de 6 m";
+    public override string SceneKeys => "click a bone: grab, throw (F); released, it gets up  |  B: cannonball now  |  L: drop the nearest from 6 m";
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -211,14 +211,14 @@ internal sealed class StandingScene : VideoScene
 
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
-        yield return (new Vector3(-1.6f, 0f, 0.75f), "caisse statique");
-        yield return (new Vector3(1.6f, 0f, 0.75f), "caisse dynamique 100 kg");
+        yield return (new Vector3(-1.6f, 0f, 0.75f), "static crate");
+        yield return (new Vector3(1.6f, 0f, 0.75f), "dynamic crate, 100 kg");
     }
 
     public override IEnumerable<string> Status()
     {
         var grounded = _walkers.Count(w => w.Body.IsGrounded);
-        yield return $"{_walkers.Count} persos en Standing, {grounded} au sol  |  boulet toutes les 4 s (B : maintenant)  |  lâcher de 6 m toutes les 9 s (L)";
+        yield return $"{_walkers.Count} Standing characters, {grounded} on the ground  |  cannonball every 4 s (B: now)  |  6 m drop every 9 s (L)";
     }
 }
 

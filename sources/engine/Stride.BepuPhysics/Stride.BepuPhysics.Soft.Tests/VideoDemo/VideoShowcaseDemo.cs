@@ -133,7 +133,7 @@ public class VideoShowcaseDemo : GameTestBase
                 }
                 await game.Steps(300);
                 await game.CaptureTo(Shot("b"));
-                report.Add($"{index:00} {scene.Name} : {game.FpsText()}");
+                report.Add($"{index:00} {scene.Name}: {game.FpsText()}");
                 index++;
             }
 
@@ -148,7 +148,7 @@ public class VideoShowcaseDemo : GameTestBase
                 game.ClearFrameTimes();
                 await game.Steps(240);
                 await game.CaptureTo(Path.Combine(folder, name));
-                report.Add($"{name} : limite {game.FpsLimit}, {game.FpsText()}");
+                report.Add($"{name}: limit {game.FpsLimit}, {game.FpsText()}");
             }
             game.FpsLimit = 0;
         }, g => RunGameTest(g));

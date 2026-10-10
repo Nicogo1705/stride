@@ -25,12 +25,12 @@ internal sealed class VoxelScene : VideoScene
     private VoxelTerrain? _terrain;
     private Spawner? _rain;
 
-    public override string Title => "VoxelCollider : terrain voxel sans maillage";
+    public override string Title => "VoxelCollider: voxel terrain without a mesh";
     public override string Pr => "PR #3471";
-    public override string Description => "les objets roulent sur un champ de densité lu directement par Bepu ; X creuse un cratère au réticule, la collision suit sans reconstruction";
+    public override string Description => "objects roll on a density field Bepu reads directly; X digs a crater at the crosshair, collision follows with no rebuild";
     public override Vector3 Eye => new(0f, 9.5f, 15.5f);
     public override Vector3 Target => new(0f, 1.6f, 0f);
-    public override string SceneKeys => "X : creuser un cratère au réticule  |  V : les triangles que voit Bepu (surface nets)";
+    public override string SceneKeys => "X: dig a crater at the crosshair  |  V: the triangles Bepu sees (surface nets)";
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -66,7 +66,7 @@ internal sealed class VoxelScene : VideoScene
 
     public override IEnumerable<string> Status()
     {
-        yield return $"terrain 64 x 20 x 64 échantillons (cellules de 0,4 m), surface nets  |  {_rain?.Items.Count ?? 0} objets  |  cratères : {_terrain?.Craters ?? 0}";
+        yield return $"terrain 64 x 20 x 64 samples (0.4 m cells), surface nets  |  {_rain?.Items.Count ?? 0} objects  |  craters: {_terrain?.Craters ?? 0}";
     }
 }
 
@@ -77,12 +77,12 @@ internal sealed class OpacityScene : VideoScene
     private bool _on = true;
     private Spawner? _jellies;
 
-    public override string Title => "Opacité par épaisseur (OpacityThickness)";
+    public override string Title => "Opacity by thickness (OpacityThickness)";
     public override string Pr => "PR #3530";
-    public override string Description => "plus on traverse de matière, plus c'est opaque : bords clairs, cœur dense ; les gelées changent de teinte en s'écrasant (O : comparer sans)";
+    public override string Description => "the more matter you look through, the more opaque: clear edges, dense core; jellies change shade as they squash (O: compare without)";
     public override Vector3 Eye => new(0.6f, 3.2f, 7.4f);
     public override Vector3 Target => new(0f, 0.9f, 0f);
-    public override string SceneKeys => "O : OpacityThickness on / off";
+    public override string SceneKeys => "O: OpacityThickness on / off";
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -188,14 +188,14 @@ internal sealed class OpacityScene : VideoScene
 
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
-        yield return (new Vector3(-2.4f, 1.85f, -0.6f), "verre absorbant : 5 cm → 1,2 m");
-        yield return (new Vector3(0.4f, 1.85f, -0.9f), "bloc de verre autour d'une sphère");
-        yield return (new Vector3(2.9f, 1.4f, -0.6f), "eau diffusante, fond en pente");
+        yield return (new Vector3(-2.4f, 1.85f, -0.6f), "absorbing glass: 5 cm → 1.2 m");
+        yield return (new Vector3(0.4f, 1.85f, -0.9f), "glass block around a sphere");
+        yield return (new Vector3(2.9f, 1.4f, -0.6f), "scattering water, sloped bottom");
     }
 
     public override void DrawOverlay(VideoDemoGame game)
     {
-        var text = _on ? "OpacityThickness on" : "OpacityThickness off (opacité constante)";
+        var text = _on ? "OpacityThickness on" : "OpacityThickness off (constant opacity)";
         var size = game.Measure(text, 30, true);
         var corner = new Vector2((game.Screen.X - size.X) / 2f, game.Screen.Y - 120f);
         game.Panel(new RectangleF(corner.X - 18, corner.Y - 10, size.X + 36, size.Y + 20), _on ? new Color(30, 110, 60, 200) : new Color(140, 40, 40, 200));
@@ -204,7 +204,7 @@ internal sealed class OpacityScene : VideoScene
 
     public override IEnumerable<string> Status()
     {
-        yield return $"OpacityThickness : {(_on ? "on" : "off")} (O)  |  {_jellies?.Items.Count ?? 0} gelées molles translucides";
+        yield return $"OpacityThickness: {(_on ? "on" : "off")} (O)  |  {_jellies?.Items.Count ?? 0} translucent soft jellies";
     }
 }
 
@@ -218,13 +218,13 @@ internal sealed class TargetPoseScene : VideoScene
     private readonly List<(Entity Body, Entity Ghost, string Text)> _arms = new();
     private float _lagFixed, _lagFormer;
 
-    public override string Title => "SetTargetPose en un pas + wireframes de debug";
+    public override string Title => "SetTargetPose in one step + debug wireframes";
     public override string Pr => "PR #3563, #3565";
-    public override string Description => "fantôme jaune = orientation cible : le tourniquet de gauche la rejoint à chaque pas, l'ancien calcul (à droite) traîne derrière ; les wireframes ne transparaissent plus";
+    public override string Description => "yellow ghost = target orientation: the left turnstile reaches it every step, the former math (right) lags behind; wireframes no longer show through";
     public override Vector3 Eye => new(0.6f, 3.6f, 7.6f);
     public override Vector3 Target => new(0.4f, 0.9f, 0f);
     public override bool WireframeByDefault => true;
-    public override string SceneKeys => "V : Auto (wireframes on) / colliders / colliders + faces arrière / off";
+    public override string SceneKeys => "V: Auto (wireframes on) / colliders / colliders + back faces / off";
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -247,7 +247,7 @@ internal sealed class TargetPoseScene : VideoScene
             ghost.Transform.Position = pivot;
             game.AddToScene(ghost);
             arms.Add((body, ghost, isFixed, pivot));
-            _arms.Add((arm, ghost, isFixed ? "SetTargetPose (#3563)" : "ancien calcul : moitié de l'angle par pas"));
+            _arms.Add((arm, ghost, isFixed ? "SetTargetPose (#3563)" : "former math: half the angle per step"));
         }
         game.AddToScene(new Entity("bras")
         {
@@ -308,13 +308,13 @@ internal sealed class TargetPoseScene : VideoScene
     {
         foreach (var (arm, _, text) in _arms)
             yield return (arm.Transform.Position + new Vector3(0f, 1.3f, 0f), text);
-        yield return (new Vector3(2.5f, 1.75f, -0.5f), "collider = modèle : lignes visibles");
-        yield return (new Vector3(4.4f, 1.3f, -0.5f), "collider plus petit (jaune)");
-        yield return (new Vector3(2.0f, 0.2f, 0.9f), "collider plus grand (vermillon)");
+        yield return (new Vector3(2.5f, 1.75f, -0.5f), "collider = model: lines visible");
+        yield return (new Vector3(4.4f, 1.3f, -0.5f), "smaller collider (yellow)");
+        yield return (new Vector3(2.0f, 0.2f, 0.9f), "larger collider (vermilion)");
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return string.Format(CultureInfo.InvariantCulture, "écart à la cible : SetTargetPose {0:0.0}°  |  ancien calcul {1:0.0}°", _lagFixed, _lagFormer);
+        yield return string.Format(CultureInfo.InvariantCulture, "gap to target: SetTargetPose {0:0.0}°  |  former math {1:0.0}°", _lagFixed, _lagFormer);
     }
 }

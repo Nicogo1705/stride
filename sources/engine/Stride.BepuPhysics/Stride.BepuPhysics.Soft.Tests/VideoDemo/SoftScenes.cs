@@ -22,9 +22,9 @@ internal sealed class JellyScene : VideoScene
     private Spawner? _spawner;
     private readonly List<(Entity Entity, string Text, Vector3 Offset)> _labelled = new();
 
-    public override string Title => "Corps mous volumiques + subdivisions des primitives";
+    public override string Title => "Volumetric soft bodies + primitive subdivisions";
     public override string Pr => "PR #3528, #3564";
-    public override string Description => "les gelées s'écrasent et rebondissent ; à droite, LengthRings et Subdivisions permettent au maillage de se plier";
+    public override string Description => "jellies squash and bounce; on the right, LengthRings and Subdivisions let the mesh bend";
     public override Vector3 Eye => new(0.9f, 3.0f, 7.8f);
     public override Vector3 Target => new(0.4f, 0.8f, 0.2f);
 
@@ -125,16 +125,16 @@ internal sealed class JellyScene : VideoScene
 
     public override IEnumerable<string> Status()
     {
-        yield return $"{_spawner?.Items.Count ?? 0} gelées en circulation (recyclées en continu)  |  capsules : LengthRings 0 / 16  |  cubes : Subdivisions 0 / 6";
+        yield return $"{_spawner?.Items.Count ?? 0} jellies in play (recycled continuously)  |  capsules: LengthRings 0 / 16  |  cubes: Subdivisions 0 / 6";
     }
 }
 
 /// <summary> Flags in gusts of wind, a curtain taking balls, and a tent lifted by a kinematic sphere </summary>
 internal sealed class ClothScene : VideoScene
 {
-    public override string Title => "Tissus";
+    public override string Title => "Cloth";
     public override string Pr => "PR #3528";
-    public override string Description => "drapeaux en rafales, rideau qui encaisse des balles, tente soulevée par une sphère cinématique";
+    public override string Description => "flags in gusts, a curtain taking balls, a tent lifted by a kinematic sphere";
     public override Vector3 Eye => new(0.5f, 3.2f, 8.5f);
     public override Vector3 Target => new(0f, 1.6f, -0.5f);
 
@@ -231,15 +231,15 @@ internal sealed class ClothScene : VideoScene
 
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
-        yield return (new Vector3(-2.3f, 3.75f, -2.4f), "ClothComponent.Wind (rafales)");
-        yield return (new Vector3(3.2f, 3.3f, -0.6f), "épinglé en 3 points");
-        yield return (new Vector3(-3.0f, 0.25f, 3.6f), "4 coins épinglés + sphère cinématique");
+        yield return (new Vector3(-2.3f, 3.75f, -2.4f), "ClothComponent.Wind (gusts)");
+        yield return (new Vector3(3.2f, 3.3f, -0.6f), "pinned at 3 points");
+        yield return (new Vector3(-3.0f, 0.25f, 3.6f), "4 pinned corners + kinematic sphere");
     }
 
     public override IEnumerable<string> Status()
     {
         if (_flags.Count > 0)
-            yield return string.Format(CultureInfo.InvariantCulture, "vent du premier drapeau : {0:0.0} m/s", _flags[0].Wind.Length());
+            yield return string.Format(CultureInfo.InvariantCulture, "first flag wind: {0:0.0} m/s", _flags[0].Wind.Length());
     }
 }
 
@@ -250,9 +250,9 @@ internal sealed class MolluscScene : VideoScene
     private Entity? _sail;
     private readonly List<Entity> _molluscs = new();
 
-    public override string Title => "Corps mous à os : FollowSkeleton, AnchorNode, squelette physique";
-    public override string Pr => "PR à venir (sur #3528)";
-    public override string Description => "la chair suit le squelette : animé et imposé pour le vert, physique pour le corail (il tombe de la caisse, se fait bousculer, gigote au gravity gun) ; voile épinglé à l'os de la tête";
+    public override string Title => "Boned soft bodies: FollowSkeleton, AnchorNode, physical skeleton";
+    public override string Pr => "upcoming PR (on #3528)";
+    public override string Description => "the flesh follows the skeleton: animated and scripted for the green one, physical for the coral one (it falls off the crate, gets bumped, wriggles in the gravity gun); sail pinned to the head bone";
 
     public override void OnSimulationReady(BepuSimulation simulation) => PhysicalWorm.Filter(simulation);
     public override Vector3 Eye => new(1.0f, 4.0f, 6.8f);
@@ -313,17 +313,17 @@ internal sealed class MolluscScene : VideoScene
     {
         if (_molluscs.Count == 3)
         {
-            yield return (_molluscs[0].Transform.Position + new Vector3(0f, 0.75f, 0f), "squelette animé : trajectoire imposée");
-            yield return (_molluscs[1].Transform.Position + new Vector3(0f, 1.15f, 0f), "squelette physique (Active) + chair FollowSkeleton");
+            yield return (_molluscs[0].Transform.Position + new Vector3(0f, 0.75f, 0f), "animated skeleton: scripted path");
+            yield return (_molluscs[1].Transform.Position + new Vector3(0f, 1.15f, 0f), "physical skeleton (Active) + FollowSkeleton flesh");
             if (_sail is not null)
-                yield return (_sail.Transform.Position + new Vector3(0f, 0.55f, 0f), "voile : AnchorNode = os de la tête");
-            yield return (new Vector3(2.65f, 1.3f, 2.75f), "écrasé contre le mur");
+                yield return (_sail.Transform.Position + new Vector3(0f, 0.55f, 0f), "sail: AnchorNode = head bone");
+            yield return (new Vector3(2.65f, 1.3f, 2.75f), "squashed against the wall");
         }
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return $"{_driver?.Count ?? 0} mollusques à squelette animé + 1 à squelette physique ({Mollusc.Bones} os, SkeletonBodyComponent Active), capsule à LengthRings = 16 (#3564)";
+        yield return $"{_driver?.Count ?? 0} molluscs with an animated skeleton + 1 with a physical skeleton ({Mollusc.Bones} bones, SkeletonBodyComponent Active), capsule with LengthRings = 16 (#3564)";
     }
 
     /// <summary> Puts crates that left the teal mollusc's circle back ahead of it, once they rest </summary>

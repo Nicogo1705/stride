@@ -16,7 +16,7 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 /// <summary> A scene of the video showcase: a feature and its pull request, a checkered ground, labels anchored in the scene </summary>
 internal abstract class VideoScene : BepuDemoScene
 {
-    public override string Group => "Vidéo";
+    public override string Group => "Video";
 
     /// <summary> The feature shown, as in the overlay and the menu </summary>
     public abstract string Title { get; }

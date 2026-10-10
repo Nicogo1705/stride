@@ -20,37 +20,37 @@ internal sealed class TitleScene : VideoScene
 {
     private static readonly (string Section, string[] Lines)[] Card =
     {
-        ("Physique (Bepu)", new[]
+        ("Physics (Bepu)", new[]
         {
-            "Corps mous volumiques et tissus  ·  #3528",
-            "Corps mous à os : FollowSkeleton, AnchorNode  ·  à venir",
-            "Hitboxes d'os (SkeletonBodyComponent)  ·  à venir",
-            "Ragdoll passif, actif et Standing  ·  à venir",
+            "Volumetric soft bodies and cloth  ·  #3528",
+            "Boned soft bodies: FollowSkeleton, AnchorNode  ·  upcoming",
+            "Bone hitboxes (SkeletonBodyComponent)  ·  upcoming",
+            "Passive, active and Standing ragdolls  ·  upcoming",
             "VoxelCollider  ·  #3471",
-            "Wireframes de debug qui ne transparaissent plus  ·  #3565",
-            "SetTargetPose atteint l'orientation en un pas  ·  #3563",
+            "Debug wireframes no longer show through  ·  #3565",
+            "SetTargetPose reaches the orientation in one step  ·  #3563",
         }),
-        ("Rendu", new[]
+        ("Rendering", new[]
         {
-            "Subdivisions des primitives procédurales  ·  #3564",
-            "Opacité par épaisseur (OpacityThickness)  ·  #3530",
-            "Indicateur « vue de shadow map » pour les matériaux  ·  #3387",
+            "Procedural primitive subdivisions  ·  #3564",
+            "Opacity by thickness (OpacityThickness)  ·  #3530",
+            "\"Shadow map view\" flag for materials  ·  #3387",
         }),
-        ("Correctifs inclus dans ce build", new[]
+        ("Fixes included in this build", new[]
         {
-            "Direct3D12 : résolutions MSAA, barrières, UAV  ·  #3557, #3560",
-            "Vulkan : layouts par sous-ressource, labels  ·  #3559, #3562",
-            "Noms de debug après création  ·  #3558   |   UAV typés  ·  #3469",
-            "Direct3D11 : UAV compute lue ailleurs   |   tests GPU  ·  #3561",
-            "Build : nettoyage des dev packages   |   Game Studio : projets récents",
+            "Direct3D12: MSAA resolves, barriers, UAVs  ·  #3557, #3560",
+            "Vulkan: per-subresource layouts, labels  ·  #3559, #3562",
+            "Debug names after creation  ·  #3558   |   typed UAVs  ·  #3469",
+            "Direct3D11: compute UAV read elsewhere   |   GPU tests  ·  #3561",
+            "Build: dev package cleanup   |   Game Studio: recent projects",
         }),
     };
 
     private SkeletonBodyComponent? _standing;
 
-    public override string Title => "Stride : mes PR en cours";
-    public override string Pr => "un build qui les réunit toutes";
-    public override string Description => "Échap : menu des scènes  |  H : masquer l'overlay pour filmer";
+    public override string Title => "Stride: my open PRs";
+    public override string Pr => "one build with all of them";
+    public override string Description => "Esc: scene menu  |  H: hide the overlay to film";
     // Looking left of the diorama, so it stands in the right half of the image, clear of the card
     public override Vector3 Eye => new(-2.9f, 2.5f, 5.9f);
     public override Vector3 Target => new(-2.6f, 1.15f, -0.4f);
@@ -116,7 +116,7 @@ internal sealed class TitleScene : VideoScene
         }
         float height = 58f + lineCount * 22f + Card.Length * 8f;
         game.Panel(new RectangleF(x - 20f, y - 20f, width + 40f, height + 20f), new Color(18, 20, 32, 190));
-        game.Write("Stride : mes PR en cours", new Vector2(x, y - 6f), new Color(255, 193, 69), 28, true);
+        game.Write("Stride: my open PRs", new Vector2(x, y - 6f), new Color(255, 193, 69), 28, true);
         y += 42f;
         foreach (var (section, lines) in Card)
         {
@@ -140,13 +140,13 @@ internal sealed class FinaleScene : VideoScene
     private Cannon? _cannon;
 
     public override string Title => "Grand Finale";
-    public override string Pr => "toutes les PR à la fois";
-    public override string Description => "ragdolls Standing qui se baladent, mollusque à voile, drapeaux, gelées translucides, colline voxel, bras cinématique ; attrapez tout au réticule";
+    public override string Pr => "every PR at once";
+    public override string Description => "wandering Standing ragdolls, sail mollusc, flags, translucent jellies, voxel hill, kinematic arm; grab anything with the crosshair";
     public override Vector3 Eye => new(1.5f, 6.5f, 13.5f);
     public override Vector3 Target => new(0f, 1.0f, -0.5f);
     public override void OnSimulationReady(BepuSimulation simulation) => PhysicalWorm.Filter(simulation);
 
-    public override string SceneKeys => "X : cratère dans la colline  |  B : boulet  |  L : lâcher un perso de 6 m  |  M : mode des persos";
+    public override string SceneKeys => "X: crater in the hill  |  B: cannonball  |  L: drop a character from 6 m  |  M: character mode";
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -258,6 +258,6 @@ internal sealed class FinaleScene : VideoScene
 
     public override IEnumerable<string> Status()
     {
-        yield return $"{_walkers.Count} ragdolls ({(_walkers.Count > 0 ? _walkers[0].Body.Mode : SkeletonBodyMode.Standing)})  |  colline voxel : {_hill?.Craters ?? 0} cratères";
+        yield return $"{_walkers.Count} ragdolls ({(_walkers.Count > 0 ? _walkers[0].Body.Mode : SkeletonBodyMode.Standing)})  |  voxel hill: {_hill?.Craters ?? 0} craters";
     }
 }
