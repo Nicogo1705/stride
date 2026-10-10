@@ -166,9 +166,9 @@ namespace Stride.Core.Assets.Editor.ViewModel
 
             if (filePath != null && !File.Exists(filePath))
             {
-                RemoveRecentFile(filePath);
-
-                await ServiceProvider.Get<IDialogService>().MessageBoxAsync(string.Format(Tr._p("Message", @"The file '{0}' does not exist."), filePath), MessageBoxButton.OK, MessageBoxImage.Information);
+                var message = string.Format(Tr._p("Message", @"The file '{0}' does not exist. Do you want to remove it from the recent projects?"), filePath);
+                if (await ServiceProvider.Get<IDialogService>().MessageBoxAsync(message, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                    RemoveRecentFile(filePath);
                 return false;
             }
 
