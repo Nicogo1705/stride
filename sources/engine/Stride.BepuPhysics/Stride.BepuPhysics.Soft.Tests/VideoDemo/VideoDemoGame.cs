@@ -50,9 +50,9 @@ internal sealed class VideoDemoGame : BepuDemoGame
     /// <summary> Hides or shows the whole overlay, as the third press of H does </summary>
     public void SetOverlay(bool visible)
     {
-        _overlayState = visible ? 0 : 2;
+        _overlayState = visible ? 1 : 2;
         OverlayVisible = visible;
-        KeyHelpVisible = false;
+        KeyHelpVisible = visible;
     }
 
     /// <summary> The handle of one body of a skeleton, read by reflection: the component has no API to push a single bone </summary>
@@ -114,10 +114,18 @@ internal sealed class VideoDemoGame : BepuDemoGame
         _sky = new Entity("ciel") { new ModelComponent(skyModel) { IsShadowCaster = false } };
         root.Add(_sky);
 
-        // A touch of bloom on top of the tone mapping of the default compositor
+        // Antialiasing, ambient occlusion and a touch of bloom on top of the tone mapping of the default compositor
         if (FindForwardRenderer(SceneSystem.GraphicsCompositor.Game) is { PostEffects: PostProcessingEffects effects })
         {
-            // FXAA is left off: enabled from code over this compositor it turns the image black
+            // DisableAll (called by CreateDefault) also disables the range compression FXAA's first path needs, which leaves the image black:
+            // run FXAA last, after tone mapping, with the green channel as luminance so the alpha of captures stays opaque
+            effects.Bloom.StableConvolution = false;
+            if (effects.Antialiasing is FXAAEffect fxaa)
+            {
+                fxaa.InputLuminanceInAlpha = false;
+                fxaa.Enabled = true;
+            }
+            effects.AmbientOcclusion.Enabled = true;
             effects.BrightFilter.Enabled = true;
             effects.BrightFilter.Threshold = 1.6f;
             effects.Bloom.Enabled = true;
@@ -156,7 +164,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         if (Input.IsKeyPressed(Keys.H))
         {
-            // Compact overlay, then every key, then nothing at all for clean shots
+            // Compact overlay (scene and pull request), then everything with the keys, then nothing at all for clean shots
             _overlayState = (_overlayState + 1) % 3;
             OverlayVisible = _overlayState != 2;
             KeyHelpVisible = _overlayState == 1;
@@ -197,12 +205,35 @@ internal sealed class VideoDemoGame : BepuDemoGame
         _lastFrame = now;
     }
 
+    // One help for the whole demo: every key once, R is the scene reset (it also puts the camera back)
+    protected override IEnumerable<(string Theme, string Keys)> SharedKeys()
+    {
+        yield return ("Caméra", "Z Q S D : bouger  |  A / E : descendre / monter  |  clic droit : regarder  |  molette, Maj : vitesse  |  C : caméra orbitale");
+        yield return ("Démo", "Échap : scènes  |  R : remettre la scène à zéro  |  H : overlay complet / rien / compact  |  P : capture  |  V : wireframes Bepu (" + string.Join(", ", DebugViews) + ")");
+    }
+
     protected override IEnumerable<(string Theme, string Keys)> SubjectKeys()
     {
-        yield return ("Vidéo", "H : aide complète / overlay caché  |  C : caméra orbitale  |  R : remettre la scène à zéro  |  V : wireframes de debug Bepu");
-        yield return ("Physique", "clic gauche : attraper (rigides, corps mous, os)  |  molette : distance  |  F : lancer / balle  |  G : pluie d'objets  |  Espace : pause");
+        yield return ("Physique", "clic gauche : attraper (rigides, corps mous, os)  |  molette : distance  |  F : lancer / balle  |  G : pluie d'objets  |  Espace : pause  |  N : un pas");
         if (CurrentScene is VideoScene { SceneKeys: { } keys })
             yield return ("Scène", keys);
+    }
+
+    protected override (string Theme, string Keys)? CollapsedKeyHint => null;
+
+    protected override bool ShowBuildLabel => _overlayState == 1;
+
+    // Compact: the feature and its pull request only; full: what to look at, the scene's state, timings and the aim
+    protected override IEnumerable<string> OverlayLines()
+    {
+        if (_overlayState == 0)
+        {
+            if (CurrentScene is VideoScene scene)
+                yield return scene.Name;
+            yield break;
+        }
+        foreach (var line in base.OverlayLines())
+            yield return line;
     }
 
     protected override IEnumerable<string> SubjectStatus()
@@ -249,6 +280,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override string? DescribeGrabbable(CollidableComponent collidable) => collidable switch
     {
         ClothComponent => "tissu (attrapable)",
+        SoftBodyComponent when collidable.Entity.Get<SkeletonBodyComponent>() is not null => "chair sur un squelette physique (attrapable par l'os le plus proche)",
         SoftBodyComponent => "corps mou (attrapable)",
         SkeletonBodyComponent { Mode: SkeletonBodyMode.Animated } => "os animé (attrapable : le perso passe en Ragdoll)",
         SkeletonBodyComponent bones => $"os en {bones.Mode} (attrapable)",
@@ -264,6 +296,17 @@ internal sealed class VideoDemoGame : BepuDemoGame
                 if (bones.Mode == SkeletonBodyMode.Animated)
                     bones.Mode = SkeletonBodyMode.Ragdoll;
                 return new HeldBone(bones, hit.ChildIndex, hit.Point);
+            case SoftBodyComponent when hit.Collidable.Entity.Get<SkeletonBodyComponent>() is { BodyCount: > 0 } inner:
+                // Flesh on a physical skeleton: hold the bone nearest to the point, the flesh follows it
+                int nearest = 0;
+                for (int i = 1; i < inner.BodyCount; i++)
+                {
+                    if (Vector3.DistanceSquared(inner.GetBodyPosition(i), hit.Point) < Vector3.DistanceSquared(inner.GetBodyPosition(nearest), hit.Point))
+                        nearest = i;
+                }
+                if (inner.Mode == SkeletonBodyMode.Animated)
+                    inner.Mode = SkeletonBodyMode.Ragdoll;
+                return new HeldBone(inner, nearest, inner.GetBodyPosition(nearest));
             case SoftBodyComponent soft:
                 var particles = new List<(int Particle, Vector3 Offset, float Grip)>();
                 var closest = float.MaxValue;

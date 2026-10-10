@@ -247,11 +247,14 @@ internal sealed class ClothScene : VideoScene
 internal sealed class MolluscScene : VideoScene
 {
     private MolluscDriver? _driver;
+    private Entity? _sail;
     private readonly List<Entity> _molluscs = new();
 
-    public override string Title => "Corps mous à os : FollowSkeleton, AnchorNode";
+    public override string Title => "Corps mous à os : FollowSkeleton, AnchorNode, squelette physique";
     public override string Pr => "PR à venir (sur #3528)";
-    public override string Description => "la chair molle suit le squelette animé, se cogne et pousse les caisses ; le voile jaune est épinglé à l'os de la tête";
+    public override string Description => "la chair suit le squelette : animé et imposé pour le vert, physique pour le corail (il tombe de la caisse, se fait bousculer, gigote au gravity gun) ; voile épinglé à l'os de la tête";
+
+    public override void OnSimulationReady(BepuSimulation simulation) => PhysicalWorm.Filter(simulation);
     public override Vector3 Eye => new(1.0f, 4.0f, 6.8f);
     public override Vector3 Target => new(0.3f, 0.3f, 0f);
 
@@ -278,12 +281,13 @@ internal sealed class MolluscScene : VideoScene
             crates.Add(crate);
         }
 
-        // A coral one with a sail pinned to its head bone
-        var sailPath = Mollusc.Circle(new Vector3(2.7f, 0f, -0.6f), 1.3f, 0.6f, 2f);
-        var coral = Mollusc.Add(game, Look.Coral, _driver, sailPath);
+        // A coral one with a physical spine and a sail pinned to its head bone, starting on a crate it crawls off
+        Look.StaticBox(game, new Vector3(1.4f, 0.35f, 0.9f), new Vector3(2.7f, 0.175f, 0.75f), Look.Paint(game.GraphicsDevice, Look.Wood, 0.35f), "caisse");
+        float yaw = 0f;
+        var start = new Vector3(2.2f, 0.4f, 0.75f);
+        var coral = PhysicalWorm.Add(game, Look.Coral, start, yaw, PhysicalWorm.Circle(new Vector3(2.4f, 0f, -0.6f), 1.4f, 0.55f, -1.2f));
         _molluscs.Add(coral);
-        var (position, yaw) = sailPath(0f);
-        var head = position + Mollusc.Forward(yaw) * (Mollusc.Length / 2f + Mollusc.Radius * 0.6f);
+        var head = coral.Transform.Position + Mollusc.Forward(yaw) * (Mollusc.Length / 2f + Mollusc.Radius * 0.6f);
         var edge = new SoftBodyPin { Region = new BoundingBox(new Vector3(0.39f, -1f, -1f), new Vector3(0.41f, 1f, 1f)), Anchor = coral, AnchorNode = Mollusc.Head };
         var sail = new Entity("voile")
         {
@@ -291,6 +295,7 @@ internal sealed class MolluscScene : VideoScene
             new ClothComponent { Pins = { edge } },
         };
         sail.Transform.Position = head - Mollusc.Forward(yaw) * 0.4f + new Vector3(0f, Mollusc.Radius + 0.25f, 0f);
+        _sail = sail;
         sail.Transform.Rotation = Quaternion.RotationY(yaw);
         game.AddToScene(sail);
 
@@ -308,15 +313,17 @@ internal sealed class MolluscScene : VideoScene
     {
         if (_molluscs.Count == 3)
         {
-            yield return (_molluscs[0].Transform.Position + new Vector3(0f, 0.75f, 0f), "FollowSkeleton");
-            yield return (_molluscs[1].Transform.Position + new Vector3(0f, 1.05f, 0f), "voile : AnchorNode = os de la tête");
+            yield return (_molluscs[0].Transform.Position + new Vector3(0f, 0.75f, 0f), "squelette animé : trajectoire imposée");
+            yield return (_molluscs[1].Transform.Position + new Vector3(0f, 1.15f, 0f), "squelette physique (Active) + chair FollowSkeleton");
+            if (_sail is not null)
+                yield return (_sail.Transform.Position + new Vector3(0f, 0.55f, 0f), "voile : AnchorNode = os de la tête");
             yield return (new Vector3(2.65f, 1.3f, 2.75f), "écrasé contre le mur");
         }
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return $"{_driver?.Count ?? 0} mollusques, squelette de {Mollusc.Bones} os, capsule à LengthRings = 16 (#3564)";
+        yield return $"{_driver?.Count ?? 0} mollusques à squelette animé + 1 à squelette physique ({Mollusc.Bones} os, SkeletonBodyComponent Active), capsule à LengthRings = 16 (#3564)";
     }
 
     /// <summary> Puts crates that left the teal mollusc's circle back ahead of it, once they rest </summary>

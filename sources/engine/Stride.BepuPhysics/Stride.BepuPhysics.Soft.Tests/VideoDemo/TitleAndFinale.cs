@@ -51,8 +51,9 @@ internal sealed class TitleScene : VideoScene
     public override string Title => "Stride : mes PR en cours";
     public override string Pr => "un build qui les réunit toutes";
     public override string Description => "Échap : menu des scènes  |  H : masquer l'overlay pour filmer";
-    public override Vector3 Eye => new(-2.6f, 2.4f, 5.4f);
-    public override Vector3 Target => new(-1.2f, 1.1f, -0.2f);
+    // Looking left of the diorama, so it stands in the right half of the image, clear of the card
+    public override Vector3 Eye => new(-2.9f, 2.5f, 5.9f);
+    public override Vector3 Target => new(-2.6f, 1.15f, -0.4f);
 
     protected override void BuildScene(VideoDemoGame game)
     {
@@ -72,7 +73,7 @@ internal sealed class TitleScene : VideoScene
         jelly.Transform.Position = new Vector3(-0.6f, 1.05f, 0f);
         game.AddToScene(jelly);
         var press = new BodyComponent { Kinematic = true, Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = 0.3f } } } };
-        var pressEntity = new Entity("presse") { new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.3f, Tessellation = 32 }, Look.Navy, 0.7f)), press };
+        var pressEntity = new Entity("presse") { new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.3f, Tessellation = 32 }, Look.Blue, 0.7f)), press };
         pressEntity.Transform.Position = new Vector3(-0.6f, 2.4f, 0f);
         game.AddToScene(pressEntity);
 
@@ -104,29 +105,29 @@ internal sealed class TitleScene : VideoScene
     public override void DrawOverlay(VideoDemoGame game)
     {
         // A card on the left: title, then one line per pull request, grouped
-        float x = 40f, y = 150f;
+        float x = 40f, y = 70f;
         float width = 0f;
         int lineCount = Card.Sum(section => section.Lines.Length + 1);
         foreach (var (section, lines) in Card)
         {
-            width = MathF.Max(width, game.Measure(section, 22, true).X);
+            width = MathF.Max(width, game.Measure(section, 19, true).X);
             foreach (var line in lines)
-                width = MathF.Max(width, game.Measure(line, 19).X + 18f);
+                width = MathF.Max(width, game.Measure(line, 16).X + 18f);
         }
-        float height = 70f + lineCount * 27f + Card.Length * 10f;
+        float height = 58f + lineCount * 22f + Card.Length * 8f;
         game.Panel(new RectangleF(x - 20f, y - 20f, width + 40f, height + 20f), new Color(18, 20, 32, 190));
-        game.Write("Stride : mes PR en cours", new Vector2(x, y - 6f), new Color(255, 193, 69), 34, true);
-        y += 52f;
+        game.Write("Stride : mes PR en cours", new Vector2(x, y - 6f), new Color(255, 193, 69), 28, true);
+        y += 42f;
         foreach (var (section, lines) in Card)
         {
-            game.Write(section, new Vector2(x, y), new Color(46, 196, 182), 22, true);
-            y += 29f;
+            game.Write(section, new Vector2(x, y), new Color(46, 196, 182), 19, true);
+            y += 24f;
             foreach (var line in lines)
             {
-                game.Write("•  " + line, new Vector2(x + 6f, y), Color.White, 19);
-                y += 26f;
+                game.Write("•  " + line, new Vector2(x + 6f, y), Color.White, 16);
+                y += 21f;
             }
-            y += 10f;
+            y += 8f;
         }
     }
 }
@@ -143,6 +144,8 @@ internal sealed class FinaleScene : VideoScene
     public override string Description => "ragdolls Standing qui se baladent, mollusque à voile, drapeaux, gelées translucides, colline voxel, bras cinématique ; attrapez tout au réticule";
     public override Vector3 Eye => new(1.5f, 6.5f, 13.5f);
     public override Vector3 Target => new(0f, 1.0f, -0.5f);
+    public override void OnSimulationReady(BepuSimulation simulation) => PhysicalWorm.Filter(simulation);
+
     public override string SceneKeys => "X : cratère dans la colline  |  B : boulet  |  L : lâcher un perso de 6 m  |  M : mode des persos";
 
     protected override void BuildScene(VideoDemoGame game)
@@ -166,24 +169,22 @@ internal sealed class FinaleScene : VideoScene
         {
             var body = ProceduralCharacter.CreateHitboxes();
             body.Mode = SkeletonBodyMode.Standing;
-            var character = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(device, Look.Paint(device, colors[i], 0.5f)), new ProceduralCharacter.Animator { Time = i * 0.5f }, body);
+            var animator = new ProceduralCharacter.Animator { Time = i * 0.5f };
+            var character = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(device, Look.Paint(device, colors[i], 0.5f)), animator, body);
             character.Transform.Position = new Vector3(-1.5f + i * 1.6f, 0f, 0.8f + (i % 2) * 0.8f);
             character.Transform.Rotation = Quaternion.RotationY(i * 2.1f);
             game.AddToScene(character);
-            var walker = new Walker(character, body, i * 2.1f, walks: true, new Vector3(0f, 0f, 1f), 2.6f);
+            var walker = new Walker(character, body, animator, i * 2.1f, walks: true, new Vector3(0f, 0f, 1f), 2.6f);
             character.Add(walker);
             _walkers.Add(walker);
         }
-        _cannon = new Cannon(game, _walkers, new Vector3(-6.5f, 0.6f, -4.5f), 6f);
-        game.AddToScene(new Entity("canon") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.22f, Height = 0.9f, Tessellation = 24 }, Look.Navy, 0.6f)), _cannon });
+        _cannon = Cannon.Build(game, _walkers, new Vector3(-6.0f, 0.75f, -3.6f), 6f);
         game.AddToScene(new Entity("ascenseur") { new Lifter(_walkers, 12f) });
 
-        // A mollusc with its sail, crawling around the left
-        var driver = new MolluscDriver();
-        var path = Mollusc.Circle(new Vector3(-4.6f, 0f, -0.6f), 1.7f, 0.65f, 0f);
-        var mollusc = Mollusc.Add(game, Look.Mint, driver, path);
-        var (position, yaw) = path(0f);
-        var head = position + Mollusc.Forward(yaw) * (Mollusc.Length / 2f + Mollusc.Radius * 0.6f);
+        // A mollusc with a physical spine and its sail, crawling around the left
+        float yaw = MathUtil.PiOverTwo;
+        var mollusc = PhysicalWorm.Add(game, Look.Mint, new Vector3(-3.0f, 0f, -0.6f), yaw, PhysicalWorm.Circle(new Vector3(-4.6f, 0f, -0.6f), 1.7f, 0.6f, 0.4f));
+        var head = mollusc.Transform.Position + Mollusc.Forward(yaw) * (Mollusc.Length / 2f + Mollusc.Radius * 0.6f);
         var sail = new Entity("voile")
         {
             new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(0.8f, 0.55f), Tessellation = new Int2(16, 10), Normal = NormalDirection.UpZ, GenerateBackFace = true }, Look.Pink, 0.3f)),
@@ -192,7 +193,6 @@ internal sealed class FinaleScene : VideoScene
         sail.Transform.Position = head - Mollusc.Forward(yaw) * 0.4f + new Vector3(0f, Mollusc.Radius + 0.25f, 0f);
         sail.Transform.Rotation = Quaternion.RotationY(yaw);
         game.AddToScene(sail);
-        game.AddToScene(new Entity("mollusque") { driver });
 
         // Two flags at the back
         var flags = new List<ClothComponent>();
@@ -207,17 +207,17 @@ internal sealed class FinaleScene : VideoScene
         }
 
         // See-through jellies on a pedestal at the front left
-        Look.StaticBox(game, new Vector3(2.2f, 0.3f, 1.2f), new Vector3(-3.6f, 0.15f, 3.4f), ivory, "socle");
+        Look.StaticBox(game, new Vector3(3.2f, 0.3f, 1.5f), new Vector3(-1.6f, 0.15f, 4.6f), ivory, "socle");
         var jellyColors = new[] { new Color(255, 90, 130), new Color(120, 230, 110), new Color(150, 110, 255) };
         for (int i = 0; i < 3; i++)
         {
             var medium = i == 1 ? MaterialVolumeMedium.Absorbing : MaterialVolumeMedium.Scattering;
             var jelly = new Entity("gelée translucide")
             {
-                new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.55f), Subdivisions = 6 }, Look.Volume(device, jellyColors[i], 0.6f, 0.35f, medium))),
+                new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.85f), Subdivisions = 8 }, Look.Volume(device, jellyColors[i], 0.6f, 0.45f, medium))),
                 new VolumetricSoftBodyComponent { Resolution = 5, Stiffness = 7f, ShearStiffness = 7f, Damping = 0.3f },
             };
-            jelly.Transform.Position = new Vector3(-4.3f + i * 0.7f, 0.65f + i * 0.9f, 3.4f);
+            jelly.Transform.Position = new Vector3(-2.6f + i * 1.0f, 0.8f + i * 1.1f, 4.6f);
             jelly.Transform.Rotation = Quaternion.RotationYawPitchRoll(i, i * 0.5f, 0f);
             game.AddToScene(jelly);
         }

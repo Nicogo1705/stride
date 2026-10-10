@@ -189,13 +189,12 @@ internal sealed class StandingScene : VideoScene
             character.Transform.Rotation = Quaternion.RotationY(i * 1.3f);
             game.AddToScene(character);
             // The two on the crates stay there, the others walk
-            var walker = new Walker(character, body, i * 1.3f, walks: i >= 2, Vector3.Zero, 4.2f);
+            var walker = new Walker(character, body, animator, i * 1.3f, walks: i >= 2, Vector3.Zero, 4.2f);
             character.Add(walker);
             _walkers.Add(walker);
         }
 
-        _cannon = new Cannon(game, _walkers, new Vector3(-5.5f, 0.6f, -4.5f), 4f);
-        game.AddToScene(new Entity("canon") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.22f, Height = 0.9f, Tessellation = 24 }, Look.Navy, 0.6f)), _cannon });
+        _cannon = Cannon.Build(game, _walkers, new Vector3(-5.5f, 0.75f, -4.5f), 4f);
         game.AddToScene(new Entity("ascenseur") { new Lifter(_walkers, 9f) });
     }
 
@@ -224,13 +223,16 @@ internal sealed class StandingScene : VideoScene
 }
 
 /// <summary>
-/// Walks a Standing character around: the entity turns toward a heading the root servo follows, and the bodies get a horizontal push
-/// toward the walking speed while it stands; the entity stays under the hips. Off when it is grabbed, lying or in the air.
+/// Walks a Standing character around. The animation walks in place: the foot on the ground slides back under the hips at a speed
+/// that changes through the stride, so the hips and upper body get exactly that speed forward, while the legs are left to their servos
+/// and the friction of the floor; the stance foot then stays planted. The entity turns toward a heading the root servo follows, and stays under the hips.
+/// Off when it is grabbed, lying or in the air.
 /// </summary>
-internal sealed class Walker(Entity character, SkeletonBodyComponent body, float heading, bool walks, Vector3 center, float radius) : ScriptComponent, ISimulationUpdate
+internal sealed class Walker(Entity character, SkeletonBodyComponent body, ProceduralCharacter.Animator animator, float heading, bool walks, Vector3 center, float radius) : ScriptComponent, ISimulationUpdate
 {
     private float _heading = heading;
     private float _time;
+    private bool[]? _upper;
 
     public SkeletonBodyComponent Body => body;
 
@@ -240,8 +242,6 @@ internal sealed class Walker(Entity character, SkeletonBodyComponent body, float
 
     /// <summary> Seconds since it last fell from a drop </summary>
     public float SinceDrop { get; private set; } = 100f;
-
-    public float Speed { get; set; } = 0.75f;
 
     public void DropFrom(float height)
     {
@@ -275,23 +275,37 @@ internal sealed class Walker(Entity character, SkeletonBodyComponent body, float
         if (!walks || !standing)
             return;
 
+        if (_upper is null || _upper.Length != body.BodyCount)
+        {
+            _upper = new bool[body.BodyCount];
+            for (int i = 0; i < body.BodyCount; i++)
+            {
+                var node = body.GetBoneShape(i).NodeName;
+                _upper[i] = !(node.StartsWith("Thigh", StringComparison.Ordinal) || node.StartsWith("Shin", StringComparison.Ordinal) || node.StartsWith("Foot", StringComparison.Ordinal));
+            }
+        }
+
         // Wander, and turn back toward the middle near the edge of the area
         var toCenter = new Vector2(center.X - hips.X, center.Z - hips.Z);
-        _heading += simTimeStep * 0.35f * MathF.Sin(_time * 0.23f + heading * 3f);
+        _heading += simTimeStep * 0.3f * MathF.Sin(_time * 0.23f + heading * 3f);
         if (toCenter.Length() > radius)
         {
             float wanted = MathF.Atan2(toCenter.X, toCenter.Y);
             float delta = MathUtil.Mod(wanted - _heading + MathF.PI, MathUtil.TwoPi) - MathF.PI;
-            _heading += Math.Clamp(delta, -1.2f * simTimeStep, 1.2f * simTimeStep);
+            _heading += Math.Clamp(delta, -1f * simTimeStep, 1f * simTimeStep);
         }
         character.Transform.Rotation = Quaternion.RotationY(_heading);
         character.Transform.Position = new Vector3(hips.X, character.Transform.Position.Y, hips.Z);
 
+        // The hips move at the speed the planted foot slides back in the animation
         var direction = new Vector3(MathF.Sin(_heading), 0f, MathF.Cos(_heading));
+        var wantedVelocity = direction * animator.StanceSpeed();
         var current = body.GetBodyLinearVelocity(0);
-        var push = (direction * Speed - new Vector3(current.X, 0f, current.Z)) * 0.12f;
+        var push = (wantedVelocity - new Vector3(current.X, 0f, current.Z)) * 0.6f;
         for (int i = 0; i < body.BodyCount; i++)
         {
+            if (!_upper[i])
+                continue;
             var reference = VideoDemoGame.BoneBody(body, i);
             reference.Velocity.Linear += new System.Numerics.Vector3(push.X, 0f, push.Z);
             reference.Awake = true;
@@ -310,6 +324,36 @@ internal sealed class Cannon(DemoGame game, IReadOnlyList<Walker> targets, Vecto
     private Vector3? _pending;
 
     public void FireNow() => _time = period;
+
+    /// <summary> A wooden carriage on two wheels, and the barrel on top (this script) turning toward its target </summary>
+    public static Cannon Build(DemoGame game, IReadOnlyList<Walker> targets, Vector3 muzzle, float period)
+    {
+        var device = game.GraphicsDevice;
+        var wood = Look.Paint(device, Look.Wood, 0.35f);
+        var dark = Look.Paint(device, new Color(110, 72, 44), 0.3f);
+        var carriage = new Entity("affût") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.75f, 0.28f, 0.5f) }, wood)) };
+        carriage.Transform.Position = muzzle - new Vector3(0f, 0.42f, 0f);
+        foreach (var side in new[] { -1f, 1f })
+        {
+            var wheel = new Entity("roue") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.3f, Height = 0.08f, Tessellation = 32 }, dark)) };
+            wheel.Transform.Position = new Vector3(0f, -0.08f, side * 0.3f);
+            wheel.Transform.Rotation = Quaternion.RotationX(MathUtil.PiOverTwo);
+            carriage.AddChild(wheel);
+        }
+        game.AddToScene(carriage);
+
+        var metal = Look.Paint(device, new Color(96, 104, 120), 0.85f);
+        var cannon = new Cannon(game, targets, muzzle, period);
+        var barrel = new Entity("canon") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.15f, Height = 1.0f, Tessellation = 32 }, metal)), cannon };
+        var ring = new Entity("bouche") { new ModelComponent(Look.Model(game, new TorusProceduralModel { Radius = 0.16f, Thickness = 0.045f, Tessellation = 32 }, metal)) };
+        ring.Transform.Position = new Vector3(0f, 0.48f, 0f);
+        barrel.AddChild(ring);
+        var breech = new Entity("culasse") { new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.2f, Tessellation = 24 }, metal)) };
+        breech.Transform.Position = new Vector3(0f, -0.5f, 0f);
+        barrel.AddChild(breech);
+        game.AddToScene(barrel);
+        return cannon;
+    }
 
     public override void Update()
     {

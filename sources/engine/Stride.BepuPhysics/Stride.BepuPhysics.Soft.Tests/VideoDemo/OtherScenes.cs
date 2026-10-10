@@ -45,7 +45,7 @@ internal sealed class VoxelScene : VideoScene
     public static float Hills(float x, float z)
     {
         float r = new Vector2(x, z).Length();
-        return 1.4f + 0.12f * r + 1.1f * MathF.Sin(x * 0.42f + 0.6f) * MathF.Cos(z * 0.37f) + 0.5f * MathF.Sin(x * 0.9f + z * 0.7f) - 1.2f * MathF.Exp(-r * r / 10f);
+        return 2.6f + 0.12f * r + 1.1f * MathF.Sin(x * 0.42f + 0.6f) * MathF.Cos(z * 0.37f) + 0.5f * MathF.Sin(x * 0.9f + z * 0.7f) - 1.2f * MathF.Exp(-r * r / 10f);
     }
 
     public override void UpdateInput(VideoDemoGame game)

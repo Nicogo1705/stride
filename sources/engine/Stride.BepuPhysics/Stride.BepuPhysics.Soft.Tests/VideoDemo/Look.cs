@@ -26,7 +26,7 @@ internal static class Look
     public static readonly Color Violet = new(142, 108, 239);
     public static readonly Color Mint = new(123, 211, 137);
     public static readonly Color Pink = new(255, 143, 171);
-    public static readonly Color Navy = new(43, 45, 66);
+    public static readonly Color Navy = new(72, 84, 122); // slate blue: anything darker reads as black once lit
     public static readonly Color Ivory = new(237, 234, 226);
     public static readonly Color Wood = new(192, 133, 82);
     public static readonly Color Stone = new(150, 146, 140);

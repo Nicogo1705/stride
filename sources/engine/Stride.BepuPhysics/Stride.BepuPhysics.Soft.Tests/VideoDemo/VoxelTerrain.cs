@@ -61,17 +61,16 @@ internal sealed class VoxelTerrain
         _collider.SetData(samples, layers, samples, field);
 
         _vertices = new VertexPositionNormalColor[samples * samples];
-        var indices = new int[(samples - 1) * (samples - 1) * 6];
-        int i = 0;
+        var list = new System.Collections.Generic.List<int>();
         for (int x = 0; x < samples - 1; x++)
         {
             for (int z = 0; z < samples - 1; z++)
             {
                 int a = x * samples + z, b = (x + 1) * samples + z, c = (x + 1) * samples + z + 1, d = x * samples + z + 1;
-                indices[i++] = a; indices[i++] = c; indices[i++] = d;
-                indices[i++] = a; indices[i++] = b; indices[i++] = c;
+                list.AddRange([a, c, d, a, b, c]);
             }
         }
+        var indices = list.ToArray();
         RefreshVertices(0, samples - 1, 0, samples - 1);
         _vertexBuffer = Buffer.Vertex.New(game.GraphicsDevice, _vertices, GraphicsResourceUsage.Default);
         var indexBuffer = Buffer.Index.New(game.GraphicsDevice, indices);
@@ -132,7 +131,8 @@ internal sealed class VoxelTerrain
                     continue;
                 float t = distance / radius;
                 ref float h = ref _heights[x * _samples + z];
-                h = MathF.Max(_cell * 1.5f, h - depth * (1f - t * t));
+                // Craters keep a bottom of terrain above the sunken skirt
+                h = MathF.Max(MathF.Min(h, _cell * 1.5f + 0.4f), h - depth * (1f - t * t));
                 for (int y = 0; y < _layers; y++)
                     _collider.SetVoxel(x, y, z, Density(h, y));
             }
@@ -172,7 +172,9 @@ internal sealed class VoxelTerrain
                 var stone = new Color4(0.62f, 0.60f, 0.56f, 1f);
                 var color = Color4.Lerp(grass, earth, Math.Clamp(slope * 4f - 0.4f, 0f, 1f));
                 color = Color4.Lerp(color, stone, Math.Clamp((altitude - 0.72f) * 4f, 0f, 1f));
-                _vertices[x * _samples + z] = new VertexPositionNormalColor(new Vector3(x * _cell, h, z * _cell), normal, (Color)color);
+                // The flat skirt at the lowest height the field allows sinks under the floor, gradually, so the terrain rises out of the ground
+                float drawn = h - 0.25f * MathF.Max(0f, 1f - (h - _cell * 1.5f) / 0.35f);
+                _vertices[x * _samples + z] = new VertexPositionNormalColor(new Vector3(x * _cell, drawn, z * _cell), normal, (Color)color);
             }
         }
     }

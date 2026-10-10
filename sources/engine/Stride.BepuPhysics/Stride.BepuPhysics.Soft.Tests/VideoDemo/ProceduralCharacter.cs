@@ -243,6 +243,16 @@ internal static class ProceduralCharacter
         }
 
         /// <summary> Writes the pose at <paramref name="time"/> into the node transforms </summary>
+        /// <summary> The forward speed of the hips over the planted foot: the straight leg's foot moves back under the hips at this speed </summary>
+        public float StanceSpeed()
+        {
+            float omega = Speed * MathF.Tau;
+            float phase = Time * omega;
+            float thigh = 0.55f * MathF.Sin(phase);
+            // Foot of a straight leg: z = -0.84 sin(thigh), the planted leg is the one whose thigh angle grows
+            return 0.84f * MathF.Cos(thigh) * 0.55f * omega * MathF.Abs(MathF.Cos(phase));
+        }
+
         public void Apply(ModelNodeTransformation[] nodes, float time)
         {
             if (Kick)
@@ -258,8 +268,9 @@ internal static class ProceduralCharacter
             nodes[Spine].Transform.Rotation = Quaternion.RotationY(0.15f * swing);
             nodes[ThighL].Transform.Rotation = Quaternion.RotationX(0.55f * swing);
             nodes[ThighR].Transform.Rotation = Quaternion.RotationX(-0.55f * swing);
-            nodes[ShinL].Transform.Rotation = Quaternion.RotationX(0.6f * MathF.Max(0f, MathF.Sin(phase + 1.2f)));
-            nodes[ShinR].Transform.Rotation = Quaternion.RotationX(0.6f * MathF.Max(0f, -MathF.Sin(phase + 1.2f)));
+            // The knee bends while its leg swings forward, the other leg stays straight on the ground and moves back (a walk, not a moonwalk)
+            nodes[ShinL].Transform.Rotation = Quaternion.RotationX(0.9f * MathF.Max(0f, -MathF.Cos(phase)));
+            nodes[ShinR].Transform.Rotation = Quaternion.RotationX(0.9f * MathF.Max(0f, MathF.Cos(phase)));
             nodes[UpperArmL].Transform.Rotation = Quaternion.RotationX(-0.6f * swing) * Quaternion.RotationZ(0.12f);
             nodes[UpperArmR].Transform.Rotation = Quaternion.RotationX(0.6f * swing) * Quaternion.RotationZ(-0.12f);
             nodes[ForeArmL].Transform.Rotation = Quaternion.RotationX(-0.5f - 0.3f * MathF.Max(0f, -swing));
