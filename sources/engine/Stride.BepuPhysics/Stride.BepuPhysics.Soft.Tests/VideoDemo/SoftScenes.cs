@@ -292,7 +292,7 @@ internal sealed class MolluscScene : VideoScene
         var sail = new Entity("voile")
         {
             new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(0.8f, 0.55f), Tessellation = new Int2(16, 10), Normal = NormalDirection.UpZ, GenerateBackFace = true }, Look.Sun, 0.3f)),
-            new ClothComponent { Pins = { edge } },
+            new ClothComponent { CollisionLayer = PhysicalWorm.SailLayer, Pins = { edge } },
         };
         sail.Transform.Position = head - Mollusc.Forward(yaw) * 0.4f + new Vector3(0f, Mollusc.Radius + 0.25f, 0f);
         _sail = sail;

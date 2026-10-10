@@ -188,7 +188,7 @@ internal sealed class FinaleScene : VideoScene
         var sail = new Entity("voile")
         {
             new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(0.8f, 0.55f), Tessellation = new Int2(16, 10), Normal = NormalDirection.UpZ, GenerateBackFace = true }, Look.Pink, 0.3f)),
-            new ClothComponent { Pins = { new SoftBodyPin { Region = new BoundingBox(new Vector3(0.39f, -1f, -1f), new Vector3(0.41f, 1f, 1f)), Anchor = mollusc, AnchorNode = Mollusc.Head } } },
+            new ClothComponent { CollisionLayer = PhysicalWorm.SailLayer, Pins = { new SoftBodyPin { Region = new BoundingBox(new Vector3(0.39f, -1f, -1f), new Vector3(0.41f, 1f, 1f)), Anchor = mollusc, AnchorNode = Mollusc.Head } } },
         };
         sail.Transform.Position = head - Mollusc.Forward(yaw) * 0.4f + new Vector3(0f, Mollusc.Radius + 0.25f, 0f);
         sail.Transform.Rotation = Quaternion.RotationY(yaw);

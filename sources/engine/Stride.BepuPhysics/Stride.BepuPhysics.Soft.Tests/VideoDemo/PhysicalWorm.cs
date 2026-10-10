@@ -25,9 +25,17 @@ internal static class PhysicalWorm
 {
     public const CollisionLayer BoneLayer = CollisionLayer.Layer20;
     public const CollisionLayer FleshLayer = CollisionLayer.Layer21;
+    public const CollisionLayer SailLayer = CollisionLayer.Layer22;
 
-    /// <summary> Bones and flesh overlap by design: they must not push each other </summary>
-    public static void Filter(BepuSimulation simulation) => simulation.CollisionMatrix.Set(BoneLayer, FleshLayer, false);
+    /// <summary>
+    /// Bones and flesh overlap by design: they must not push each other. Nor may a sail pinned to the head push its bones:
+    /// its pinned particles are kinematic and follow the head, so each push moves their own target and they push again (the worm flew off at 80 m/s)
+    /// </summary>
+    public static void Filter(BepuSimulation simulation)
+    {
+        simulation.CollisionMatrix.Set(BoneLayer, FleshLayer, false);
+        simulation.CollisionMatrix.Set(SailLayer, BoneLayer, false);
+    }
 
     public static Entity Add(DemoGame game, Color color, Vector3 position, float yaw, Func<float, Vector3> carrot)
     {
