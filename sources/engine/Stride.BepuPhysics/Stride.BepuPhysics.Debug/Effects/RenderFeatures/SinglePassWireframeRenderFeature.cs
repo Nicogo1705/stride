@@ -55,13 +55,14 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     [DataMember(20)]
     public bool ShowBackFaces;
 
+    // Hues the collider colors (red, green, blue) never take, at full saturation so they stand out
     /// <summary> Color of the lines that sit inside their own visual model by more than the debug mesh's error </summary>
     [DataMember(30)]
-    public Color3 InsideColor = new(0.941f, 0.894f, 0.259f);
+    public Color3 InsideColor = new(1f, 1f, 0f);
 
     /// <summary> Color of the lines that stand out of their own visual model by more than the debug mesh's error </summary>
     [DataMember(40)]
-    public Color3 OutsideColor = new(0.835f, 0.369f, 0f);
+    public Color3 OutsideColor = new(1f, 0f, 1f);
 
     public override Type SupportedRenderObjectType => typeof(WireFrameRenderObject);
 
