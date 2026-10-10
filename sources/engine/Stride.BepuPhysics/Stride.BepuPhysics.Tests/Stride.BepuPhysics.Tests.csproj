@@ -11,7 +11,9 @@
     <!-- Force msbuild to check to rebuild this assembly instead of letting VS IDE guess -->
     <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
     <Nullable>enable</Nullable>
+    <StrideHarnessBepu>true</StrideHarnessBepu>
   </PropertyGroup>
+  <Import Project="$(USERPROFILE)\.claude\skills\stride-pr\harness\Harness.props" Condition="Exists('$(USERPROFILE)\.claude\skills\stride-pr\harness\Harness.props')" />
     <ItemGroup>
     <ProjectReference Include="..\..\..\tests\xunit.runner.stride\xunit.runner.stride.csproj" />
     <ProjectReference Include="..\..\Stride.Engine\Stride.Engine.csproj" />
