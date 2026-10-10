@@ -34,7 +34,8 @@ internal static class Look
     public static readonly Color[] Accents = { Coral, Sun, Teal, Blue, Violet, Mint, Pink };
 
     private static readonly Dictionary<(Color, float, float), Material> Lit = new();
-    private static Material? _floor, _sky;
+    private static Material? _floor;
+    private static Texture? _sky;
     private static GraphicsDevice? _device;
 
     /// <summary> Materials are per device: a new game (smoke test, tour) starts a new cache </summary>
@@ -44,7 +45,8 @@ internal static class Look
             return;
         _device = device;
         Lit.Clear();
-        _floor = _sky = null;
+        _floor = null;
+        _sky = null;
     }
 
     /// <summary> A lit material with a specular highlight; the environment term is the polynomial one (materials made at run time have no DFG table) </summary>
@@ -157,8 +159,11 @@ internal static class Look
         return _floor = Material.New(device, descriptor);
     }
 
-    /// <summary> A vertical gradient drawn on the inside of a sphere around the camera: deep blue at the zenith, hazy near the horizon </summary>
-    public static Material Sky(GraphicsDevice device)
+    /// <summary>
+    /// A vertical gradient in the equirectangular layout of a skybox, drawn by a <see cref="BackgroundComponent"/>: deep blue at the zenith, hazy near the horizon.
+    /// The background leaves the depth buffer at the far plane, where ambient occlusion sees a flat plane and leaves the sky alone.
+    /// </summary>
+    public static Texture Sky(GraphicsDevice device)
     {
         if (_sky is not null)
             return _sky;
@@ -178,15 +183,7 @@ internal static class Look
                 pixels[y * 4 + x] = (Color)color;
         }
         image.PixelBuffer[0].SetPixels(pixels);
-        var texture = Texture.New(device, image);
-        var descriptor = new MaterialDescriptor
-        {
-            Attributes =
-            {
-                Emissive = new MaterialEmissiveMapFeature(new ComputeTextureColor(texture) { Filtering = TextureFilter.Linear, AddressModeU = TextureAddressMode.Wrap, AddressModeV = TextureAddressMode.Clamp }) { Intensity = new ComputeFloat(1f) },
-            },
-        };
-        return _sky = Material.New(device, descriptor);
+        return _sky = Texture.New(device, image);
     }
 
     /// <summary> A static box whose top is at <paramref name="top"/> </summary>

@@ -13,8 +13,10 @@ using Stride.BepuPhysics.Definitions;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Extensions;
+using Stride.Graphics;
 using Stride.Harness.Demo;
 using Stride.Input;
+using Stride.Rendering;
 using Stride.Rendering.Compositing;
 using Stride.Rendering.Images;
 using Stride.Rendering.Lights;
@@ -30,7 +32,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
 {
     private static readonly FieldInfo SkeletonBodies = typeof(SkeletonBodyComponent).GetField("_bodies", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    private Entity? _sky;
+    private ParticleView? _particles;
     private int _overlayState;
     private bool _orbit;
     private float _orbitAngle, _orbitRadius, _orbitHeight;
@@ -58,14 +60,42 @@ internal sealed class VideoDemoGame : BepuDemoGame
     /// <summary> The handle of one body of a skeleton, read by reflection: the component has no API to push a single bone </summary>
     public static BodyReference BoneBody(SkeletonBodyComponent bones, int index) => bones.Simulation!.Simulation.Bodies[((BodyHandle[])SkeletonBodies.GetValue(bones)!)[index]];
 
-    protected override IReadOnlyList<string> DebugViews { get; } = new[] { "Auto (selon la scène)", "Colliders (wireframe Bepu)", "Colliders + faces arrière", "Off" };
+    // Bepu's wireframe has no shape for a soft body (its particle collider gives none): the particles have their own view.
+    // They sit inside the soft models, the view that shows them with the colliders hides those models
+    protected override IReadOnlyList<string> DebugViews { get; } = new[]
+    {
+        "Auto (selon la scène)",
+        "Colliders (wireframe Bepu)",
+        "Colliders + faces arrière",
+        "Colliders + particules (corps mous masqués)",
+        "Particules + modèles",
+        "Off",
+    };
 
     protected override void OnDebugViewChanged(int view)
     {
         var scene = CurrentScene as VideoScene;
-        ShowRigidWireframe(view is 1 or 2 || (view == 0 && scene?.WireframeByDefault == true));
+        ShowRigidWireframe(view is 1 or 2 or 3 || (view == 0 && scene?.WireframeByDefault == true));
         if (DebugRenderer is { } renderer)
             renderer.ShowBackFaces = view == 2;
+        _particles ??= new ParticleView(this);
+        _particles.Visible = view is 3 or 4;
+        foreach (var body in SoftBodies())
+        {
+            if (body.Entity.Get<ModelComponent>() is { } model)
+                model.Enabled = view != 3;
+        }
+    }
+
+    // Soft bodies can sit on child entities (a sail on its mollusc)
+    private IEnumerable<SoftBodyComponent> SoftBodies() => SceneSystem.SceneInstance.RootScene.Entities.SelectMany(Descendants).SelectMany(e => e.Components.OfType<SoftBodyComponent>());
+
+    private static IEnumerable<Entity> Descendants(Entity entity) => new[] { entity }.Concat(entity.Transform.Children.SelectMany(child => Descendants(child.Entity)));
+
+    protected override void OnSceneUnloading(DemoScene scene)
+    {
+        base.OnSceneUnloading(scene);
+        _particles?.Clear();
     }
 
     private DebugRenderComponent? DebugRenderer => SceneSystem.SceneInstance.RootScene.Entities.Select(e => e.Get<DebugRenderComponent>()).FirstOrDefault(c => c is not null);
@@ -106,13 +136,9 @@ internal sealed class VideoDemoGame : BepuDemoGame
         fill.Transform.Rotation = Quaternion.RotationYawPitchRoll(0.75f + MathUtil.Pi, -0.45f, 0f);
         root.Add(fill);
 
-        // The sphere's triangles turned inside out, so it is seen from the camera at its center
-        var skyData = Stride.Graphics.GeometricPrimitives.GeometricPrimitive.Sphere.New(400f, 48, toLeftHanded: true);
-        var skyBounds = new BoundingBox(new Vector3(-400f), new Vector3(400f));
-        var skyModel = new Stride.Rendering.Model { Look.Sky(GraphicsDevice) };
-        skyModel.Add(new Stride.Rendering.Mesh { Draw = new Stride.Graphics.GeometricPrimitives.GeometricPrimitive(GraphicsDevice, skyData).ToMeshDraw(), MaterialIndex = 0, BoundingBox = skyBounds });
-        _sky = new Entity("ciel") { new ModelComponent(skyModel) { IsShadowCaster = false } };
-        root.Add(_sky);
+        // A skybox rather than a sphere around the camera: a sky in the depth buffer at 400 m gets the ambient occlusion's
+        // depth precision noise, rings and black dots
+        root.Add(new Entity("ciel") { new BackgroundComponent { Texture = Look.Sky(GraphicsDevice), Intensity = 1f, Is2D = false } });
 
         // Antialiasing, ambient occlusion and a touch of bloom on top of the tone mapping of the default compositor
         if (FindForwardRenderer(SceneSystem.GraphicsCompositor.Game) is { PostEffects: PostProcessingEffects effects })
@@ -197,8 +223,8 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override void BeforeDraw()
     {
         base.BeforeDraw();
-        if (_sky is not null)
-            _sky.Transform.Position = CameraEntity.Transform.Position;
+        // After the physics step, as the soft body processor deforms the models: particles and meshes show the same instant
+        _particles?.Update();
         var now = Stopwatch.GetTimestamp();
         if (_lastFrame != 0)
             _frameTimes.Add(Stopwatch.GetElapsedTime(_lastFrame, now).TotalMilliseconds);
@@ -209,7 +235,8 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override IEnumerable<(string Theme, string Keys)> SharedKeys()
     {
         yield return ("Caméra", "Z Q S D : bouger  |  A / E : descendre / monter  |  clic droit : regarder  |  molette, Maj : vitesse  |  C : caméra orbitale");
-        yield return ("Démo", "Échap : scènes  |  R : remettre la scène à zéro  |  H : overlay complet / rien / compact  |  P : capture  |  V : wireframes Bepu (" + string.Join(", ", DebugViews) + ")");
+        yield return ("Démo", "Échap : scènes  |  R : remettre la scène à zéro  |  H : overlay complet / rien / compact  |  P : capture  |  " + FpsLimitKeyHelp);
+        yield return ("Vue", "V : vue debug suivante (" + string.Join(", ", DebugViews) + ")");
     }
 
     protected override IEnumerable<(string Theme, string Keys)> SubjectKeys()
@@ -355,6 +382,102 @@ internal sealed class VideoDemoGame : BepuDemoGame
             var body = BoneBody(_bones, _index);
             body.Velocity.Linear = new System.Numerics.Vector3(velocity.X, velocity.Y, velocity.Z);
             body.Awake = true;
+        }
+    }
+
+    /// <summary> The particles of every soft body as small octahedra, pinned ones in red, as in the soft body sample's particle view </summary>
+    private sealed class ParticleView(VideoDemoGame game)
+    {
+        private readonly Dictionary<SoftBodyComponent, View> _views = new();
+
+        private sealed record View(Entity Entity, Stride.Graphics.Buffer VertexBuffer, Stride.Graphics.Buffer IndexBuffer, VertexPositionNormalTexture[] Vertices);
+
+        public bool Visible { get; set; }
+
+        private static float RadiusOf(SoftBodyComponent body) => body.Collider is Colliders.ParticleCollider collider ? collider.ActualRadius * 0.4f : 0.02f;
+
+        public void Update()
+        {
+            var bodies = Visible ? game.SoftBodies().Where(b => b.ParticleCount > 0).ToHashSet() : new HashSet<SoftBodyComponent>();
+
+            foreach (var body in _views.Keys.Where(b => !bodies.Contains(b) || _views[b].Vertices.Length != b.ParticleCount * 6).ToArray())
+                Remove(body);
+
+            foreach (var body in bodies)
+            {
+                if (!_views.TryGetValue(body, out var view))
+                    _views[body] = view = Create(body);
+                Refresh(body, view);
+            }
+        }
+
+        public void Clear()
+        {
+            foreach (var body in _views.Keys.ToArray())
+                Remove(body);
+        }
+
+        private void Remove(SoftBodyComponent body)
+        {
+            var view = _views[body];
+            game.SceneSystem.SceneInstance.RootScene.Entities.Remove(view.Entity);
+            view.VertexBuffer.Dispose();
+            view.IndexBuffer.Dispose();
+            _views.Remove(body);
+        }
+
+        private View Create(SoftBodyComponent body)
+        {
+            // Six corners of an octahedron per particle, the free particles' triangles first, then the pinned ones'
+            ReadOnlySpan<int> faces = [0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5];
+            var indices = new List<int>();
+            int free = 0;
+            foreach (var pinned in new[] { false, true })
+            {
+                for (int p = 0; p < body.ParticleCount; p++)
+                {
+                    if (body.IsParticlePinned(p) != pinned)
+                        continue;
+                    foreach (var corner in faces)
+                        indices.Add(p * 6 + corner);
+                }
+                if (!pinned)
+                    free = indices.Count;
+            }
+
+            var device = game.GraphicsDevice;
+            var vertices = new VertexPositionNormalTexture[body.ParticleCount * 6];
+            var vertexBuffer = Stride.Graphics.Buffer.Vertex.New(device, bufferSize: vertices.Length * VertexPositionNormalTexture.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
+            var indexBuffer = Stride.Graphics.Buffer.Index.New(device, indices.ToArray());
+            var vertexBinding = new VertexBufferBinding(vertexBuffer, VertexPositionNormalTexture.Layout, vertices.Length);
+            var indexBinding = new IndexBufferBinding(indexBuffer, true, indices.Count);
+            var everywhere = new BoundingBox(new Vector3(-1e6f), new Vector3(1e6f));
+
+            var model = new Model { BoundingBox = everywhere };
+            model.Materials.Add(new MaterialInstance(Look.Paint(device, Look.Sun, 0.3f)));
+            model.Materials.Add(new MaterialInstance(Look.Paint(device, Color.Red, 0.3f)));
+            model.Meshes.Add(new Mesh { MaterialIndex = 0, BoundingBox = everywhere, Draw = new MeshDraw { PrimitiveType = PrimitiveType.TriangleList, DrawCount = free, VertexBuffers = [vertexBinding], IndexBuffer = indexBinding } });
+            model.Meshes.Add(new Mesh { MaterialIndex = 1, BoundingBox = everywhere, Draw = new MeshDraw { PrimitiveType = PrimitiveType.TriangleList, StartLocation = free, DrawCount = indices.Count - free, VertexBuffers = [vertexBinding], IndexBuffer = indexBinding } });
+
+            var entity = new Entity("particules") { new ModelComponent(model) { IsShadowCaster = false } };
+            game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
+            return new View(entity, vertexBuffer, indexBuffer, vertices);
+        }
+
+        private void Refresh(SoftBodyComponent body, View view)
+        {
+            var radius = RadiusOf(body);
+            for (int p = 0; p < body.ParticleCount; p++)
+            {
+                var position = body.GetParticlePosition(p);
+                for (int axis = 0; axis < 6; axis++)
+                {
+                    var direction = Vector3.Zero;
+                    direction[axis / 2] = axis % 2 == 0 ? 1f : -1f;
+                    view.Vertices[p * 6 + axis] = new VertexPositionNormalTexture(position + direction * radius, direction, Vector2.Zero);
+                }
+            }
+            view.VertexBuffer.SetData<VertexPositionNormalTexture>(game.GraphicsContext.CommandList, view.Vertices.AsSpan());
         }
     }
 

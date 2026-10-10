@@ -100,8 +100,7 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.Press(Keys.V);
                         await game.Frames(2);
                         await game.CaptureTo(Shot("a2-faces-arriere"));
-                        await game.Press(Keys.V);
-                        await game.Press(Keys.V);
+                        await PressViews(game, 4);
                         break;
                     case StandingScene:
                         await game.Press(Keys.L);
@@ -114,6 +113,19 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.Steps(180);
                         await game.CaptureTo(Shot("c-proche"));
                         game.SetOverlay(true);
+                        await PressViews(game, 3);
+                        await game.Frames(2);
+                        await game.CaptureTo(Shot("c2-particules"));
+                        await game.Press(Keys.V);
+                        await game.Frames(2);
+                        await game.CaptureTo(Shot("c3-particules-modeles"));
+                        await PressViews(game, 2);
+                        // The pose of a P capture where the sky took most of the screen
+                        const float yaw = 0.5204f, pitch = -0.0021f;
+                        var eye = new Vector3(-22.86f, 39.335f, 13.062f);
+                        game.SetCamera(eye, eye + new Vector3(-MathF.Sin(yaw) * MathF.Cos(pitch), MathF.Sin(pitch), -MathF.Cos(yaw) * MathF.Cos(pitch)));
+                        await game.Frames(3);
+                        await game.CaptureTo(Shot("d-ciel"));
                         break;
                     default:
                         await game.Press(Keys.F);
@@ -124,9 +136,30 @@ public class VideoShowcaseDemo : GameTestBase
                 report.Add($"{index:00} {scene.Name} : {game.FpsText()}");
                 index++;
             }
+
+            // The tour runs without a limit; K from there goes 30, 60, then 144. Measured on a light scene, where the limit
+            // holds, and on the finale, whose physics steps take longer than a frame at 144 FPS
+            for (int i = 0; i < 3; i++)
+                await game.Press(Keys.K);
+            foreach (var (scene, name) in new[] { (game.Scenes[^2], "11-limite-fps-leger"), (game.Scenes[^1], "11-limite-fps-finale") })
+            {
+                game.LoadScene(scene);
+                await game.Steps(60);
+                game.ClearFrameTimes();
+                await game.Steps(240);
+                await game.CaptureTo(Path.Combine(folder, name));
+                report.Add($"{name} : limite {game.FpsLimit}, {game.FpsText()}");
+            }
+            game.FpsLimit = 0;
         }, g => RunGameTest(g));
         Directory.CreateDirectory(folder);
         File.WriteAllLines(Path.Combine(folder, "fps.txt"), report);
         Console.WriteLine(string.Join(Environment.NewLine, report));
+    }
+
+    private static async System.Threading.Tasks.Task PressViews(VideoDemoGame game, int count)
+    {
+        for (int i = 0; i < count; i++)
+            await game.Press(Keys.V);
     }
 }
