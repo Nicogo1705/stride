@@ -128,3 +128,47 @@ public class StrideCheckDevPackageInputs : Task
         }
     }
 }
+
+// Cleanup when dev packages are turned off: deletes the stubs the stamp lists, then the stamp files. Every project
+// runs it in a parallel build, so it holds the generator's mutex: the first one cleans, the others find no stamp.
+public class StrideCleanDevPackages : Task
+{
+    [Required] public string StampPath { get; set; }
+    [Required] public ITaskItem[] Feeds { get; set; }
+    [Output] public bool Cleaned { get; set; }
+
+    public override bool Execute()
+    {
+        using (var mutex = new Mutex(false, @"Global\StrideDevPackages"))
+        {
+            try { mutex.WaitOne(); } catch (AbandonedMutexException) { /* the holder died; the stamp is still whole lines */ }
+            try
+            {
+                if (!File.Exists(StampPath))
+                    return true;
+                foreach (var rawLine in File.ReadAllLines(StampPath))
+                {
+                    var stub = rawLine.Trim();
+                    if (stub.Length == 0) continue;
+                    foreach (var feed in Feeds)
+                        DeleteIfExists(Path.Combine(feed.ItemSpec, stub));
+                }
+                DeleteIfExists(StampPath + ".inputs");
+                DeleteIfExists(StampPath + ".stubs");
+                File.Delete(StampPath);
+                Cleaned = true;
+            }
+            finally
+            {
+                mutex.ReleaseMutex();
+            }
+        }
+        return true;
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+}
