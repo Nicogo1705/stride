@@ -562,7 +562,7 @@ public abstract class SoftBodyComponent : CollidableComponent
         for (int p = 0; p < Pins.Count; p++)
         {
             var region = Pins[p].Region;
-            if (region.Minimum != region.Maximum)
+            if (MathUtil.IsZero((region.Maximum - region.Minimum).LengthSquared()) == false)
             {
                 for (int i = 0; i < rests.Length; i++)
                 {
@@ -574,7 +574,7 @@ public abstract class SoftBodyComponent : CollidableComponent
 
             // A point: the particles closest to it, those of a whole cell or edge when it lies between them
             var point = region.Minimum;
-            if (point == Vector3.Zero && Pins[p].Anchor?.AnchorEntity is { } anchor)
+            if (MathUtil.IsZero(point.LengthSquared()) && Pins[p].Anchor?.AnchorEntity is { } anchor)
                 point = Vector3.TransformCoordinate(AnchorMatrix(anchor, anchorNodes[p]).TranslationVector, Matrix.Invert(world));
             float nearest = float.MaxValue;
             for (int i = 0; i < rests.Length; i++)
