@@ -651,6 +651,44 @@ public class SkeletonBodyTests : GameTestBase
         Assert.True(tilt < 0.1f && chestTilt < 0.1f, state);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public static void StandingDoesNotStandOnItsOwnCollidables(bool onChild)
+    {
+        Vector3 hips = default;
+        CollidableComponent? ground = null, floor = null;
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            var scene = game.SceneSystem.SceneInstance.RootScene;
+            floor = AddGround(scene).Get<StaticComponent>();
+
+            // A plate under the hips belonging to the character, on its entity or a child, which the bones go through
+            var (entity, body) = AddHumanoid(scene, Vector3.Zero, Quaternion.Identity, SkeletonBodyMode.Animated);
+            var plate = new StaticComponent { CollisionLayer = CollisionLayer.Layer1, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(1f, 0.05f, 1f), PositionLocal = new Vector3(0, 0.6f, 0) } } } };
+            if (onChild)
+                entity.AddChild(new Entity { plate });
+            else
+                entity.Add(plate);
+            await game.Script.NextFrame();
+            body.Simulation!.CollisionMatrix.Set(CollisionLayer.Layer0, CollisionLayer.Layer1, false);
+
+            body.Mode = SkeletonBodyMode.Standing;
+            for (int frame = 0; frame < 180; frame++)
+                await game.Script.NextFrame();
+
+            hips = body.GetBodyPosition(0);
+            ground = body.Ground;
+            game.Exit();
+        });
+        RunGameTest(game);
+
+        Assert.Same(floor, ground);
+        Assert.True(MathF.Abs(hips.Y - 1f) < 0.08f, $"hips at {hips}, not at their animated height above the floor");
+    }
+
     private static (Entity Entity, SkeletonBodyComponent Body) AddHumanoid(Scene scene, Vector3 position, Quaternion rotation, SkeletonBodyMode mode)
     {
         var body = new SkeletonBodyComponent { Mode = mode };

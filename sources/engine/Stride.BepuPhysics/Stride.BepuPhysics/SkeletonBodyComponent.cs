@@ -69,7 +69,6 @@ public class SkeletonBodyComponent : CollidableComponent
     private ConstraintHandle[] _servos = [];
     private readonly List<(int Body, ConstraintHandle Linear, ConstraintHandle Angular)> _upright = new();
     private float _standingForce, _standingTorque;
-    private readonly HitInfoStack[] _groundHits = new HitInfoStack[8];
     private CollidableComponent? _ground;
     private float _groundHeight;
     private Matrix[] _animated = [];
@@ -227,7 +226,10 @@ public class SkeletonBodyComponent : CollidableComponent
     /// <summary>
     /// What the character stands on in <see cref="SkeletonBodyMode.Standing"/>: the closest collidable under the hips within the reach of its animated legs, null when it is in the air.
     /// </summary>
-    /// <remarks> Found by a ray cast down from the root body before each step, ignoring the bodies of this component. </remarks>
+    /// <remarks>
+    /// Found by a ray cast down from the root body before each step, ignoring what belongs to the character:
+    /// the collidables of its entity and of the children of the entity, and those attached to its bodies, like flesh joined to the bones.
+    /// </remarks>
     [DataMemberIgnore]
     public CollidableComponent? Ground => _ground;
 
@@ -664,22 +666,26 @@ public class SkeletonBodyComponent : CollidableComponent
         ServoSettings = new ServoSettings(float.MaxValue, 0f, maximumForce),
     };
 
-    /// <summary> Finds the closest collidable of another component under <paramref name="origin"/>, within <paramref name="reach"/> </summary>
+    /// <summary> Finds the closest collidable under <paramref name="origin"/> within <paramref name="reach"/> which does not belong to the character </summary>
     private CollidableComponent? FindGround(Vector3 origin, float reach, out float height)
     {
-        height = 0f;
-        CollidableComponent? ground = null;
-        float closest = float.MaxValue;
-        foreach (var hit in Simulation!.RayCastPenetrating(origin, -Vector3.UnitY, reach, _groundHits))
-        {
-            if (ReferenceEquals(hit.Collidable, this) || hit.Distance >= closest)
-                continue;
-            closest = hit.Distance;
-            ground = hit.Collidable;
-            height = hit.Point.Y;
-        }
+        var handler = new GroundHitHandler(this);
+        Simulation!.Simulation.RayCast(origin.ToNumeric(), -NVector3.UnitY, reach, Simulation.BufferPool, ref handler);
+        height = origin.Y - handler.Distance;
+        return handler.Ground;
+    }
 
-        return ground;
+    /// <summary> Whether <paramref name="collidable"/> is part of the character: this component, a collidable of its entity or of a child, or one attached to its bodies </summary>
+    private bool BelongsToCharacter(CollidableComponent collidable)
+    {
+        if (ReferenceEquals(collidable, this) || collidable.IsAttachedTo(this))
+            return true;
+        for (var entity = collidable.Entity; entity is not null; entity = entity.Transform.Parent?.Entity)
+        {
+            if (ReferenceEquals(entity, Entity))
+                return true;
+        }
+        return false;
     }
 
     private OneBodyAngularServo Turn(NQuaternion target) => new()
@@ -875,6 +881,26 @@ public class SkeletonBodyComponent : CollidableComponent
         {
             if (owner._mode != SkeletonBodyMode.Animated)
                 owner.WriteNodes();
+        }
+    }
+
+    /// <summary> Keeps the closest hit on a collidable which does not belong to the character </summary>
+    private struct GroundHitHandler(SkeletonBodyComponent owner) : IRayHitHandler
+    {
+        public CollidableComponent? Ground;
+        public float Distance;
+
+        public bool AllowTest(CollidableReference collidable) => owner.BelongsToCharacter(owner.Simulation!.GetComponent(collidable)) == false;
+
+        public bool AllowTest(CollidableReference collidable, int childIndex) => true;
+
+        public void OnRayHit(in RayData ray, ref float maximumT, float t, NVector3 normal, CollidableReference collidable, int childIndex)
+        {
+            if (t >= maximumT)
+                return;
+            maximumT = t;
+            Distance = t;
+            Ground = owner.Simulation!.GetComponent(collidable);
         }
     }
 
