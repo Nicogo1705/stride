@@ -45,15 +45,15 @@ internal static class Bean
     {
         var shapes = new List<BoneShape>
         {
-            new() { NodeName = "Hips", Shape = new BoxCollider { Size = new Vector3(0.44f, 0.2f, 0.34f), PositionLocal = new Vector3(0f, 0.04f, 0f), Mass = 6f } },
-            new() { NodeName = "Spine", Shape = new CapsuleCollider { Radius = 0.22f, Length = 0.2f, Mass = 7f } },
-            new() { NodeName = "Head", Shape = new SphereCollider { Radius = 0.22f, PositionLocal = new Vector3(0f, 0.04f, 0f), Mass = 4f } },
+            new() { NodeName = "Hips", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.44f, 0.2f, 0.34f), PositionLocal = new Vector3(0f, 0.04f, 0f), Mass = 6f } },
+            new() { NodeName = "Spine", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.22f, Length = 0.2f, Mass = 7f } },
+            new() { NodeName = "Head", AlongBone = false, Shape = new SphereCollider { Radius = 0.22f, PositionLocal = new Vector3(0f, 0.04f, 0f), Mass = 4f } },
         };
         foreach (var side in new[] { "L", "R" })
         {
-            shapes.Add(new() { NodeName = $"Arm.{side}", Shape = new CapsuleCollider { Radius = 0.075f, Length = 0.16f, PositionLocal = new Vector3(0f, -0.12f, 0f), Mass = 1f } });
-            shapes.Add(new() { NodeName = $"Leg.{side}", Shape = new CapsuleCollider { Radius = 0.08f, Length = 0.1f, PositionLocal = new Vector3(0f, -0.1f, 0f), Mass = 2f } });
-            shapes.Add(new() { NodeName = $"Foot.{side}", Shape = new BoxCollider { Size = new Vector3(0.15f, 0.08f, 0.24f), PositionLocal = new Vector3(0f, -0.04f, 0.04f), Mass = 1f } });
+            shapes.Add(new() { NodeName = $"Arm.{side}", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.075f, Length = 0.16f, PositionLocal = new Vector3(0f, -0.12f, 0f), Mass = 1f } });
+            shapes.Add(new() { NodeName = $"Leg.{side}", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.08f, Length = 0.1f, PositionLocal = new Vector3(0f, -0.1f, 0f), Mass = 2f } });
+            shapes.Add(new() { NodeName = $"Foot.{side}", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.15f, 0.08f, 0.24f), PositionLocal = new Vector3(0f, -0.04f, 0.04f), Mass = 1f } });
         }
         return shapes;
     }

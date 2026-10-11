@@ -49,6 +49,13 @@ internal sealed class VideoDemoGame : BepuDemoGame
 
     public void ClearFrameTimes() => _frameTimes.Clear();
 
+    /// <summary> Switches to a debug view as V does </summary>
+    public void SetDebugView(int view)
+    {
+        DebugView = view;
+        OnDebugViewChanged(view);
+    }
+
     /// <summary> Hides or shows the whole overlay, as the third press of H does </summary>
     public void SetOverlay(bool visible)
     {
@@ -61,19 +68,20 @@ internal sealed class VideoDemoGame : BepuDemoGame
     public static BodyReference BoneBody(SkeletonBodyComponent bones, int index) => bones.Simulation!.Simulation.Bodies[((BodyHandle[])SkeletonBodies.GetValue(bones)!)[index]];
 
     /// <summary> The debug views, in the order V goes through them </summary>
-    public static readonly string[] Views = { "Rigid", "Rigid + soft", "Soft (without mesh)", "No debug draw" };
+    public static readonly string[] Views = { "Colliders", "Colliders + springs", "Soft (without mesh)", "No debug draw" };
 
-    public const int RigidView = 0, RigidAndSoftView = 1, SoftView = 2, NoDebugView = 3;
+    public const int CollidersView = 0, CollidersAndSpringsView = 1, SoftView = 2, NoDebugView = 3;
 
-    // Bepu's wireframe has no shape for a soft body (its particle collider gives none): particles and springs have their own view.
+    // Bepu's debug view draws the colliders and a sphere per particle; the springs and the particles' own markers are drawn by the demo.
     // They sit inside the soft models, the soft view hides those models
     protected override IReadOnlyList<string> DebugViews => Views;
 
     protected override void OnDebugViewChanged(int view)
     {
-        ShowRigidWireframe(view is RigidView or RigidAndSoftView);
+        ShowRigidWireframe(view is CollidersView or CollidersAndSpringsView);
         _particles ??= new ParticleView(this);
-        _particles.Visible = view is RigidAndSoftView or SoftView;
+        _particles.Visible = view is CollidersAndSpringsView or SoftView;
+        _particles.Markers = view == SoftView;
         foreach (var body in SoftBodies())
         {
             if (body.Entity.Get<ModelComponent>() is { } model)
@@ -395,9 +403,12 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         private readonly Dictionary<SoftBodyComponent, View> _views = new();
 
-        private sealed record View(Entity Entity, Stride.Graphics.Buffer VertexBuffer, Stride.Graphics.Buffer IndexBuffer, VertexPositionNormalTexture[] Vertices, Stride.Graphics.Buffer LineBuffer, Stride.Graphics.Buffer LineIndexBuffer, VertexPositionNormalTexture[] LineVertices);
+        private sealed record View(Entity Entity, Stride.Graphics.Buffer VertexBuffer, Stride.Graphics.Buffer IndexBuffer, VertexPositionNormalTexture[] Vertices, Stride.Graphics.Buffer LineBuffer, Stride.Graphics.Buffer LineIndexBuffer, VertexPositionNormalTexture[] LineVertices, int FreeIndices, int PinnedIndices);
 
         public bool Visible { get; set; }
+
+        /// <summary> Whether the octahedra are drawn, or only the springs when Bepu's wireframe already shows the particles </summary>
+        public bool Markers { get; set; } = true;
 
         private static float RadiusOf(SoftBodyComponent body) => body.Collider is Colliders.ParticleCollider collider ? collider.ActualRadius * 0.4f : 0.02f;
 
@@ -485,11 +496,14 @@ internal sealed class VideoDemoGame : BepuDemoGame
 
             var entity = new Entity("particles") { new ModelComponent(model) { IsShadowCaster = false } };
             game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
-            return new View(entity, vertexBuffer, indexBuffer, vertices, lineBuffer, lineIndexBuffer, lineVertices);
+            return new View(entity, vertexBuffer, indexBuffer, vertices, lineBuffer, lineIndexBuffer, lineVertices, free, indices.Count - free);
         }
 
         private void Refresh(SoftBodyComponent body, View view)
         {
+            var meshes = view.Entity.Get<ModelComponent>()!.Model.Meshes;
+            meshes[0].Draw.DrawCount = Markers ? view.FreeIndices : 0;
+            meshes[1].Draw.DrawCount = Markers ? view.PinnedIndices : 0;
             var radius = RadiusOf(body);
             for (int p = 0; p < body.ParticleCount; p++)
             {

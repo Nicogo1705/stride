@@ -55,7 +55,7 @@ internal static class ProceduralCharacter
             Box("Hips", new Vector3(0.34f, 0.22f, 0.2f), new Vector3(0f, 0.04f, 0f), 11f),
             Capsule("Spine", 0.13f, 0.06f, new Vector3(0f, 0.12f, 0f), 8f),
             Box("Chest", new Vector3(0.4f, 0.32f, 0.22f), new Vector3(0f, 0.14f, 0f), 14f),
-            new() { NodeName = "Head", Shape = new SphereCollider { Radius = 0.13f, PositionLocal = new Vector3(0f, 0.13f, 0.01f), Mass = 5f } },
+            new() { NodeName = "Head", AlongBone = false, Shape = new SphereCollider { Radius = 0.13f, PositionLocal = new Vector3(0f, 0.13f, 0.01f), Mass = 5f } },
         };
         foreach (var side in new[] { "L", "R" })
         {
@@ -147,9 +147,9 @@ internal static class ProceduralCharacter
     }
 
     // Masses in kilograms, about 76 kg in total, only used once the bodies form a ragdoll
-    private static BoneShape Box(string node, Vector3 size, Vector3 offset, float mass) => new() { NodeName = node, Shape = new BoxCollider { Size = size, PositionLocal = offset, Mass = mass } };
+    private static BoneShape Box(string node, Vector3 size, Vector3 offset, float mass) => new() { NodeName = node, AlongBone = false, Shape = new BoxCollider { Size = size, PositionLocal = offset, Mass = mass } };
 
-    private static BoneShape Capsule(string node, float radius, float length, Vector3 offset, float mass) => new() { NodeName = node, Shape = new CapsuleCollider { Radius = radius, Length = length, PositionLocal = offset, Mass = mass } };
+    private static BoneShape Capsule(string node, float radius, float length, Vector3 offset, float mass) => new() { NodeName = node, AlongBone = false, Shape = new CapsuleCollider { Radius = radius, Length = length, PositionLocal = offset, Mass = mass } };
 
     private static ModelNodeDefinition Node(string name, int parent, Vector3 position) => new()
     {
