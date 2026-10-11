@@ -10,6 +10,7 @@ using BepuPhysics.Collidables;
 using BepuPhysics.Constraints;
 using Stride.BepuPhysics.Components;
 using Stride.BepuPhysics.Definitions;
+using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.BepuPhysics.Soft.Colliders;
 using Stride.BepuPhysics.Soft.Rendering;
 using Stride.BepuPhysics.Soft.Topology;
@@ -328,10 +329,8 @@ public abstract class SoftBodyComponent : CollidableComponent
     {
         Debug.Assert(Simulation is not null);
 
-        // Done by the ParticleCollider, a collider of another kind gives every particle its own shape instead
-        if (Topology is null && TryPrepareTopology(out _) == false)
-            throw new InvalidOperationException($"{GetType().Name} on '{Entity?.Name}' needs a {nameof(ModelComponent)} with a model on the same entity");
-        var topology = Topology!;
+        Debug.Assert(Topology is not null, "Built by ParticleCollider.TryAttach");
+        var topology = Topology;
         var bodies = Simulation.Simulation.Bodies;
 
         var world = Entity.Transform.WorldMatrix;
@@ -397,6 +396,27 @@ public abstract class SoftBodyComponent : CollidableComponent
         _nodeAnchors = [];
         _anchorOfParticle.Clear();
         FiltersContactsWithOthers = false;
+    }
+
+    internal override bool CanAttach(ICollider collider)
+    {
+        if (collider is ParticleCollider)
+            return true;
+
+        Logger.Error($"{GetType().Name} on '{Entity?.Name}' needs a {nameof(ParticleCollider)}, its particles cannot take the shape of a {collider.GetType().Name}; it is left out of the simulation");
+        return false;
+    }
+
+    internal override bool TryGetShapePose(int index, out NRigidPose pose)
+    {
+        if (Simulation is null || index >= _particles.Length)
+        {
+            pose = default;
+            return false;
+        }
+
+        pose = new NRigidPose(Particle(index).Pose.Position);
+        return true;
     }
 
     internal override bool IsAttachedTo(CollidableComponent other)

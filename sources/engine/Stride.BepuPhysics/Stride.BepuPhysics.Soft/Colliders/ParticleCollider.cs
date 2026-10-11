@@ -10,6 +10,8 @@ using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
+using Stride.Core.Annotations;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using NRigidPose = BepuPhysics.RigidPose;
 
@@ -18,9 +20,13 @@ namespace Stride.BepuPhysics.Soft.Colliders;
 /// <summary>
 /// The sphere every particle of a <see cref="SoftBodyComponent"/> collides with.
 /// </summary>
+/// <remarks> Created by the soft body, it cannot be used by other collidables. </remarks>
 [DataContract]
+[NonInstantiable]
 public sealed class ParticleCollider : ICollider
 {
+    private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(ParticleCollider));
+
     private float _radius;
 
     /// <summary>
@@ -52,22 +58,27 @@ public sealed class ParticleCollider : ICollider
         set => Component = value;
     }
 
-    // The particles move independently of the entity, debug views fixed to it cannot show them
-    int ICollider.Transforms => 0;
+    // One sphere per particle, which the debug view places on its particle through SoftBodyComponent.TryGetShapePose
+    int ICollider.Transforms => Component is SoftBodyComponent { Topology: { } topology } ? topology.ParticleCount : 0;
 
     void ICollider.GetLocalTransforms(CollidableComponent collidable, Span<ShapeTransform> transforms)
     {
+        foreach (ref var transform in transforms)
+            transform = new ShapeTransform { Scale = new Vector3(ActualRadius) };
     }
 
     bool ICollider.TryAttach(Shapes shapes, BufferPool pool, ShapeCacheSystem shapeCache, bool shouldCalculateInertia, out TypedIndex index, out Vector3 centerOfMass, out BodyInertia inertia)
     {
         centerOfMass = Vector3.Zero;
         inertia = default;
-        if (Component is not SoftBodyComponent softBody || softBody.TryPrepareTopology(out var spacing) == false)
+        index = default;
+        if (Component is not SoftBodyComponent softBody)
         {
-            index = default;
+            Logger.Error($"{nameof(ParticleCollider)} only works on a soft body, the {Component?.GetType().Name} on '{Component?.Entity?.Name}' is left out of the simulation");
             return false;
         }
+        if (softBody.TryPrepareTopology(out var spacing) == false)
+            return false;
 
         ActualRadius = Radius > 0f ? Radius : spacing * softBody.DefaultRadiusFraction;
         index = shapes.Add(new Sphere(ActualRadius));
@@ -82,6 +93,8 @@ public sealed class ParticleCollider : ICollider
     void ICollider.AppendModel(List<BasicMeshBuffers> buffer, ShapeCacheSystem shapeCache, out object? cache)
     {
         cache = null;
+        for (int i = ((ICollider)this).Transforms; i > 0; i--)
+            buffer.Add(shapeCache._sphereShapeData);
     }
 
     void ICollider.RayTest<TRayHitHandler>(Shapes shapes, TypedIndex shapeIndex, in NRigidPose pose, in RayData ray, ref float maximumT, ref TRayHitHandler hitHandler, BufferPool pool)

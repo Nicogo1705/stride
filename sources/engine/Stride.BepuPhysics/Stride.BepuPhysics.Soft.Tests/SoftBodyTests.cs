@@ -59,6 +59,58 @@ public class SoftBodyTests : GameTestBase
     }
 
     [Fact]
+    public static void ParticleColliderOnlyWorksOnSoftBodies()
+    {
+        RunScene(async scene =>
+        {
+            var errors = new System.Collections.Generic.List<string>();
+            void Collect(Stride.Core.Diagnostics.ILogMessage message)
+            {
+                if (message.Type >= Stride.Core.Diagnostics.LogMessageType.Error)
+                    errors.Add(message.Text);
+            }
+            Stride.Core.Diagnostics.GlobalLogger.GlobalMessageLogged += Collect;
+            try
+            {
+                // A rigid body with a particle collider, and a soft body whose particles would be compounds
+                var rigid = new BodyComponent { Collider = new Colliders.ParticleCollider() };
+                scene.Add(new Entity { new ModelComponent(scene.Model(new CubeProceduralModel(), null)), rigid });
+                var soft = new VolumetricSoftBodyComponent { Resolution = 2 };
+                soft.Collider = new CompoundCollider { Colliders = { new SphereCollider() } };
+                scene.Add(soft, new CubeProceduralModel(), new Vector3(0f, 2f, 0f));
+                await scene.NextFrame();
+
+                Assert.Null(rigid.Simulation);
+                Assert.Null(soft.Simulation);
+                Assert.Equal(0, soft.ParticleCount);
+                Assert.Contains(errors, e => e.Contains(nameof(Colliders.ParticleCollider)) && e.Contains(nameof(BodyComponent)));
+                Assert.Contains(errors, e => e.Contains(nameof(VolumetricSoftBodyComponent)) && e.Contains(nameof(CompoundCollider)));
+            }
+            finally
+            {
+                Stride.Core.Diagnostics.GlobalLogger.GlobalMessageLogged -= Collect;
+            }
+        });
+    }
+
+    [Fact]
+    public static void EachParticleHasADebugShape()
+    {
+        RunScene(async scene =>
+        {
+            var body = new VolumetricSoftBodyComponent { Resolution = 3 };
+            scene.Add(body, new CubeProceduralModel(), new Vector3(0f, 2f, 0f));
+            await Seconds(body, 0.1f);
+
+            var collider = (ICollider)body.Collider;
+            Assert.Equal(body.ParticleCount, collider.Transforms);
+            var transforms = new ShapeTransform[collider.Transforms];
+            collider.GetLocalTransforms(body, transforms);
+            Assert.All(transforms, t => Assert.Equal(new Vector3(((Colliders.ParticleCollider)collider).ActualRadius), t.Scale));
+        });
+    }
+
+    [Fact]
     public static void ClothHangsFromItsPins()
     {
         RunScene(async scene =>
@@ -498,6 +550,8 @@ public class SoftBodyTests : GameTestBase
         public void Add(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
 
         public void Remove(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
+
+        public async Task NextFrame() => await game.Script.NextFrame();
 
         public Model Model(PrimitiveProceduralModelBase shape, Skeleton? skeleton)
         {

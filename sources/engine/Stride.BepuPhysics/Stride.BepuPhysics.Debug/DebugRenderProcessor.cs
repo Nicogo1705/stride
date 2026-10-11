@@ -287,7 +287,9 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
 
         collidable.Collider.AppendModel(shapeData, _shapeCacheSystem, out var cache);
 
-        Span<ShapeTransform> transforms = stackalloc ShapeTransform[collidable.Collider.Transforms];
+        // Soft bodies have a shape per particle, thousands of them would not fit on the stack
+        int count = collidable.Collider.Transforms;
+        Span<ShapeTransform> transforms = count <= 256 ? stackalloc ShapeTransform[count] : new ShapeTransform[count];
         collidable.Collider.GetLocalTransforms(collidable, transforms);
 
         WireFrameRenderObject[] wireframes = new WireFrameRenderObject[transforms.Length];
