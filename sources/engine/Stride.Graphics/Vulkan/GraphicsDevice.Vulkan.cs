@@ -977,7 +977,7 @@ namespace Stride.Graphics
             DescriptorPoolLists.Release(commandList.DescriptorPools);
             commandList.DescriptorPools.Clear();
 
-            // Read at submission only, so they can be reused right away
+            // CPU-side only and already consumed by ReconcileImageLayouts, so unlike the GPU resources above they need no fence
             if (commandList.ImageLayouts != null)
             {
                 foreach (var layouts in commandList.ImageLayouts.Values)
