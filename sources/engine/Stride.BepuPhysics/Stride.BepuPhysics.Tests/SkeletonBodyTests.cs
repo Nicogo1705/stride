@@ -50,14 +50,14 @@ public class SkeletonBodyTests : GameTestBase
         return (entity, body);
     }
 
-    private static BoneShape ArmShape() => new() { NodeName = "Arm", Shape = new BoxCollider { Size = new Vector3(0.6f, 0.1f, 0.1f), PositionLocal = new Vector3(0.3f, 0, 0) } };
+    private static BoneShape ArmShape() => new() { NodeName = "Arm", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.6f, 0.1f, 0.1f), PositionLocal = new Vector3(0.3f, 0, 0) } };
 
     private static int NodeIndex(Entity entity, string name) => Array.FindIndex(entity.Get<ModelComponent>().Skeleton.Nodes, n => n.Name == name);
 
     [Fact]
     public static void GeneratedCapsulesSpanEachSegment()
     {
-        var shapes = BoneCollider.Generate(CreateSkeleton(), 0.05f);
+        var shapes = BoneCollider.Generate(new Model { Skeleton = CreateSkeleton() }, 0.05f);
 
         // Hips to arm, arm to hand, hips to leg, leg to foot; nothing from the root
         Assert.Equal(["Hips", "Arm", "Hips", "Leg"], shapes.Select(s => s.NodeName));
@@ -70,6 +70,77 @@ public class SkeletonBodyTests : GameTestBase
     }
 
     [Fact]
+    public static void GeneratedCapsulesFollowTheDeformingBonesOnly()
+    {
+        // An armature node and footsteps under the root, a twist bone next to the forearm: none of them deforms the mesh or carries the chain
+        var skeleton = new Skeleton
+        {
+            Nodes =
+            [
+                Node("Root", -1, Vector3.Zero),
+                Node("Armature", 0, Vector3.Zero),
+                Node("Hips", 1, new Vector3(0, 1, 0)),
+                Node("Footsteps", 1, Vector3.Zero),
+                Node("Arm", 2, new Vector3(0.2f, 0, 0)),
+                Node("Forearm", 4, new Vector3(0.3f, 0, 0)),
+                Node("ArmTwist", 4, new Vector3(0.15f, 0, 0)),
+                Node("Hand", 5, new Vector3(0.3f, 0, 0)),
+            ],
+        };
+        int[] deforming = [2, 4, 5, 6];
+        var mesh = new Mesh { Skinning = new MeshSkinningDefinition { Bones = deforming.Select(n => new MeshBoneDefinition { NodeIndex = n, LinkToMeshMatrix = Matrix.Identity }).ToArray() } };
+        var model = new Model { Skeleton = skeleton };
+        model.Meshes.Add(mesh);
+
+        var shapes = BoneCollider.Generate(model, 0.05f);
+
+        // Hips to arm, arm to forearm, forearm to hand; nothing from the armature, the footsteps or the twist bone
+        Assert.Equal(["Hips", "Arm", "Forearm"], shapes.Select(s => s.NodeName));
+    }
+
+    [Fact]
+    public static void ShapesLieAlongTheirBoneByDefault()
+    {
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            // The arm points along +X, from 0.2 m right of the hips to the hand 0.6 m further
+            var (_, body) = AddCharacter(game.SceneSystem.SceneInstance.RootScene, Vector3.Zero, new BoneShape { NodeName = "Arm" });
+            await game.Script.NextFrame();
+
+            var axis = Vector3.Transform(Vector3.UnitY, body.GetBodyOrientation(0));
+            Assert.True(Vector3.Distance(body.GetBodyPosition(0), new Vector3(0.5f, 1f, 0f)) < 1e-4f, $"capsule at {body.GetBodyPosition(0)}");
+            Assert.True(Vector3.Distance(axis, Vector3.UnitX) < 1e-4f, $"capsule axis {axis}");
+            game.Exit();
+        });
+        RunGameTest(game);
+    }
+
+    [Fact]
+    public static void GeneratedCapsulesWeighAsWaterOfTheirVolume()
+    {
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            var body = new SkeletonBodyComponent();
+            var collider = (BoneCollider)body.Collider;
+            collider.GeneratedRadius = 0.05f;
+            var entity = new Entity { new ModelComponent { Model = new Model { Skeleton = CreateSkeleton() } }, body };
+            game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
+            await game.Script.NextFrame();
+
+            // The arm capsule: 0.6 m from arm to hand, caps included
+            var arm = (CapsuleCollider)body.GetBoneShape(1).Shape;
+            float volume = MathF.PI * 0.05f * 0.05f * (arm.Length + 4f / 3f * 0.05f);
+            Assert.True(MathUtil.WithinEpsilon(1f / collider.GetCreatedInertia(1).InverseMass, 1000f * volume, 1e-3f), $"{1f / collider.GetCreatedInertia(1).InverseMass} kg");
+            game.Exit();
+        });
+        RunGameTest(game);
+    }
+
+    [Fact]
     public static void BodiesReachThePoseDrawnLastFrame()
     {
         var game = new GameTest();
@@ -77,7 +148,7 @@ public class SkeletonBodyTests : GameTestBase
         {
             game.ScreenShotAutomationEnabled = false;
             var scene = game.SceneSystem.SceneInstance.RootScene;
-            var missing = new BoneShape { NodeName = "Tail", Shape = new SphereCollider() };
+            var missing = new BoneShape { NodeName = "Tail", AlongBone = false, Shape = new SphereCollider() };
             var (entity, body) = AddCharacter(scene, new Vector3(2, 0, 0), ArmShape(), missing);
             entity.Transform.Scale = new Vector3(2f);
 
@@ -123,7 +194,7 @@ public class SkeletonBodyTests : GameTestBase
         {
             game.ScreenShotAutomationEnabled = false;
             var scene = game.SceneSystem.SceneInstance.RootScene;
-            var leg = new BoneShape { NodeName = "Leg", Shape = new CapsuleCollider { Radius = 0.08f, Length = 0.6f, PositionLocal = new Vector3(0, -0.4f, 0) } };
+            var leg = new BoneShape { NodeName = "Leg", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.08f, Length = 0.6f, PositionLocal = new Vector3(0, -0.4f, 0) } };
             var (_, body) = AddCharacter(scene, Vector3.Zero, ArmShape(), leg);
 
             await game.Script.NextFrame();
@@ -159,7 +230,7 @@ public class SkeletonBodyTests : GameTestBase
             var scene = game.SceneSystem.SceneInstance.RootScene;
             var counter = new BoneContactCounter();
             // Overlapping shapes on the hips and the arm
-            var hips = new BoneShape { NodeName = "Hips", Shape = new SphereCollider { Radius = 0.3f } };
+            var hips = new BoneShape { NodeName = "Hips", AlongBone = false, Shape = new SphereCollider { Radius = 0.3f } };
             var (_, body) = AddCharacter(scene, Vector3.Zero, hips, ArmShape());
             body.ContactEventHandler = counter;
 

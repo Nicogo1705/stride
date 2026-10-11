@@ -95,6 +95,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// </summary>
     /// <remarks> Avoids sweeping through the scene with a huge velocity when the character is teleported. </remarks>
     [Display(category: CategoryForces)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float TeleportDistance
     {
@@ -357,15 +358,15 @@ public class SkeletonBodyComponent : CollidableComponent
         return _nodes[i] != _nodes[j] && _jointNodes[i] != _nodes[j] && _jointNodes[j] != _nodes[i];
     }
 
-    /// <summary> The bone shapes whose node is in the skeleton, and the scale of that node; false when the entity has no skeleton yet </summary>
-    internal bool TryResolveBones(out List<(BoneShape Bone, float Scale)> resolved)
+    /// <summary> The bone shapes whose node is in the skeleton, the scale of that node and the pose of the shape in its space; false when the entity has no skeleton yet </summary>
+    internal bool TryResolveBones(out List<(BoneShape Bone, float Scale, Vector3 Position, Quaternion Rotation)> resolved)
     {
         resolved = new();
         if (Entity?.Get<ModelComponent>() is not { Model: not null } model || model.Skeleton is not { } skeleton)
             return false;
 
         var collider = (BoneCollider)Collider;
-        var bones = collider.Bones.Count > 0 || collider.GeneratedRadius <= 0f ? collider.Bones : BoneCollider.Generate(skeleton.Nodes, collider.GeneratedRadius);
+        var bones = collider.Bones.Count > 0 || collider.GeneratedRadius <= 0f ? collider.Bones : BoneCollider.Generate(model.Model, collider.GeneratedRadius);
 
         UpdateNodeMatrices(model);
         var nodes = new List<int>();
@@ -380,8 +381,18 @@ public class SkeletonBodyComponent : CollidableComponent
             }
 
             skeleton.NodeTransformations[node].WorldMatrix.Decompose(out var scale, out Quaternion _, out _);
+            var (position, rotation) = (bone.Shape.PositionLocal, bone.Shape.RotationLocal);
+            if (bone.AlongBone && Array.FindIndex(skeleton.Nodes, n => n.ParentIndex == node) is var child and >= 0)
+            {
+                var segment = skeleton.Nodes[child].Transform.Position;
+                if (segment.LengthSquared() > 1e-12f)
+                {
+                    var along = Quaternion.BetweenDirections(Vector3.UnitY, Vector3.Normalize(segment));
+                    (position, rotation) = (segment * 0.5f + Vector3.Transform(position, along), rotation * along);
+                }
+            }
             // Bepu shapes have no scale, the shape is resized by the average scale of its node
-            resolved.Add((bone, MathF.Abs(scale.X + scale.Y + scale.Z) / 3f));
+            resolved.Add((bone, MathF.Abs(scale.X + scale.Y + scale.Z) / 3f, position, rotation));
             nodes.Add(node);
             scales.Add(scale);
         }
@@ -475,14 +486,14 @@ public class SkeletonBodyComponent : CollidableComponent
 
     private NRigidPose TargetPose(SkeletonUpdater skeleton, int index, BoneCollider collider)
     {
-        return BodyPose(skeleton.NodeTransformations[_nodes[index]].WorldMatrix, collider.GetCreated(index).Bone.Shape);
+        return BodyPose(skeleton.NodeTransformations[_nodes[index]].WorldMatrix, collider.GetCreatedLocal(index));
     }
 
-    private static NRigidPose BodyPose(in Matrix node, ColliderBase shape)
+    private static NRigidPose BodyPose(in Matrix node, (Vector3 Position, Quaternion Rotation) local)
     {
         node.Decompose(out _, out Quaternion rotation, out _);
-        var position = Vector3.TransformCoordinate(shape.PositionLocal, node);
-        return new NRigidPose(position.ToNumeric(), (shape.RotationLocal * rotation).ToNumeric());
+        var position = Vector3.TransformCoordinate(local.Position, node);
+        return new NRigidPose(position.ToNumeric(), (local.Rotation * rotation).ToNumeric());
     }
 
     /// <summary> The world matrix of the node of the body at <paramref name="index"/> placed at <paramref name="pose"/>, the inverse of <see cref="BodyPose"/> </summary>
