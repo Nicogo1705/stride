@@ -50,25 +50,50 @@ internal sealed class SoftBodyTopology
     /// </summary>
     public Vector3[]? LatticeCoordinates { get; init; }
 
+    /// <summary>
+    /// For lattices, per particle and axis, the particles below and above it along that axis, or itself at the end of a row:
+    /// where <see cref="ComputeLatticeGradients"/> takes its differences.
+    /// </summary>
+    public int[]? LatticeAxisNeighbors { get; init; }
+
     public required SourceMesh Mesh { get; init; }
 
     public int ParticleCount => RestPositions.Length;
 
-    /// <summary> Carries the normal and tangent of a lattice vertex along the deformation of the cell it is in, unnormalized </summary>
-    public void DeformFrame(int vertex, ReadOnlySpan<Vector3> particles, out Vector3 normal, out Vector4 tangent)
+    /// <summary> How the lattice is stretched around each particle: three vectors per particle, the derivatives of the positions along each axis, per cell </summary>
+    public void ComputeLatticeGradients(ReadOnlySpan<Vector3> particles, Span<Vector3> gradients)
     {
-        // Columns of the jacobian of the trilinear interpolation over the cell's corners
+        var neighbors = LatticeAxisNeighbors!;
+        for (int particle = 0, n = 0; particle < particles.Length; particle++)
+        {
+            for (int axis = 0; axis < 3; axis++, n += 2)
+            {
+                int below = neighbors[n], above = neighbors[n + 1];
+                // Central difference inside the lattice, one-sided at its border
+                float scale = below != particle && above != particle ? 0.5f : 1f;
+                gradients[particle * 3 + axis] = (particles[above] - particles[below]) * scale;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Carries the normal and tangent of a lattice vertex along the deformation around it, unnormalized: the gradients of
+    /// <see cref="ComputeLatticeGradients"/> at the corners of its cell, interpolated, so normals do not crease from one cell to the next.
+    /// </summary>
+    public void DeformFrame(int vertex, ReadOnlySpan<Vector3> gradients, out Vector3 normal, out Vector4 tangent)
+    {
         var t = LatticeCoordinates![vertex];
         Vector3 dx = default, dy = default, dz = default;
         for (int corner = 0; corner < 8; corner++)
         {
-            float sx = (corner & 1) != 0 ? 1f : -1f, wx = (corner & 1) != 0 ? t.X : 1f - t.X;
-            float sy = (corner & 2) != 0 ? 1f : -1f, wy = (corner & 2) != 0 ? t.Y : 1f - t.Y;
-            float sz = (corner & 4) != 0 ? 1f : -1f, wz = (corner & 4) != 0 ? t.Z : 1f - t.Z;
-            var p = particles[BindingParticles[vertex * 8 + corner]];
-            dx += p * (sx * wy * wz);
-            dy += p * (wx * sy * wz);
-            dz += p * (wx * wy * sz);
+            float wx = (corner & 1) != 0 ? t.X : 1f - t.X;
+            float wy = (corner & 2) != 0 ? t.Y : 1f - t.Y;
+            float wz = (corner & 4) != 0 ? t.Z : 1f - t.Z;
+            float weight = wx * wy * wz;
+            int g = BindingParticles[vertex * 8 + corner] * 3;
+            dx += gradients[g] * weight;
+            dy += gradients[g + 1] * weight;
+            dz += gradients[g + 2] * weight;
         }
 
         // Normals transform with the cofactor matrix, which is the inverse transpose up to a scale

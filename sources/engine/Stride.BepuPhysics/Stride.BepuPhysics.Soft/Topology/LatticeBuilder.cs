@@ -63,6 +63,11 @@ internal static class LatticeBuilder
             }
         }
 
+        // Rows of the lattice run along the edges of occupied cells, not across empty ones between two parts that happen to be one node apart
+        var axisNeighbors = new int[restPositions.Count * 6];
+        for (int i = 0; i < axisNeighbors.Length; i++)
+            axisNeighbors[i] = i / 6;
+
         var edges = new List<Edge>();
         var tetrahedra = new List<Tetrahedron>();
         var knownEdges = new HashSet<long>();
@@ -83,6 +88,13 @@ internal static class LatticeBuilder
                     long key = (long)Math.Min(corners[a], corners[b]) << 32 | (uint)Math.Max(corners[a], corners[b]);
                     if (axes < 3 && knownEdges.Add(key))
                         edges.Add(new Edge(corners[a], corners[b], axes == 1 ? EdgeKind.Stretch : EdgeKind.Shear));
+                    if (axes == 1)
+                    {
+                        // b is the corner above a
+                        int axis = int.TrailingZeroCount(a ^ b);
+                        axisNeighbors[corners[a] * 6 + axis * 2 + 1] = corners[b];
+                        axisNeighbors[corners[b] * 6 + axis * 2] = corners[a];
+                    }
                 }
             }
 
@@ -126,6 +138,7 @@ internal static class LatticeBuilder
             BindingParticles = bindingParticles,
             BindingWeights = bindingWeights,
             LatticeCoordinates = latticeCoordinates,
+            LatticeAxisNeighbors = axisNeighbors,
             Mesh = mesh,
         };
     }

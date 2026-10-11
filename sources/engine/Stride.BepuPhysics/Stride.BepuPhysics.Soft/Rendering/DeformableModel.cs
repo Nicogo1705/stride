@@ -42,6 +42,7 @@ internal sealed class DeformableModel : IDisposable
     private Vector3[] _positions = [];
     private Vector3[] _normals = [];
     private Vector4[] _tangents = [];
+    private Vector3[] _gradients = [];
 
     private GpuDeformation? _gpu;
 
@@ -99,6 +100,7 @@ internal sealed class DeformableModel : IDisposable
             _positions = [];
             _normals = [];
             _tangents = [];
+            _gradients = [];
         }
         else
         {
@@ -108,6 +110,7 @@ internal sealed class DeformableModel : IDisposable
             _positions = new Vector3[vertexCount];
             _normals = new Vector3[vertexCount];
             _tangents = new Vector4[vertexCount];
+            _gradients = Topology.LatticeCoordinates is null ? [] : new Vector3[Topology.ParticleCount * 3];
             vertexBuffer = _vertexBuffer = Buffer.Vertex.New(device, bufferSize: vertexCount * Vertex.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
             layout = Vertex.Layout;
         }
@@ -217,11 +220,12 @@ internal sealed class DeformableModel : IDisposable
             _vertexBuffer!.SetData<Vertex>(commandList, _vertices.AsSpan());
     }
 
-    /// <summary> Carries the authored normals and tangents along the deformation of the lattice cell each vertex is in </summary>
+    /// <summary> Carries the authored normals and tangents along the deformation of the lattice around each vertex </summary>
     private void DeformFrames(Vector3[] coordinates)
     {
+        Topology.ComputeLatticeGradients(_particles, _gradients);
         for (int v = 0; v < coordinates.Length; v++)
-            Topology.DeformFrame(v, _particles, out _normals[v], out _tangents[v]);
+            Topology.DeformFrame(v, _gradients, out _normals[v], out _tangents[v]);
     }
 
     /// <summary> Recomputes normals and tangents from the deformed triangles, for surfaces whose vertices are the particles themselves </summary>

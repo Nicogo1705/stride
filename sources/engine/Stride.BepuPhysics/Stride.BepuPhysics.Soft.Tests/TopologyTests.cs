@@ -104,9 +104,11 @@ public class TopologyTests
         foreach (var rotation in new[] { Quaternion.RotationY(MathF.PI / 2f), Quaternion.RotationX(MathF.PI / 2f), Quaternion.RotationYawPitchRoll(0.3f, 1.2f, -0.7f) })
         {
             var particles = Array.ConvertAll(topology.RestPositions, p => Vector3.Transform(p, rotation) + new Vector3(4f, 1f, -2f));
+            var gradients = new Vector3[particles.Length * 3];
+            topology.ComputeLatticeGradients(particles, gradients);
             for (int v = 0; v < mesh.Positions.Length; v++)
             {
-                topology.DeformFrame(v, particles, out var normal, out _);
+                topology.DeformFrame(v, gradients, out var normal, out _);
                 var expected = Vector3.Transform(mesh.Normals[v], rotation);
                 Assert.True(Vector3.Distance(Vector3.Normalize(normal), expected) < 1e-3f, $"Vertex {v}: {Vector3.Normalize(normal)} != {expected}");
             }
