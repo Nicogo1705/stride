@@ -11,7 +11,12 @@ public enum SoftBodyDeformationMode
     /// <summary>
     /// Only the particles are sent to the GPU each frame, the vertex shader of every pass moves the vertices, normals and tangents.
     /// </summary>
-    /// <remarks> Falls back to <see cref="Cpu"/> when the graphics profile is below <see cref="Graphics.GraphicsProfile.Level_11_0"/>. </remarks>
+    /// <remarks>
+    /// Falls back to <see cref="Cpu"/> when the graphics profile is below <see cref="Graphics.GraphicsProfile.Level_11_0"/>.
+    /// Uses <see cref="Stride.Rendering.StrideEffectBaseKeys.ExtensionPostVertexStageShader"/> of the model's meshes, replacing a shader set there;
+    /// choose <see cref="Cpu"/> for a model that needs that extension point for something else.
+    /// Bodies deformed this way add a sub render feature to each <see cref="Stride.Rendering.MeshRenderFeature"/> of the scene's graphics compositor.
+    /// </remarks>
     Gpu,
 
     /// <summary>
