@@ -25,6 +25,8 @@ public class TestOpacityThickness : GameTestBase
     // Frames left to the effects to be requested, then to compile, before the pixel is read
     private const int MinFrames = 5;
     private const int MaxFrames = 600;
+    // Two 8-bit steps, for the sRGB round trip of the back buffer
+    private const float Tolerance = 2f / 255;
 
     /// <summary>
     /// An absorbing volume in front of a white background lets each channel through as <c>(1 - Alpha * (1 - Tint))</c>
@@ -57,9 +59,6 @@ public class TestOpacityThickness : GameTestBase
 
         Assert.All(plain.Passes, pass => Assert.False(pass.Parameters.ContainsKey(MaterialVolumeKeys.Absorption)));
     }
-
-    // Two 8-bit steps, for the sRGB round trip of the back buffer
-    private const float Tolerance = 2f / 255;
 
     private static void RunScene(float depth, bool separateSegments, Func<GraphicsDevice, Material> plainMaterial, Action<Color4> readCenter)
     {
