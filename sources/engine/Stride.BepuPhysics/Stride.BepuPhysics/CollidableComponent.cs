@@ -284,6 +284,15 @@ public abstract class CollidableComponent : EntityComponent
         return false;
     }
 
+    /// <summary> Whether this component can be created from <paramref name="collider"/>; when it cannot, it logs why and stays out of the simulation </summary>
+    internal virtual bool CanAttach(ICollider collider) => true;
+
+    /// <summary> The amount of spheres debug views draw as lines for this component, like the particles of a soft body, rather than as wireframes of its collider </summary>
+    internal virtual int DebugSphereCount => 0;
+
+    /// <summary> The world-space center and the radius of one of the <see cref="DebugSphereCount"/> spheres </summary>
+    internal virtual (Vector3 Center, float Radius) GetDebugSphere(int index) => throw new ArgumentOutOfRangeException(nameof(index));
+
     /// <summary> Whether two bodies owned by this component may collide, called from the narrow phase on any thread </summary>
     internal virtual bool AllowContactBetween(BodyHandle a, BodyHandle b) => true;
 
@@ -322,6 +331,9 @@ public abstract class CollidableComponent : EntityComponent
         Detach();
 
         Debug.Assert(Processor is not null);
+
+        if (CanAttach(Collider) == false)
+            return;
 
         if (false == Collider.TryAttach(onSimulation.Simulation.Shapes, onSimulation.BufferPool, Processor.ShapeCache, ShouldCalculateInertia, out var index, out var centerOfMass, out var shapeInertia))
         {

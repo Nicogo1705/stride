@@ -3,8 +3,8 @@
 
 using System.ComponentModel;
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
-using Stride.Engine;
 
 namespace Stride.BepuPhysics.Soft;
 
@@ -12,8 +12,8 @@ namespace Stride.BepuPhysics.Soft;
 /// Holds the particles of a <see cref="SoftBodyComponent"/> found in a region in place, or ties them to another entity.
 /// </summary>
 /// <remarks>
-/// Pinned particles keep their mass and are pulled toward their anchor by a spring, see <see cref="AnchorKind"/>.
-/// They never collide with the collidables of the <see cref="Anchor"/> entity.
+/// Pinned particles keep their mass and are pulled toward their anchor by a spring.
+/// They never collide with the collidables of the anchor's entity.
 /// </remarks>
 [DataContract]
 public sealed class SoftBodyPin
@@ -25,29 +25,25 @@ public sealed class SoftBodyPin
     /// <summary>
     /// The particles whose rest position is inside this box are pinned, in the space of the soft body's model.
     /// </summary>
+    /// <remarks>
+    /// A box reduced to a point, like the default one, pins the particles closest to it instead;
+    /// at the origin with an anchor, the particles closest to the anchor's entity, or to its node.
+    /// </remarks>
+    [DataMember(10)]
     public BoundingBox Region { get; set; }
 
     /// <summary>
-    /// The entity the pinned particles are tied to, keeping the offset they had when the soft body was created. Null holds them where they were created.
+    /// What the pinned particles are tied to, keeping the offset they had when the soft body was created; null holds them where they were created.
     /// </summary>
-    public Entity? Anchor { get; set; }
-
-    /// <summary>
-    /// The name of a node of the <see cref="Anchor"/>'s model, such as a bone, the pinned particles follow instead of the entity itself.
-    /// </summary>
-    /// <remarks> Null or empty follows the entity; a name the model does not have is reported once and the entity is followed instead. </remarks>
-    public string? AnchorNode { get; set; }
-
-    /// <summary>
-    /// Whether the pinned particles and the <see cref="Anchor"/> pull on each other, or the particles follow the anchor without acting on it.
-    /// </summary>
-    [DefaultValue(SoftBodyAnchorKind.Automatic)]
-    public SoftBodyAnchorKind AnchorKind { get; set; }
+    [DataMember(20)]
+    public SoftBodyAnchor? Anchor { get; set; }
 
     /// <summary>
     /// How fast the pinned particles return to their anchor, in hertz.
     /// </summary>
     /// <remarks> Values above half the rate of the solver's substeps cannot be honored. </remarks>
+    [DataMember(30)]
+    [DataMemberRange(0.001, 3)]
     [DefaultValue(30f)]
     public float SpringFrequency
     {
@@ -58,6 +54,8 @@ public sealed class SoftBodyPin
     /// <summary>
     /// The damping ratio of the pull toward the anchor, one stops oscillations the fastest without overshooting.
     /// </summary>
+    [DataMember(40)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float SpringDampingRatio
     {
@@ -69,6 +67,8 @@ public sealed class SoftBodyPin
     /// The largest force pulling each pinned particle toward its anchor; a stronger pull, a hit or a grab tears the particle away for as long as it lasts.
     /// </summary>
     /// <remarks> Not used for particles tied to the particles of another soft body, which are held by springs without a limit. </remarks>
+    [DataMember(50)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(float.MaxValue)]
     public float ServoMaximumForce
     {

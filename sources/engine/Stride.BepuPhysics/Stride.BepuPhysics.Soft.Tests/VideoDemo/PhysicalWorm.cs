@@ -31,6 +31,7 @@ internal static class PhysicalWorm
             collider.Bones.Add(new BoneShape
             {
                 NodeName = "Bone" + i,
+                AlongBone = false,
                 Shape = new CapsuleCollider { Radius = 0.17f, Length = step * 0.5f, PositionLocal = new Vector3(0f, i < Mollusc.Bones - 1 ? step / 2f : 0f, 0f), Mass = 0.5f },
             });
         }

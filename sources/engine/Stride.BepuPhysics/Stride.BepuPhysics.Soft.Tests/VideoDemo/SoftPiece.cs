@@ -72,8 +72,8 @@ internal sealed class SoftPiece
             Resolution = 14, Stiffness = 12f, ShearStiffness = 12f, VolumeStiffness = 10f, Damping = 0.3f, Mass = 1.5f,
             Pins =
             {
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = twister },
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = handle },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = Ropes.Anchor(twister) },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = Ropes.Anchor(handle) },
             },
         };
         Piece = new Entity("soft rope")

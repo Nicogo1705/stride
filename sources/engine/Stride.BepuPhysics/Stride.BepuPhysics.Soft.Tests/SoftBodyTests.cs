@@ -4,6 +4,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
 using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
@@ -37,6 +38,76 @@ public class SoftBodyTests : GameTestBase
             Assert.True(Vector3.Distance(Vector3.Transform(Vector3.UnitY, entity.Transform.Rotation), Vector3.UnitY) < 0.05f);
             for (int i = 0; i < body.ParticleCount; i++)
                 Assert.True(body.GetParticlePosition(i).Y > -0.01f);
+        });
+    }
+
+    [Fact]
+    public static void LatticeKeepsTheSolverBatchesBelowTheFallbackThreshold()
+    {
+        RunScene(async scene =>
+        {
+            // Every particle of a body is constrained to its neighbors, each constraint of a particle needs a batch of its own
+            var body = new VolumetricSoftBodyComponent { Resolution = 6 };
+            scene.Add(body, new CubeProceduralModel(), new Vector3(0f, 0.6f, 0f));
+            await Seconds(body, 0.3f);
+
+            var solver = body.Simulation!.Simulation.Solver;
+            int most = Enumerable.Range(0, body.ParticleCount).Max(i => body.Particle(i).Constraints.Count);
+            Assert.True(most <= 40, $"A particle is in {most} constraints");
+            Assert.True(solver.ActiveSet.Batches.Count <= solver.FallbackBatchThreshold, $"{solver.ActiveSet.Batches.Count} batches");
+        });
+    }
+
+    [Fact]
+    public static void ParticleColliderOnlyWorksOnSoftBodies()
+    {
+        RunScene(async scene =>
+        {
+            var errors = new System.Collections.Generic.List<string>();
+            void Collect(Stride.Core.Diagnostics.ILogMessage message)
+            {
+                if (message.Type >= Stride.Core.Diagnostics.LogMessageType.Error)
+                    errors.Add(message.Text);
+            }
+            Stride.Core.Diagnostics.GlobalLogger.GlobalMessageLogged += Collect;
+            try
+            {
+                // A rigid body with a particle collider, and a soft body whose particles would be compounds
+                var rigid = new BodyComponent { Collider = new Colliders.ParticleCollider() };
+                scene.Add(new Entity { new ModelComponent(scene.Model(new CubeProceduralModel(), null)), rigid });
+                var soft = new VolumetricSoftBodyComponent { Resolution = 2 };
+                soft.Collider = new CompoundCollider { Colliders = { new SphereCollider() } };
+                scene.Add(soft, new CubeProceduralModel(), new Vector3(0f, 2f, 0f));
+                await scene.NextFrame();
+
+                Assert.Null(rigid.Simulation);
+                Assert.Null(soft.Simulation);
+                Assert.Equal(0, soft.ParticleCount);
+                Assert.Contains(errors, e => e.Contains(nameof(Colliders.ParticleCollider)) && e.Contains(nameof(BodyComponent)));
+                Assert.Contains(errors, e => e.Contains(nameof(VolumetricSoftBodyComponent)) && e.Contains(nameof(CompoundCollider)));
+            }
+            finally
+            {
+                Stride.Core.Diagnostics.GlobalLogger.GlobalMessageLogged -= Collect;
+            }
+        });
+    }
+
+    [Fact]
+    public static void EachParticleHasADebugShape()
+    {
+        RunScene(async scene =>
+        {
+            var body = new VolumetricSoftBodyComponent { Resolution = 3 };
+            scene.Add(body, new CubeProceduralModel(), new Vector3(0f, 2f, 0f));
+            await Seconds(body, 0.1f);
+
+            // A sphere of the particle radius on each particle, drawn as lines rather than as a wireframe of the collider
+            var radius = ((Colliders.ParticleCollider)body.Collider).ActualRadius;
+            Assert.Equal(0, body.Collider.Transforms);
+            Assert.Equal(body.ParticleCount, body.DebugSphereCount);
+            for (int i = 0; i < body.ParticleCount; i++)
+                Assert.Equal((body.GetParticlePosition(i), radius), body.GetDebugSphere(i));
         });
     }
 
@@ -145,7 +216,7 @@ public class SoftBodyTests : GameTestBase
             var anchor = scene.Add(null, anchorModel, Vector3.Zero);
 
             var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
-            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor, AnchorNode = "Hand0" } } };
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = new WorldAnchor { Entity = anchor, NodeName = "Hand0" } } } };
             scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
             await Seconds(cloth, 0.1f);
 
@@ -177,7 +248,7 @@ public class SoftBodyTests : GameTestBase
                 scene.Add(anchor);
 
             var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
-            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor } } };
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = new BodyAnchor { Body = block } } } };
             scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
             if (anchorFirst == false)
                 scene.Add(anchor);
@@ -185,6 +256,31 @@ public class SoftBodyTests : GameTestBase
             // The weight of the cloth drags the block down
             await Seconds(cloth, 1f);
             Assert.True(block.Position.Y < 2f, $"Block at {block.Position}");
+        });
+    }
+
+    [Fact]
+    public static void PinWithoutRegionHoldsTheParticlesClosestToItsAnchor()
+    {
+        RunScene(async scene =>
+        {
+            // Hooks at two corners of a cloth, and a point between two vertices of its far edge
+            var hooks = new[] { new Vector3(-0.5f, 2f, -0.5f), new Vector3(0.5f, 2f, -0.5f) };
+            var pins = hooks.Select(h => new SoftBodyPin { Anchor = new WorldAnchor { Entity = new Entity { Transform = { Position = h } } } }).ToList();
+            pins.Add(new SoftBodyPin { Region = new BoundingBox(new Vector3(0.05f, 0f, 0.5f), new Vector3(0.05f, 0f, 0.5f)) });
+            foreach (var pin in pins.Take(2))
+                scene.Add(((WorldAnchor)pin.Anchor!).Entity!);
+            var cloth = new ClothComponent();
+            cloth.Pins.AddRange(pins);
+            scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
+            await Seconds(cloth, 0.1f);
+
+            var pinned = Enumerable.Range(0, cloth.ParticleCount).Where(cloth.IsParticlePinned).Select(i => cloth.Topology!.RestPositions[i]).ToList();
+            Assert.Equal(4, pinned.Count);
+            Assert.Contains(new Vector3(-0.5f, 0f, -0.5f), pinned);
+            Assert.Contains(new Vector3(0.5f, 0f, -0.5f), pinned);
+            Assert.Contains(pinned, p => MathUtil.NearEqual(p.Z, 0.5f) && MathUtil.NearEqual(p.X, 0f));
+            Assert.Contains(pinned, p => MathUtil.NearEqual(p.Z, 0.5f) && MathUtil.NearEqual(p.X, 0.1f));
         });
     }
 
@@ -200,7 +296,7 @@ public class SoftBodyTests : GameTestBase
             scene.Add(anchor);
 
             var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
-            var cloth = new ClothComponent { Gravity = false, Pins = { new SoftBodyPin { Region = edge, Anchor = anchor } } };
+            var cloth = new ClothComponent { Gravity = false, Pins = { new SoftBodyPin { Region = edge, Anchor = new BodyAnchor { Body = block } } } };
             scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
 
             // Contacts between the pinned particles and the block would push it, then the particles after it, forever
@@ -273,7 +369,7 @@ public class SoftBodyTests : GameTestBase
             var flesh = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, SkeletonStiffness = 8f, CollisionLayer = CollisionLayer.Layer1 };
             var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Ragdoll, SelfCollision = false, CollisionLayer = CollisionLayer.Layer2 };
             for (int i = 0; i < 4; i++)
-                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, Shape = new SphereCollider { Radius = 0.1f, Mass = 0.1f } });
+                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 0.1f } });
             var entity = new Entity { new ModelComponent(model), flesh, bones };
             entity.Transform.Position = new Vector3(0f, 0.3f, 0f);
             entity.Transform.Rotation = Quaternion.RotationZ(MathF.PI / 2f);
@@ -287,6 +383,37 @@ public class SoftBodyTests : GameTestBase
             flesh.LinearVelocity = new Vector3(0f, 6f, 0f);
             await Seconds(flesh, 0.3f);
             Assert.True(bones.GetBodyPosition(0).Y - start.Y > 0.3f, $"Bone from {start} to {bones.GetBodyPosition(0)}");
+        });
+    }
+
+    [Fact]
+    public static void BoneBodiesAreJoinedToABoundedNumberOfParticles()
+    {
+        RunScene(async scene =>
+        {
+            // A fine lattice around two bones: hundreds of particles for each
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.2f, Radius = 0.3f, Tessellation = 16 }, Chain("Bone", 2, new Vector3(0f, -0.6f, 0f), new Vector3(0f, 0.6f, 0f)));
+            var flesh = new VolumetricSoftBodyComponent { Resolution = 10, FollowSkeleton = true, Gravity = false };
+            var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Ragdoll, SelfCollision = false };
+            for (int i = 0; i < 2; i++)
+                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 1f } });
+            var entity = new Entity { new ModelComponent(model), flesh, bones };
+            entity.Transform.Position = new Vector3(0f, 2f, 0f);
+            scene.Add(entity);
+            await Seconds(flesh, 0.1f);
+
+            var simulation = flesh.Simulation!.Simulation;
+            var active = simulation.Bodies.ActiveSet;
+            int boneBodies = 0;
+            for (int i = 0; i < active.Count; i++)
+            {
+                if (flesh.Simulation.GetComponent(new CollidableReference(CollidableMobility.Dynamic, active.IndexToHandle[i])) != bones)
+                    continue;
+                boneBodies++;
+                Assert.True(active.Constraints[i].Count <= 24, $"A bone is in {active.Constraints[i].Count} constraints");
+            }
+            Assert.Equal(2, boneBodies);
+            Assert.True(simulation.Solver.ActiveSet.Batches.Count <= simulation.Solver.FallbackBatchThreshold, $"{simulation.Solver.ActiveSet.Batches.Count} batches");
         });
     }
 
@@ -311,8 +438,8 @@ public class SoftBodyTests : GameTestBase
             var flesh = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, SkeletonStiffness = 10f, Mass = 20f };
             var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Standing, SelfCollision = false, Ghost = ghost };
             var collider = (BoneCollider)bones.Collider;
-            collider.Bones.Add(new BoneShape { NodeName = "Hips", Shape = new SphereCollider { Radius = 0.1f, Mass = 5f } });
-            collider.Bones.Add(new BoneShape { NodeName = "Head", Shape = new SphereCollider { Radius = 0.1f, Mass = 3f } });
+            collider.Bones.Add(new BoneShape { NodeName = "Hips", AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 5f } });
+            collider.Bones.Add(new BoneShape { NodeName = "Head", AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 3f } });
             var entity = scene.Add(flesh, model, new Vector3(0f, 0.02f, 0f));
             entity.Add(bones);
 
@@ -424,6 +551,8 @@ public class SoftBodyTests : GameTestBase
         public void Add(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
 
         public void Remove(Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
+
+        public async Task NextFrame() => await game.Script.NextFrame();
 
         public Model Model(PrimitiveProceduralModelBase shape, Skeleton? skeleton)
         {

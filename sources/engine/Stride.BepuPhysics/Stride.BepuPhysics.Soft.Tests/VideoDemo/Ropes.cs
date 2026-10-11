@@ -28,8 +28,8 @@ internal static class Ropes
             Resolution = resolution, Stiffness = stiffness, ShearStiffness = stiffness * 0.6f, VolumeStiffness = 8f, Damping = 0.4f, Mass = mass,
             Pins =
             {
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = fromAnchor, AnchorNode = fromNode },
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = toAnchor, AnchorNode = toNode },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = Anchor(fromAnchor, fromNode) },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = Anchor(toAnchor, toNode) },
             },
         };
         var entity = new Entity(name)
@@ -41,5 +41,14 @@ internal static class Ropes
         entity.Transform.Rotation = Quaternion.BetweenDirections(Vector3.UnitY, Vector3.Normalize(to - from));
         game.AddToScene(entity);
         return (entity, body);
+    }
+
+    /// <summary> Joined to the collidable of <paramref name="entity"/>, the bones of a skeleton for a <paramref name="node"/>; null holds the end in place </summary>
+    public static SoftBodyAnchor? Anchor(Entity? entity, string? node = null)
+    {
+        if (entity is null)
+            return null;
+        var collidable = (node is null ? null : entity.Get<SkeletonBodyComponent>()) ?? entity.Get<CollidableComponent>();
+        return collidable is null ? new WorldAnchor { Entity = entity, NodeName = node } : new BodyAnchor { Body = collidable, NodeName = node };
     }
 }

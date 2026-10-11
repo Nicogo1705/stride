@@ -10,9 +10,9 @@ namespace Stride.BepuPhysics.Soft.Topology;
 /// </summary>
 internal static class LatticeBuilder
 {
-    // Corners of a cell are numbered by their offset on each axis: bit 0 is x, bit 1 is y and bit 2 is z
-    private static readonly Tetrahedron[] EvenCellTetrahedra = [new(0, 3, 5, 6), new(1, 0, 3, 5), new(2, 0, 6, 3), new(4, 0, 5, 6), new(7, 3, 6, 5)];
-    private static readonly Tetrahedron[] OddCellTetrahedra = [new(1, 2, 7, 4), new(0, 1, 4, 2), new(3, 1, 2, 7), new(5, 1, 7, 4), new(6, 2, 4, 7)];
+    // Corners of a cell are numbered by their offset on each axis: bit 0 is x, bit 1 is y and bit 2 is z.
+    // The tetrahedron joining four alternate corners spans a third of the cell, its edges are diagonals of the faces
+    private static readonly Tetrahedron CentralTetrahedron = new(0, 3, 5, 6);
 
     /// <param name="mesh"> The surface to fill </param>
     /// <param name="resolution"> The amount of cells along the longest side of the mesh </param>
@@ -78,15 +78,18 @@ internal static class LatticeBuilder
             {
                 for (int b = a + 1; b < 8; b++)
                 {
+                    // A cell whose faces keep their shape keeps its own: the diagonals through the cell would only add constraints
+                    int axes = int.PopCount(a ^ b);
                     long key = (long)Math.Min(corners[a], corners[b]) << 32 | (uint)Math.Max(corners[a], corners[b]);
-                    if (knownEdges.Add(key))
-                        edges.Add(new Edge(corners[a], corners[b], int.PopCount(a ^ b) == 1 ? EdgeKind.Stretch : EdgeKind.Shear));
+                    if (axes < 3 && knownEdges.Add(key))
+                        edges.Add(new Edge(corners[a], corners[b], axes == 1 ? EdgeKind.Stretch : EdgeKind.Shear));
                 }
             }
 
-            // Alternating the split keeps the faces shared by neighboring cells cut along the same diagonal
-            foreach (var t in ((x + y + z) & 1) == 0 ? EvenCellTetrahedra : OddCellTetrahedra)
-                tetrahedra.Add(new Tetrahedron(corners[t.A], corners[t.B], corners[t.C], corners[t.D]));
+            // One volume per cell, its neighbors using the other four corners: a particle is in four volume constraints, not about twenty
+            // as with cells split in five, which keeps the solver's batches below Bepu's fallback threshold
+            var t = CentralTetrahedron;
+            tetrahedra.Add(new Tetrahedron(corners[t.A], corners[t.B], corners[t.C], corners[t.D]));
         }
 
         // Each vertex is bound to the eight corners of the cell it is in, or of the closest occupied cell when it lies outside the lattice

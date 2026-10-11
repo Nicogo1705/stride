@@ -17,7 +17,7 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
 /// A jelly-bean character made of a single soft body: body, arms and legs are one volumetric mesh carrying all the mass and every contact.
-/// Inside, a Standing skeleton of ghost bones (no shape, a hundredth of the mass) holds it up; the flesh and the bones pull on each other.
+/// Inside, a Standing skeleton of ghost bones (no shape, a third of the bean's mass) holds it up; the flesh and the bones pull on each other.
 /// </summary>
 internal static class FallGuy
 {
@@ -29,7 +29,11 @@ internal static class FallGuy
         model.Skeleton = new Skeleton { Nodes = Bean.Nodes() };
 
         var body = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Standing, Ghost = true, SelfCollision = false, StandingStrength = 2.5f };
-        ((BoneCollider)body.Collider).Bones.AddRange(Bean.Hitboxes());
+        // The flesh carries the mass: the ghost bones weigh a third of the bean's, the least that still holds the flesh up
+        var bones = Bean.Hitboxes();
+        foreach (var bone in bones)
+            bone.Shape.Mass /= 3f;
+        ((BoneCollider)body.Collider).Bones.AddRange(bones);
         var flesh = new VolumetricSoftBodyComponent
         {
             // Seven cells over the height, about a hundred particles: the Fall Guy is the costliest body of its scenes

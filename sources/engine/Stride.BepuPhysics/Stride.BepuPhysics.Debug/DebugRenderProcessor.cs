@@ -28,6 +28,7 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
     private VisibilityGroup _visibilityGroup = null!;
     private BepuConfiguration? _bepuConfiguration;
     private readonly LineRenderObject _contactLines = new();
+    private readonly LineRenderObject _sphereLines = new();
     private readonly Dictionary<BepuSimulation, ContactRecorder> _contactRecorders = new();
     private readonly Dictionary<CollidableComponent, (WireFrameRenderObject[] Wireframes, object? cache)> _wireFrameRenderObject = new();
 
@@ -48,9 +49,14 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
 
                 _visible = value;
                 if (_visible)
+                {
                     _visibilityGroup.RenderObjects.Add(_contactLines);
+                    _visibilityGroup.RenderObjects.Add(_sphereLines);
+                }
                 else
+                {
                     Clear();
+                }
                 UpdateShapeTracking(proc);
             }
             else
@@ -134,6 +140,7 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
     {
         Clear();
         _contactLines.Dispose();
+        _sphereLines.Dispose();
     }
 
     public override void Draw(RenderContext context)
@@ -224,6 +231,17 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
             }
         }
 
+        // Collidables made of many independent spheres, like soft bodies, are drawn together in a single batch of lines
+        _sphereLines.Clear();
+        if (_trackingShapes)
+        {
+            foreach (var collidable in _wireFrameRenderObject.Keys)
+            {
+                if (collidable.DebugSphereCount > 0)
+                    AddSpheres(collidable);
+            }
+        }
+
         _contactLines.Clear();
         // GetService, not GetOrCreate: showing contacts must not add a Bepu configuration to the game settings
         _bepuConfiguration ??= Services.GetService<BepuConfiguration>();
@@ -241,6 +259,28 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
         else
         {
             StopRecordingContacts();
+        }
+    }
+
+    /// <summary> Draws each debug sphere of <paramref name="collidable"/> as three circles </summary>
+    private void AddSpheres(CollidableComponent collidable)
+    {
+        const int segments = 8;
+        var color = GetCurrentColor(collidable);
+        Span<Vector2> circle = stackalloc Vector2[segments + 1];
+        for (int s = 0; s <= segments; s++)
+            circle[s] = new Vector2(MathF.Cos(s * MathF.Tau / segments), MathF.Sin(s * MathF.Tau / segments));
+
+        for (int i = 0; i < collidable.DebugSphereCount; i++)
+        {
+            var (center, radius) = collidable.GetDebugSphere(i);
+            for (int s = 0; s < segments; s++)
+            {
+                var (a, b) = (circle[s] * radius, circle[s + 1] * radius);
+                _sphereLines.AddLine(center + new Vector3(a.X, a.Y, 0f), center + new Vector3(b.X, b.Y, 0f), color);
+                _sphereLines.AddLine(center + new Vector3(a.X, 0f, a.Y), center + new Vector3(b.X, 0f, b.Y), color);
+                _sphereLines.AddLine(center + new Vector3(0f, a.X, a.Y), center + new Vector3(0f, b.X, b.Y), color);
+            }
         }
     }
 
@@ -324,7 +364,9 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
         ClearShapes();
         StopRecordingContacts();
         _contactLines.Clear();
+        _sphereLines.Clear();
         _visibilityGroup?.RenderObjects.Remove(_contactLines);
+        _visibilityGroup?.RenderObjects.Remove(_sphereLines);
     }
 
     private void ClearShapes()

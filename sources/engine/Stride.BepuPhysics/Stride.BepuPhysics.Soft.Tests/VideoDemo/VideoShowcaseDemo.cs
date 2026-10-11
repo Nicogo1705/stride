@@ -70,7 +70,7 @@ public class VideoShowcaseDemo : GameTestBase
                 // The cost of each kind of physical object: the step time once all of them are removed
                 foreach (var (scene, index) in picked)
                 {
-                    foreach (var threads in new[] { 1, 2, 4, 8, 16, -1 })
+                    foreach (var threads in (Environment.GetEnvironmentVariable("VIDEO_TOUR_THREADS") ?? "1,2,4,8,16,-1").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse))
                     {
                         game.LoadScene(scene);
                         await game.Steps(60);
@@ -84,6 +84,7 @@ public class VideoShowcaseDemo : GameTestBase
                     game.LoadScene(scene);
                     await game.Steps(240);
                     report.Add($"{index:00} all: {game.StepTiming()}");
+                    report.Add($"{index:00}   solver: {SolverStats(game)}");
                     var names = game.SceneSystem.SceneInstance.RootScene.Entities.Where(e => e.Components.OfType<CollidableComponent>().Any() && e.Get<StaticComponent>() is null).Select(e => e.Name).Distinct().ToList();
                     foreach (var name in names)
                     {
@@ -110,6 +111,20 @@ public class VideoShowcaseDemo : GameTestBase
                 game.LoadScene(scene);
                 await game.Steps(120);
                 await game.CaptureTo(Shot("a-start"));
+                if (Environment.GetEnvironmentVariable("VIDEO_TOUR_VIEWS") == "1")
+                {
+                    // Every debug view from the scene's camera, with its frame rate
+                    for (int view = 0; view < VideoDemoGame.Views.Length; view++)
+                    {
+                        game.SetDebugView(view);
+                        await game.Frames(10);
+                        game.ClearFrameTimes();
+                        await game.Steps(120);
+                        report.Add($"{index:00} view {VideoDemoGame.Views[view]}: {game.FpsText()}");
+                        await game.CaptureTo(Shot($"a-view{view}"));
+                    }
+                    game.SetDebugView(scene is VideoScene videoScene ? videoScene.DefaultDebugView : VideoDemoGame.NoDebugView);
+                }
                 switch (scene)
                 {
                     case SoftBodiesScene:
@@ -348,7 +363,7 @@ public class VideoShowcaseDemo : GameTestBase
                 game.Deformation = SoftBodyDeformationMode.Gpu;
                 await game.Frames(30);
                 await game.CaptureTo(Path.Combine(folder, $"{index:00}-gpu"));
-                // The rigid wireframes, classified against the soft models by the debug id pass
+                // The rigid wireframes over the soft models
                 await game.Press(Keys.V);
                 await game.Frames(30);
                 await game.CaptureTo(Path.Combine(folder, $"{index:00}-gpu-rigid"));
@@ -364,6 +379,32 @@ public class VideoShowcaseDemo : GameTestBase
         Directory.CreateDirectory(folder);
         File.WriteAllLines(Path.Combine(folder, "report.txt"), report);
         Console.WriteLine(string.Join(Environment.NewLine, report));
+    }
+
+    /// <summary> Active bodies, constraints and synchronized batches of the solver, and the most constrained body of each kind of object </summary>
+    /// <remarks> Bepu puts the constraints of a body in separate batches: one body in many constraints multiplies the batches, past 64 it uses its fallback batch </remarks>
+    private static string SolverStats(VideoDemoGame game)
+    {
+        var bepu = game.SceneSystem.SceneInstance.RootScene.Entities.SelectMany(e => e.Components).OfType<CollidableComponent>().Select(c => c.Simulation).First(s => s is not null)!;
+        var solver = bepu.Simulation.Solver;
+        int constraints = 0;
+        for (int b = 0; b < solver.ActiveSet.Batches.Count; b++)
+        {
+            for (int t = 0; t < solver.ActiveSet.Batches[b].TypeBatches.Count; t++)
+                constraints += solver.ActiveSet.Batches[b].TypeBatches[t].ConstraintCount;
+        }
+
+        var most = new Dictionary<string, int>();
+        var bodies = bepu.Simulation.Bodies.ActiveSet;
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            var owner = bepu.GetComponent(new global::BepuPhysics.Collidables.CollidableReference(global::BepuPhysics.Collidables.CollidableMobility.Dynamic, bodies.IndexToHandle[i]));
+            var name = $"{owner.Entity?.Name} ({owner.GetType().Name})";
+            most[name] = Math.Max(most.GetValueOrDefault(name), bodies.Constraints[i].Count);
+        }
+        var fallback = solver.ActiveSet.Batches.Count > solver.FallbackBatchThreshold ? "used" : "unused";
+        return $"{bodies.Count} active bodies, {constraints} active constraints in {solver.ActiveSet.Batches.Count} batches (fallback {fallback}); most constraints on one body: "
+            + string.Join(", ", most.OrderByDescending(m => m.Value).Select(m => $"{m.Key} {m.Value}"));
     }
 
     private static Vector3? HumanHips(VideoDemoGame game) => game.SceneSystem.SceneInstance.RootScene.Entities

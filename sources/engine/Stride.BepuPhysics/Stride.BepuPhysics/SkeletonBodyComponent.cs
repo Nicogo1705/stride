@@ -23,7 +23,6 @@ using Stride.Rendering;
 using NRigidPose = BepuPhysics.RigidPose;
 using NQuaternion = System.Numerics.Quaternion;
 using NVector3 = System.Numerics.Vector3;
-using Symmetric3x3 = BepuUtilities.Symmetric3x3;
 using BodyIndexLoop = BepuUtilities.IForEach<int>;
 
 namespace Stride.BepuPhysics;
@@ -46,7 +45,6 @@ public class SkeletonBodyComponent : CollidableComponent
 
     private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(SkeletonBodyComponent));
     private static readonly BoneJoint DefaultJoint = new();
-    private const float GhostMassRatio = 1f / 3f; // Lighter bones can no longer hold up the bodies joined to them within the solver's iterations
 
     private float _teleportDistance = 1f;
     private BodyHandle[] _bodies = [];
@@ -95,6 +93,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// </summary>
     /// <remarks> Avoids sweeping through the scene with a huge velocity when the character is teleported. </remarks>
     [Display(category: CategoryForces)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float TeleportDistance
     {
@@ -148,6 +147,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The time, in seconds, to blend the nodes from the ragdoll back to the animation when <see cref="Mode"/> returns to <see cref="SkeletonBodyMode.Animated"/>.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(0.25f)]
     public float BlendDuration
     {
@@ -159,6 +159,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The frequency, in hertz, of the servos pulling the joints toward the animated pose in <see cref="SkeletonBodyMode.Active"/> and <see cref="SkeletonBodyMode.Standing"/>.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(10f)]
     public float ActiveSpringFrequency
     {
@@ -170,6 +171,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The damping ratio of the servos of <see cref="SkeletonBodyMode.Active"/> and <see cref="SkeletonBodyMode.Standing"/>, 1 for a critically damped spring.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float ActiveSpringDampingRatio
     {
@@ -181,6 +183,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The largest torque each joint servo of <see cref="SkeletonBodyMode.Active"/> and <see cref="SkeletonBodyMode.Standing"/> may apply.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(500f)]
     public float ActiveMaximumForce
     {
@@ -197,6 +200,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// With nothing under it within the reach of its legs, it falls freely.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(4f)]
     public float StandingLinearSpringFrequency
     {
@@ -208,6 +212,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The frequency, in hertz, of the servos turning the root and the topmost body toward their animated orientation in <see cref="SkeletonBodyMode.Standing"/>.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(8f)]
     public float StandingAngularSpringFrequency
     {
@@ -224,6 +229,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// at the distance between the root and the topmost body; a hit or a grab stronger than that wins.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(2f)]
     public float StandingStrength
     {
@@ -232,11 +238,12 @@ public class SkeletonBodyComponent : CollidableComponent
     }
 
     /// <summary>
-    /// Whether the bodies only carry the joints and servos of the skeleton: they collide with nothing, rays go through them,
-    /// and they weigh a third of the <see cref="ColliderBase.Mass"/> of their shape.
+    /// Whether the bodies only carry the joints and servos of the skeleton: they collide with nothing and rays go through them.
     /// </summary>
     /// <remarks>
-    /// For a character whose mass and contacts come from other bodies joined to its bones, like soft flesh following the skeleton.
+    /// For a character whose contacts come from other bodies joined to its bones, like soft flesh following the skeleton.
+    /// The bodies keep the <see cref="ColliderBase.Mass"/> of their shape: lower it when the mass comes from those other bodies,
+    /// but not much below a third of what each bone holds, or the solver lets the load sag.
     /// Changes are applied when the bodies are created, see <see cref="Rebuild"/>.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
@@ -338,6 +345,15 @@ public class SkeletonBodyComponent : CollidableComponent
         return true;
     }
 
+    internal override bool CanAttach(ICollider collider)
+    {
+        if (collider is BoneCollider)
+            return true;
+
+        Logger.Error($"{nameof(SkeletonBodyComponent)} on '{Entity?.Name}' needs a {nameof(BoneCollider)}, not a {collider.GetType().Name}; it is left out of the simulation");
+        return false;
+    }
+
     internal override bool AllowContactBetween(BodyHandle a, BodyHandle b)
     {
         if (SelfCollision == false)
@@ -348,15 +364,15 @@ public class SkeletonBodyComponent : CollidableComponent
         return _nodes[i] != _nodes[j] && _jointNodes[i] != _nodes[j] && _jointNodes[j] != _nodes[i];
     }
 
-    /// <summary> The bone shapes whose node is in the skeleton, and the scale of that node; false when the entity has no skeleton yet </summary>
-    internal bool TryResolveBones(out List<(BoneShape Bone, float Scale)> resolved)
+    /// <summary> The bone shapes whose node is in the skeleton, the scale of that node and the pose of the shape in its space; false when the entity has no skeleton yet </summary>
+    internal bool TryResolveBones(out List<(BoneShape Bone, float Scale, Vector3 Position, Quaternion Rotation)> resolved)
     {
         resolved = new();
         if (Entity?.Get<ModelComponent>() is not { Model: not null } model || model.Skeleton is not { } skeleton)
             return false;
 
         var collider = (BoneCollider)Collider;
-        var bones = collider.Bones.Count > 0 || collider.GeneratedRadius <= 0f ? collider.Bones : BoneCollider.Generate(skeleton.Nodes, collider.GeneratedRadius);
+        var bones = collider.Bones.Count > 0 || collider.GeneratedRadius <= 0f ? collider.Bones : BoneCollider.Generate(model.Model, collider.GeneratedRadius);
 
         UpdateNodeMatrices(model);
         var nodes = new List<int>();
@@ -371,8 +387,18 @@ public class SkeletonBodyComponent : CollidableComponent
             }
 
             skeleton.NodeTransformations[node].WorldMatrix.Decompose(out var scale, out Quaternion _, out _);
+            var (position, rotation) = (bone.Shape.PositionLocal, bone.Shape.RotationLocal);
+            if (bone.AlongBone && Array.FindIndex(skeleton.Nodes, n => n.ParentIndex == node) is var child and >= 0)
+            {
+                var segment = skeleton.Nodes[child].Transform.Position;
+                if (segment.LengthSquared() > 1e-12f)
+                {
+                    var along = Quaternion.BetweenDirections(Vector3.UnitY, Vector3.Normalize(segment));
+                    (position, rotation) = (segment * 0.5f + Vector3.Transform(position, along), rotation * along);
+                }
+            }
             // Bepu shapes have no scale, the shape is resized by the average scale of its node
-            resolved.Add((bone, MathF.Abs(scale.X + scale.Y + scale.Z) / 3f));
+            resolved.Add((bone, MathF.Abs(scale.X + scale.Y + scale.Z) / 3f, position, rotation));
             nodes.Add(node);
             scales.Add(scale);
         }
@@ -386,8 +412,7 @@ public class SkeletonBodyComponent : CollidableComponent
     {
         Debug.Assert(Simulation is not null);
 
-        if (Collider is not BoneCollider collider)
-            throw new InvalidOperationException($"{nameof(SkeletonBodyComponent)} on '{Entity.Name}' needs a {nameof(BoneCollider)}, not a {Collider.GetType().Name}");
+        var collider = (BoneCollider)Collider;
         var skeleton = Entity.Get<ModelComponent>()!.Skeleton;
         var bodies = Simulation.Simulation.Bodies;
 
@@ -467,23 +492,23 @@ public class SkeletonBodyComponent : CollidableComponent
 
     private NRigidPose TargetPose(SkeletonUpdater skeleton, int index, BoneCollider collider)
     {
-        return BodyPose(skeleton.NodeTransformations[_nodes[index]].WorldMatrix, collider.GetCreated(index).Bone.Shape);
+        return BodyPose(skeleton.NodeTransformations[_nodes[index]].WorldMatrix, collider.GetCreatedLocal(index));
     }
 
-    private static NRigidPose BodyPose(in Matrix node, ColliderBase shape)
+    private static NRigidPose BodyPose(in Matrix node, (Vector3 Position, Quaternion Rotation) local)
     {
         node.Decompose(out _, out Quaternion rotation, out _);
-        var position = Vector3.TransformCoordinate(shape.PositionLocal, node);
-        return new NRigidPose(position.ToNumeric(), (shape.RotationLocal * rotation).ToNumeric());
+        var position = Vector3.TransformCoordinate(local.Position, node);
+        return new NRigidPose(position.ToNumeric(), (local.Rotation * rotation).ToNumeric());
     }
 
     /// <summary> The world matrix of the node of the body at <paramref name="index"/> placed at <paramref name="pose"/>, the inverse of <see cref="BodyPose"/> </summary>
     private Matrix NodeMatrix(int index, in NRigidPose pose)
     {
-        var shape = GetBoneShape(index).Shape;
-        var rotation = Quaternion.Invert(shape.RotationLocal) * pose.Orientation.ToStride();
+        var local = ((BoneCollider)Collider).GetCreatedLocal(index);
+        var rotation = Quaternion.Invert(local.Rotation) * pose.Orientation.ToStride();
         var scale = _nodeScales[index];
-        var position = pose.Position.ToStride() - Vector3.Transform(shape.PositionLocal * scale, rotation);
+        var position = pose.Position.ToStride() - Vector3.Transform(local.Position * scale, rotation);
         Matrix.Transformation(in scale, in rotation, in position, out var matrix);
         return matrix;
     }
@@ -582,8 +607,8 @@ public class SkeletonBodyComponent : CollidableComponent
             if (parent < 0)
                 continue;
 
-            var a = BodyPose(rest[_nodes[parent]], collider.GetCreated(parent).Bone.Shape);
-            var b = BodyPose(rest[_nodes[i]], collider.GetCreated(i).Bone.Shape);
+            var a = BodyPose(rest[_nodes[parent]], collider.GetCreatedLocal(parent));
+            var b = BodyPose(rest[_nodes[i]], collider.GetCreatedLocal(i));
             var toLocalA = NQuaternion.Conjugate(a.Orientation);
             var toLocalB = NQuaternion.Conjugate(b.Orientation);
             if (_nodes[i] == _nodes[parent])
@@ -657,7 +682,7 @@ public class SkeletonBodyComponent : CollidableComponent
         {
             var inertia = Inertia(collider, i);
             mass += inertia.InverseMass > 0f ? 1f / inertia.InverseMass : 0f;
-            float height = Vector3.TransformCoordinate(GetBoneShape(i).Shape.PositionLocal, rest[_nodes[i]]).Y;
+            float height = Vector3.TransformCoordinate(collider.GetCreatedLocal(i).Position, rest[_nodes[i]]).Y;
             if (_jointParents[i] < 0)
             {
                 Add(i);
@@ -692,16 +717,7 @@ public class SkeletonBodyComponent : CollidableComponent
     }
 
     /// <summary> The inertia of the body at <paramref name="index"/> once dynamic, from the mass of its shape </summary>
-    private BodyInertia Inertia(BoneCollider collider, int index)
-    {
-        var inertia = collider.GetCreatedInertia(index);
-        if (_ghost)
-        {
-            inertia.InverseMass *= 1f / GhostMassRatio;
-            Symmetric3x3.Scale(inertia.InverseInertiaTensor, 1f / GhostMassRatio, out inertia.InverseInertiaTensor);
-        }
-        return inertia;
-    }
+    private static BodyInertia Inertia(BoneCollider collider, int index) => collider.GetCreatedInertia(index);
 
     /// <summary> Sets the forces of the Standing servos from the weight of the bones and of the bodies other components join to them </summary>
     private void UpdateStandingStrength()
@@ -893,8 +909,8 @@ public class SkeletonBodyComponent : CollidableComponent
             if (_jointParents[i] < 0 || _nodes[i] == _nodes[_jointParents[i]])
                 continue;
 
-            var a = BodyPose(_animated[_nodes[_jointParents[i]]], collider.GetCreated(_jointParents[i]).Bone.Shape);
-            var b = BodyPose(_animated[_nodes[i]], collider.GetCreated(i).Bone.Shape);
+            var a = BodyPose(_animated[_nodes[_jointParents[i]]], collider.GetCreatedLocal(_jointParents[i]));
+            var b = BodyPose(_animated[_nodes[i]], collider.GetCreatedLocal(i));
             solver.ApplyDescription(_servos[i], Servo(NQuaternion.Conjugate(a.Orientation) * b.Orientation));
         }
 
@@ -905,13 +921,13 @@ public class SkeletonBodyComponent : CollidableComponent
             // Heights in the animated pose are measured from the feet, the origin of the entity
             float feet = _animated[0].TranslationVector.Y;
             var (root, _, _) = _upright[0];
-            float standing = BodyPose(_animated[_nodes[root]], collider.GetCreated(root).Bone.Shape).Position.Y - feet;
+            float standing = BodyPose(_animated[_nodes[root]], collider.GetCreatedLocal(root)).Position.Y - feet;
             _ground = FindGround(Body(root).Pose.Position.ToStride(), MathF.Max(0f, standing) * 1.3f + 0.1f, out _groundHeight);
         }
 
         foreach (var (body, linear, angular) in _upright)
         {
-            var animated = BodyPose(_animated[_nodes[body]], collider.GetCreated(body).Bone.Shape);
+            var animated = BodyPose(_animated[_nodes[body]], collider.GetCreatedLocal(body));
             var current = Body(body).Pose.Position;
             float target = _groundHeight + animated.Position.Y - _animated[0].TranslationVector.Y;
             // Only lifts, and only from the ground: otherwise no force at all, which would also brake the fall and any sideways motion
