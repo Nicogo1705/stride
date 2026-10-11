@@ -15,32 +15,30 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
 /// Soft ropes tied to bodies both ways: a crane and its load, a ragdoll hanging by the ankle, a cable car, a swing,
-/// two Standing humans in a tug of war, and an all-soft Fall Guy bouncing on a trampoline
+/// and an all-soft Fall Guy bouncing on a trampoline
 /// </summary>
 internal sealed class RopesScene : VideoScene
 {
-    private static readonly Vector3 CraneFoot = new(-5.4f, 0f, -1.6f), Hanging = new(-2.4f, 0f, -1.6f), Cable = new(1.2f, 0f, -1.8f), Swing = new(5.0f, 0f, -1.4f), Tug = new(-1.6f, 0f, 2.4f), Trampoline = new(3.6f, 0f, 2.4f);
+    private static readonly Vector3 CraneFoot = new(-5.4f, 0f, -1.6f), Hanging = new(-2.4f, 0f, -1.6f), Cable = new(1.2f, 0f, -1.8f), Swing = new(5.0f, 0f, -1.4f), Trampoline = new(3.6f, 0f, 2.4f);
 
     private SwingingCrane? _crane;
     private SkeletonBodyComponent? _hanging;
     private BodyComponent? _cabin, _seat;
-    private readonly List<Walker> _tug = new();
     private (Entity Entity, SkeletonBodyComponent Body, VolumetricSoftBodyComponent Flesh)? _jumper;
 
     public override string Title => "Ropes and cables";
     public override string Pr => "soft body pins as body anchors, AnchorNode on bones, PR #3528 and upcoming";
-    public override string Description => "every rope pulls on what it is tied to: a crane, a ragdoll hung by the ankle, a cable car, a swing, a tug of war, a trampoline";
+    public override string Description => "every rope pulls on what it is tied to: a crane, a ragdoll hung by the ankle, a cable car, a swing, a trampoline";
     public override Vector3 Eye => new(0.0f, 4.4f, 10.4f);
     public override Vector3 Target => new(0f, 1.2f, 0f);
     public override string SceneKeys => "I: push the swing  |  M: push the cable car  |  J: lift the Fall Guy above the trampoline  |  left click: grab the load, the ragdoll, the cabin, a rope";
     public override IReadOnlyList<SkeletonBodyMode> LegendModes => new[] { SkeletonBodyMode.Ragdoll, SkeletonBodyMode.Standing };
-    public override string LegendCaption => "Mode color: the hanging ragdoll, the tug of war, the Fall Guy";
+    public override string LegendCaption => "Mode color: the hanging ragdoll, the Fall Guy";
 
     public SwingingCrane? Crane => _crane;
 
     protected override void BuildScene(VideoDemoGame game)
     {
-        _tug.Clear();
         var device = game.GraphicsDevice;
         var navy = Look.Paint(device, Look.Navy, 0.5f);
 
@@ -77,29 +75,6 @@ internal sealed class RopesScene : VideoScene
         game.AddToScene(seat);
         foreach (var z in new[] { -0.3f, 0.3f })
             Ropes.Add(game, Swing + new Vector3(0f, 2.8f, z), Swing + new Vector3(0f, 0.62f, z), 0.03f, Look.Ivory, bar, seat, mass: 0.8f, name: "swing rope");
-
-        // Tug of war: two Standing humans facing away, a rope between their right hands, each walking toward its own side
-        var animators = new ProceduralCharacter.Animator[2];
-        var bodies = new SkeletonBodyComponent[2];
-        var entities = new Entity[2];
-        for (int i = 0; i < 2; i++)
-        {
-            float side = i == 0 ? -1f : 1f;
-            float yaw = side * MathUtil.PiOverTwo;
-            animators[i] = new ProceduralCharacter.Animator { Time = i * 0.6f, Speed = 0.6f };
-            (entities[i], bodies[i], _) = Humans.Add(game, SkeletonBodyMode.Standing, Tug + new Vector3(side * 0.75f, 0f, 0f), yaw, animators[i], $"tug {i + 1}");
-        }
-        for (int i = 0; i < 2; i++)
-        {
-            float side = i == 0 ? -1f : 1f;
-            var walker = new Walker(entities[i], bodies[i], animators[i].StanceSpeed, 2, side * MathUtil.PiOverTwo, Tug + new Vector3(side * 4f, 0f, 0f), 0.4f);
-            entities[i].Add(walker);
-            _tug.Add(walker);
-        }
-        // Right hands, at rest: 0.22 m beside the chest, facing ±X the hand is 0.22 m in front or behind
-        var handL = Tug + new Vector3(-0.75f, 1.0f, -0.22f);
-        var handR = Tug + new Vector3(0.75f, 1.0f, 0.22f);
-        Ropes.Add(game, handL, handR, 0.035f, Look.Wood, entities[0], entities[1], "Hand.R", "Hand.R", mass: 3f, name: "tug rope");
 
         // A trampoline: a cloth pinned on its four edges between four posts, an all-soft Fall Guy above it
         var size = 2.2f;
@@ -166,15 +141,13 @@ internal sealed class RopesScene : VideoScene
         yield return (Hanging + new Vector3(0f, 4.1f, 0f), "rope on a bone (AnchorNode Foot.L)");
         yield return (Cable + new Vector3(0f, 3.9f, 0f), "cable car (M)");
         yield return (Swing + new Vector3(0f, 3.3f, 0f), "swing (I)");
-        yield return (Tug + new Vector3(0f, 2.3f, 0f), "tug of war: rope between two hands");
         yield return (Trampoline + new Vector3(0f, 3.4f, 0f), "trampoline (J: up again)");
     }
 
     public override IEnumerable<string> Status()
     {
-        var gap = _tug.Count == 2 ? Vector3.Distance(_tug[0].Hips, _tug[1].Hips) : 0f;
-        yield return string.Format(System.Globalization.CultureInfo.InvariantCulture, "crane jib at {0:0} deg  |  hanging ragdoll: hips at {1:0.00} m  |  tug of war: hips {2:0.00} m apart, {3} standing  |  Fall Guy {4}",
-            _crane?.JibAngle ?? 0f, _hanging is { BodyCount: > 0 } h ? h.GetBodyPosition(0).Y : 0f, gap, _tug.FindAll(w => w.Body.IsGrounded).Count,
+        yield return string.Format(System.Globalization.CultureInfo.InvariantCulture, "crane jib at {0:0} deg  |  hanging ragdoll: hips at {1:0.00} m  |  Fall Guy {2}",
+            _crane?.JibAngle ?? 0f, _hanging is { BodyCount: > 0 } h ? h.GetBodyPosition(0).Y : 0f,
             _jumper is { } j && j.Body.IsGrounded ? $"standing on {j.Body.Ground?.Entity.Name}" : "in the air");
     }
 }

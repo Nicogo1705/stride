@@ -231,7 +231,6 @@ public class VideoShowcaseDemo : GameTestBase
                             ("hanging", new Vector3(-1.4f, 2.4f, 1.6f), new Vector3(-2.4f, 1.8f, -1.6f)),
                             ("cable-car", new Vector3(2.0f, 3.0f, 1.6f), new Vector3(1.2f, 2.6f, -1.8f)),
                             ("swing", new Vector3(6.4f, 2.0f, 1.6f), new Vector3(5.0f, 1.2f, -1.4f)),
-                            ("tug-of-war", new Vector3(-1.6f, 2.0f, 6.0f), new Vector3(-1.6f, 0.9f, 2.4f)),
                             ("trampoline", new Vector3(5.2f, 2.4f, 5.6f), new Vector3(3.6f, 1.2f, 2.4f)),
                         })
                         {

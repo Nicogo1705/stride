@@ -32,7 +32,8 @@ internal static class FallGuy
         ((BoneCollider)body.Collider).Bones.AddRange(Bean.Hitboxes());
         var flesh = new VolumetricSoftBodyComponent
         {
-            Resolution = 10, Mass = 20f, Stiffness = 22f, ShearStiffness = 18f, VolumeStiffness = 16f, Damping = 0.6f,
+            // Seven cells over the height, about a hundred particles: the Fall Guy is the costliest body of its scenes
+            Resolution = 7, Mass = 20f, Stiffness = 22f, ShearStiffness = 18f, VolumeStiffness = 16f, Damping = 0.6f,
             FollowSkeleton = true, SkeletonStiffness = 12f, SkeletonDamping = 0.5f,
         };
         var animator = new Bean.Animator { Time = time };
