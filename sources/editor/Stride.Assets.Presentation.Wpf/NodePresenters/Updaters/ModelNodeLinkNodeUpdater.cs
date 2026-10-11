@@ -39,6 +39,28 @@ namespace Stride.Assets.Presentation.NodePresenters.Updaters
             {
                 node.AttachedProperties.Set(ModelNodeLinkData.Key, GetAvailableNodesForLink(asset, physicsComponent));
             }
+
+            // Any other string member named NodeName lists the nodes of the model of the entity its owner refers to, or of the edited entity.
+            // Updated from the reference too, so changing it refreshes the list.
+            if (node.Parent is IAssetNodePresenter owner && owner.Value is not (null or ModelNodeLinkComponent or SpriteStudioNodeLinkComponent or PhysicsComponent)
+                && (node.Name == NodeNameMember || IsEntityReference(node.Type)) && owner.TryGetChild(NodeNameMember)?.Type == typeof(string))
+            {
+                owner.AttachedProperties.Set(ModelNodeLinkData.Key, GetAvailableNodesForLink(asset, GetReferencedModel(owner, entity)));
+            }
+        }
+
+        private const string NodeNameMember = nameof(ModelNodeLinkComponent.NodeName);
+
+        private static bool IsEntityReference(Type type) => typeof(Entity).IsAssignableFrom(type) || typeof(EntityComponent).IsAssignableFrom(type);
+
+        private static Model GetReferencedModel(IAssetNodePresenter owner, Entity entity)
+        {
+            foreach (var member in owner.Children)
+            {
+                if (IsEntityReference(member.Type))
+                    return (member.Value as Entity ?? (member.Value as EntityComponent)?.Entity)?.Get<ModelComponent>()?.Model;
+            }
+            return entity.Get<ModelComponent>()?.Model;
         }
 
         private static IEnumerable<NodeInformation> GetAvailableNodesForLink(AssetViewModel viewModel, ModelNodeLinkComponent modelNodeLinkComponent)
