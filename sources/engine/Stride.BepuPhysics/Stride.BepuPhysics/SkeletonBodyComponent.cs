@@ -23,7 +23,6 @@ using Stride.Rendering;
 using NRigidPose = BepuPhysics.RigidPose;
 using NQuaternion = System.Numerics.Quaternion;
 using NVector3 = System.Numerics.Vector3;
-using Symmetric3x3 = BepuUtilities.Symmetric3x3;
 using BodyIndexLoop = BepuUtilities.IForEach<int>;
 
 namespace Stride.BepuPhysics;
@@ -46,7 +45,6 @@ public class SkeletonBodyComponent : CollidableComponent
 
     private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(SkeletonBodyComponent));
     private static readonly BoneJoint DefaultJoint = new();
-    private const float GhostMassRatio = 1f / 3f; // Lighter bones can no longer hold up the bodies joined to them within the solver's iterations
 
     private float _teleportDistance = 1f;
     private BodyHandle[] _bodies = [];
@@ -233,11 +231,12 @@ public class SkeletonBodyComponent : CollidableComponent
     }
 
     /// <summary>
-    /// Whether the bodies only carry the joints and servos of the skeleton: they collide with nothing, rays go through them,
-    /// and they weigh a third of the <see cref="ColliderBase.Mass"/> of their shape.
+    /// Whether the bodies only carry the joints and servos of the skeleton: they collide with nothing and rays go through them.
     /// </summary>
     /// <remarks>
-    /// For a character whose mass and contacts come from other bodies joined to its bones, like soft flesh following the skeleton.
+    /// For a character whose contacts come from other bodies joined to its bones, like soft flesh following the skeleton.
+    /// The bodies keep the <see cref="ColliderBase.Mass"/> of their shape: lower it when the mass comes from those other bodies,
+    /// but not much below a third of what each bone holds, or the solver lets the load sag.
     /// Changes are applied when the bodies are created, see <see cref="Rebuild"/>.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
@@ -711,16 +710,7 @@ public class SkeletonBodyComponent : CollidableComponent
     }
 
     /// <summary> The inertia of the body at <paramref name="index"/> once dynamic, from the mass of its shape </summary>
-    private BodyInertia Inertia(BoneCollider collider, int index)
-    {
-        var inertia = collider.GetCreatedInertia(index);
-        if (_ghost)
-        {
-            inertia.InverseMass *= 1f / GhostMassRatio;
-            Symmetric3x3.Scale(inertia.InverseInertiaTensor, 1f / GhostMassRatio, out inertia.InverseInertiaTensor);
-        }
-        return inertia;
-    }
+    private static BodyInertia Inertia(BoneCollider collider, int index) => collider.GetCreatedInertia(index);
 
     /// <summary> Sets the forces of the Standing servos from the weight of the bones and of the bodies other components join to them </summary>
     private void UpdateStandingStrength()
