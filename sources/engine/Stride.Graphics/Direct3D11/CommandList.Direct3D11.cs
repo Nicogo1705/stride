@@ -426,6 +426,7 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="slot">The binding slot.</param>
         /// <param name="view">The Unordered Access View to set.</param>
+        /// <param name="resource">The native resource behind <paramref name="view"/>, or 0 when unsetting.</param>
         /// <param name="uavInitialOffset">
         ///   The Append/Consume Buffer offset.
         ///   <list type="bullet">
@@ -438,9 +439,10 @@ namespace Stride.Graphics
         ///   This parameter is only relevant for UAVs which have the <see cref="BufferFlags.StructuredAppendBuffer"/> or
         ///   <see cref="BufferFlags.StructuredCounterBuffer"/> Buffer flags.
         /// </param>
-        private void OMSetSingleUnorderedAccessView(int slot, ComPtr<ID3D11UnorderedAccessView> view, int uavInitialOffset)
+        private void OMSetSingleUnorderedAccessView(int slot, ComPtr<ID3D11UnorderedAccessView> view, nint resource, int uavInitialOffset)
         {
             currentUARenderTargetViews[slot] = view;
+            currentUARenderTargetResources[slot] = resource;
 
             int remainingSlots = currentUARenderTargetViews.Length - currentRenderTargetViewsActiveCount;
 
@@ -508,8 +510,7 @@ namespace Stride.Graphics
             {
                 if (currentUARenderTargetViews[slot].Handle != nativeUnorderedAccessView.Handle)
                 {
-                    currentUARenderTargetResources[slot] = nativeResource;
-                    OMSetSingleUnorderedAccessView(slot, nativeUnorderedAccessView, uavInitialOffset);
+                    OMSetSingleUnorderedAccessView(slot, nativeUnorderedAccessView, nativeResource, uavInitialOffset);
                 }
             }
         }
@@ -540,8 +541,7 @@ namespace Stride.Graphics
             {
                 if (currentUARenderTargetViews[slot].IsNotNull() && (currentUARenderTargetViews[slot].Handle == nativeUav.Handle || currentUARenderTargetResources[slot] == nativeResource))
                 {
-                    currentUARenderTargetResources[slot] = 0;
-                    OMSetSingleUnorderedAccessView(slot, NullComPtr<ID3D11UnorderedAccessView>(), uavInitialOffset: -1);
+                    OMSetSingleUnorderedAccessView(slot, NullComPtr<ID3D11UnorderedAccessView>(), resource: 0, uavInitialOffset: -1);
                 }
             }
         }

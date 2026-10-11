@@ -20,7 +20,7 @@ public class TestUnorderedAccessViewUnbinding : GraphicTestGameBase
     public void UavOfAViewIsUnboundWhenItsTextureIsReadAsSrv(ShaderStage stage)
     {
         // Above the back buffer, which takes the first output slot
-        const int Slot = 1;
+        const int slot = 1;
 
         PerformTest(game =>
         {
@@ -35,14 +35,14 @@ public class TestUnorderedAccessViewUnbinding : GraphicTestGameBase
                 Flags = TextureFlags.UnorderedAccess,
             });
 
-            commandList.SetUnorderedAccessView(stage, Slot, mipView, -1);
-            Assert.True(GetBoundUav(commandList, stage, Slot) != 0, "The UAV was not bound.");
+            commandList.SetUnorderedAccessView(stage, slot, mipView, -1);
+            Assert.True(GetBoundUav(commandList, stage, slot) != 0, "The UAV was not bound.");
 
             // Same order as ResourceBinder before it binds a shader resource view
             commandList.UnsetUnorderedAccessView(texture);
             commandList.SetShaderResourceView(ShaderStage.Pixel, 0, texture);
 
-            Assert.True(GetBoundUav(commandList, stage, Slot) == 0, "The UAV of the texture's view is still bound.");
+            Assert.True(GetBoundUav(commandList, stage, slot) == 0, "The UAV of the texture's view is still bound.");
 
             commandList.SetShaderResourceView(ShaderStage.Pixel, 0, null);
             mipView.Dispose();
