@@ -74,8 +74,9 @@ public abstract class SoftBodyComponent : CollidableComponent
     /// The mass of the whole body, spread evenly over its particles.
     /// </summary>
     /// <remarks>
-    /// The solver converges poorly when light particles hold much heavier bodies, as a rope tied to a load: a particle carrying more than
-    /// a few dozen times its own mass lets the body stretch. Give such bodies more mass, or the simulation more <see cref="BepuSimulation.SolverSubStep"/>.
+    /// The solver converges poorly when light particles hold a much heavier body, as a rope tied to a load: the body stretches past its limits,
+    /// more iterations or stiffer springs do not help much. Give it a mass closer to what it holds, fewer particles,
+    /// or join what it holds with a distance limit constraint of its own.
     /// </remarks>
     [Display(category: CategorySoftBody)]
     [DataMemberRange(0.001, 3)]
