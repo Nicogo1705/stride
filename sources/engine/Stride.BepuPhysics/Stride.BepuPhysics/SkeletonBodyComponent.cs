@@ -368,21 +368,37 @@ public class SkeletonBodyComponent : CollidableComponent
     internal bool TryResolveBones(out List<(BoneShape Bone, float Scale, Vector3 Position, Quaternion Rotation)> resolved)
     {
         resolved = new();
-        if (Entity?.Get<ModelComponent>() is not { Model: not null } model || model.Skeleton is not { } skeleton)
+        if (Entity?.Get<ModelComponent>() is not { Model: not null } model || model.Skeleton is null)
             return false;
-
-        var collider = (BoneCollider)Collider;
-        var bones = collider.Bones.Count > 0 || collider.GeneratedRadius <= 0f ? collider.Bones : BoneCollider.Generate(model.Model, collider.GeneratedRadius);
 
         UpdateNodeMatrices(model);
         var nodes = new List<int>();
         var scales = new List<Vector3>();
+        ResolveBones(model, (BoneCollider)Collider, resolved, nodes, scales, Entity.Name);
+        _nodes = nodes.ToArray();
+        _nodeScales = scales.ToArray();
+        return resolved.Count > 0;
+    }
+
+    /// <summary> Fills <paramref name="resolved"/> with the bone shapes of <paramref name="collider"/> found in the skeleton of <paramref name="model"/>, and their node and its scale </summary>
+    /// <param name="warnFor"> The entity named when a node is missing; null to skip the warning, as the editor gizmo does on every change </param>
+    internal static void ResolveBones(ModelComponent model, BoneCollider collider, List<(BoneShape Bone, float Scale, Vector3 Position, Quaternion Rotation)> resolved, List<int> nodes, List<Vector3> scales, string? warnFor)
+    {
+        var skeleton = model.Skeleton;
+        var bones = collider.Bones.Count > 0 || collider.GeneratedRadius <= 0f ? collider.Bones : BoneCollider.Generate(model.Model, collider.GeneratedRadius);
         foreach (var bone in bones)
         {
             int node = Array.FindIndex(skeleton.Nodes, n => n.Name == bone.NodeName);
             if (node < 0)
             {
-                Logger.Warning($"{nameof(SkeletonBodyComponent)} on '{Entity.Name}': no node named '{bone.NodeName}' in the skeleton, its shape is skipped");
+                if (warnFor is not null)
+                    Logger.Warning($"{nameof(SkeletonBodyComponent)} on '{warnFor}': no node named '{bone.NodeName}' in the skeleton, its shape is skipped");
+                continue;
+            }
+            if (bone.Shape is not (BoxCollider or SphereCollider or CapsuleCollider or CylinderCollider))
+            {
+                if (warnFor is not null)
+                    Logger.Error($"{nameof(SkeletonBodyComponent)} on '{warnFor}': the {bone.Shape.GetType().Name} of node '{bone.NodeName}' is skipped, a bone shape is a box, sphere, capsule or cylinder");
                 continue;
             }
 
@@ -402,10 +418,6 @@ public class SkeletonBodyComponent : CollidableComponent
             nodes.Add(node);
             scales.Add(scale);
         }
-
-        _nodes = nodes.ToArray();
-        _nodeScales = scales.ToArray();
-        return resolved.Count > 0;
     }
 
     protected override void AttachInner(NRigidPose pose, BodyInertia shapeInertia, TypedIndex shapeIndex)

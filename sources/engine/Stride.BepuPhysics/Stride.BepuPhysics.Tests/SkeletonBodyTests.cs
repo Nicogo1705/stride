@@ -99,6 +99,55 @@ public class SkeletonBodyTests : GameTestBase
     }
 
     [Fact]
+    public static void GeneratedCapsulesSkipHelpersNextToDeformingBones()
+    {
+        // A gun slot with a child of its own hangs from the spine next to the neck; the head ends on a bone that does not deform
+        var skeleton = new Skeleton
+        {
+            Nodes =
+            [
+                Node("Root", -1, Vector3.Zero),
+                Node("Hips", 0, new Vector3(0, 1, 0)),
+                Node("Spine", 1, new Vector3(0, 0.3f, 0)),
+                Node("Gun", 2, new Vector3(0.2f, 0, -0.7f)),
+                Node("Neck", 2, new Vector3(0, 0.3f, 0)),
+                Node("Head", 4, new Vector3(0, 0.1f, 0)),
+                Node("HeadEnd", 5, new Vector3(0, 0.2f, 0)),
+                Node("GunBarrel", 3, new Vector3(0.8f, 0, 0)),
+            ],
+        };
+        int[] deforming = [1, 2, 4, 5];
+        var mesh = new Mesh { Skinning = new MeshSkinningDefinition { Bones = deforming.Select(n => new MeshBoneDefinition { NodeIndex = n, LinkToMeshMatrix = Matrix.Identity }).ToArray() } };
+        var model = new Model { Skeleton = skeleton };
+        model.Meshes.Add(mesh);
+
+        var shapes = BoneCollider.Generate(model, 0.05f);
+
+        // Hips to spine, spine to neck, neck to head, head to its end; nothing toward the gun
+        Assert.Equal(["Hips", "Spine", "Neck", "Head"], shapes.Select(s => s.NodeName));
+    }
+
+    [Fact]
+    public static void UnsupportedBoneShapesAreSkipped()
+    {
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            // The property grid offers every collider for a bone shape
+            var (_, body) = AddCharacter(game.SceneSystem.SceneInstance.RootScene, Vector3.Zero,
+                new BoneShape { NodeName = "Arm", Shape = new TriangleCollider() },
+                new BoneShape { NodeName = "Leg", Shape = new SphereCollider { Radius = 0.1f } });
+            await game.Script.NextFrame();
+
+            Assert.Equal(1, body.BodyCount);
+            Assert.Equal("Leg", body.GetBoneShape(0).NodeName);
+            game.Exit();
+        });
+        RunGameTest(game);
+    }
+
+    [Fact]
     public static void ShapesLieAlongTheirBoneByDefault()
     {
         var game = new GameTest();

@@ -57,7 +57,8 @@ public sealed class BoneCollider : ICollider
     /// </summary>
     /// <remarks>
     /// When the meshes of the model are skinned, only the nodes which deform them get capsules, so the root, an armature node or helpers
-    /// such as footsteps and IK targets get none. A child with no child of its own next to other children, like a twist or end bone,
+    /// such as footsteps and IK targets get none, and their segments only reach a non-deforming child when no other child deforms,
+    /// like an end bone rather than a weapon slot. A child with no child of its own next to other children, like a twist or end bone,
     /// gets no capsule either, nor does a segment shorter than <paramref name="radius"/>.
     /// Capsules weigh as much as water of their volume, once scaled by their node.
     /// </remarks>
@@ -81,16 +82,24 @@ public sealed class BoneCollider : ICollider
         }
 
         var children = new int[nodes.Length];
-        foreach (var node in nodes)
+        var deformingChildren = new int[nodes.Length];
+        for (int i = 0; i < nodes.Length; i++)
         {
-            if (node.ParentIndex >= 0)
-                children[node.ParentIndex]++;
+            if (nodes[i].ParentIndex >= 0)
+            {
+                children[nodes[i].ParentIndex]++;
+                if (deforming.Contains(i))
+                    deformingChildren[nodes[i].ParentIndex]++;
+            }
         }
 
         for (int child = 0; child < nodes.Length; child++)
         {
             int parent = nodes[child].ParentIndex;
             if (parent <= 0 || (deforming.Count > 0 && deforming.Contains(parent) == false) || (children[child] == 0 && children[parent] > 1))
+                continue;
+            // A helper hanging from a deforming bone, like a weapon slot, next to the bones carrying the chain
+            if (deforming.Count > 0 && deforming.Contains(child) == false && deformingChildren[parent] > 0)
                 continue;
 
             var segment = nodes[child].Transform.Position;
