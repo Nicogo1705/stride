@@ -163,7 +163,7 @@ public class SoftBodyTests : GameTestBase
             var anchor = scene.Add(null, anchorModel, Vector3.Zero);
 
             var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
-            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor, AnchorNode = "Hand0" } } };
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = new WorldAnchor { Entity = anchor, NodeName = "Hand0" } } } };
             scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
             await Seconds(cloth, 0.1f);
 
@@ -195,7 +195,7 @@ public class SoftBodyTests : GameTestBase
                 scene.Add(anchor);
 
             var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
-            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor } } };
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = new BodyAnchor { Body = block } } } };
             scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
             if (anchorFirst == false)
                 scene.Add(anchor);
@@ -203,6 +203,31 @@ public class SoftBodyTests : GameTestBase
             // The weight of the cloth drags the block down
             await Seconds(cloth, 1f);
             Assert.True(block.Position.Y < 2f, $"Block at {block.Position}");
+        });
+    }
+
+    [Fact]
+    public static void PinWithoutRegionHoldsTheParticlesClosestToItsAnchor()
+    {
+        RunScene(async scene =>
+        {
+            // Hooks at two corners of a cloth, and a point between two vertices of its far edge
+            var hooks = new[] { new Vector3(-0.5f, 2f, -0.5f), new Vector3(0.5f, 2f, -0.5f) };
+            var pins = hooks.Select(h => new SoftBodyPin { Anchor = new WorldAnchor { Entity = new Entity { Transform = { Position = h } } } }).ToList();
+            pins.Add(new SoftBodyPin { Region = new BoundingBox(new Vector3(0.05f, 0f, 0.5f), new Vector3(0.05f, 0f, 0.5f)) });
+            foreach (var pin in pins.Take(2))
+                scene.Add(((WorldAnchor)pin.Anchor!).Entity!);
+            var cloth = new ClothComponent();
+            cloth.Pins.AddRange(pins);
+            scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
+            await Seconds(cloth, 0.1f);
+
+            var pinned = Enumerable.Range(0, cloth.ParticleCount).Where(cloth.IsParticlePinned).Select(i => cloth.Topology!.RestPositions[i]).ToList();
+            Assert.Equal(4, pinned.Count);
+            Assert.Contains(new Vector3(-0.5f, 0f, -0.5f), pinned);
+            Assert.Contains(new Vector3(0.5f, 0f, -0.5f), pinned);
+            Assert.Contains(pinned, p => MathUtil.NearEqual(p.Z, 0.5f) && MathUtil.NearEqual(p.X, 0f));
+            Assert.Contains(pinned, p => MathUtil.NearEqual(p.Z, 0.5f) && MathUtil.NearEqual(p.X, 0.1f));
         });
     }
 
@@ -218,7 +243,7 @@ public class SoftBodyTests : GameTestBase
             scene.Add(anchor);
 
             var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
-            var cloth = new ClothComponent { Gravity = false, Pins = { new SoftBodyPin { Region = edge, Anchor = anchor } } };
+            var cloth = new ClothComponent { Gravity = false, Pins = { new SoftBodyPin { Region = edge, Anchor = new BodyAnchor { Body = block } } } };
             scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
 
             // Contacts between the pinned particles and the block would push it, then the particles after it, forever
