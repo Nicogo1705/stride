@@ -8,6 +8,7 @@ using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
 using Stride.Rendering;
+using Stride.Rendering.Materials;
 using Stride.Shaders;
 
 namespace Stride.BepuPhysics.Debug.Effects.RenderFeatures;
@@ -25,7 +26,7 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     private DynamicEffectInstance _shader = null!;
     private DynamicEffectInstance _idShader = null!;
     private DynamicEffectInstance _idSkinnedShader = null!;
-    // Size of BoneMatrices in BepuDebugIdSkinnedShader; a mesh with more bones is left out
+    // Size of BoneMatrices in BepuDebugIdSkinnedShader, set as its SkinningMaxBones macro; a mesh with more bones is left out
     private const int MaxBones = 128;
     // Indexed by (back faces ? 2 : 0) + (through own model ? 1 : 0), updated once per draw of the feature
     private readonly MutablePipelineState[] _linePipelines = new MutablePipelineState[4];
@@ -54,13 +55,14 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     [DataMember(20)]
     public bool ShowBackFaces;
 
+    // Hues the collider colors (red, green, blue) never take, at full saturation so they stand out
     /// <summary> Color of the lines that sit inside their own visual model by more than the debug mesh's error </summary>
     [DataMember(30)]
-    public Color3 InsideColor = new(0.941f, 0.894f, 0.259f);
+    public Color3 InsideColor = new(1f, 1f, 0f);
 
     /// <summary> Color of the lines that stand out of their own visual model by more than the debug mesh's error </summary>
     [DataMember(40)]
-    public Color3 OutsideColor = new(0.835f, 0.369f, 0f);
+    public Color3 OutsideColor = new(1f, 0f, 1f);
 
     public override Type SupportedRenderObjectType => typeof(WireFrameRenderObject);
 
@@ -80,6 +82,7 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
         _idShader.Initialize(Context.Services);
         _idSkinnedShader = new DynamicEffectInstance("StrideBepuDebugIdSkinnedShader");
         _idSkinnedShader.Initialize(Context.Services);
+        _idSkinnedShader.Parameters.Set(MaterialKeys.SkinningMaxBones, MaxBones);
 
         // create the pipeline states and set properties that won't change
         for (int i = 0; i < _linePipelines.Length; i++)
