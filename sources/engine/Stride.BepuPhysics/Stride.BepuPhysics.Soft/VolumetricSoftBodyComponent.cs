@@ -29,7 +29,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     private const float MinimumCouplingWeight = 0.05f; // A bone weighing less on a particle is not worth a joint
     // The solver puts the constraints of a body in as many batches, synchronized one after the other: a bone joined to every particle around it
     // would need more batches than any particle does, and past Bepu's fallback threshold the bone's joints would be solved more loosely
-    private const int CouplingsPerBone = 16;
+    internal const int CouplingsPerBone = 16;
 
     private int _resolution = 6;
     private float _stiffness = 20f;

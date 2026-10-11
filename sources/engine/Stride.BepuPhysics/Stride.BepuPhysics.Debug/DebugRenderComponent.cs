@@ -107,7 +107,7 @@ public class DebugRenderComponent : SyncScript
     /// <summary>
     /// The width of the wireframes and contact lines, in pixels.
     /// </summary>
-    /// <remarks> Applied to the graphics compositor's line and wireframe render features, replacing their own <c>LineWidth</c>. </remarks>
+    /// <remarks> Given to the graphics compositor's line and wireframe render features when the debug view starts and whenever it changes; a <c>LineWidth</c> set on them afterwards holds until then. </remarks>
     [DataMember]
     [DataMemberRange(0.5, 10, 0.5, 1, 1)]
     public float LineWidth { get; set; } = 3f;

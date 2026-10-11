@@ -74,14 +74,14 @@ public class LineRenderFeature : RootRenderFeature
 
         _shader.UpdateEffect(context.GraphicsDevice);
         _shader.Parameters.Set(TransformationKeys.WorldViewProjection, renderView.ViewProjection);
-        _shader.Parameters.Set(DebugLineShaderKeys.ViewportSize, renderView.ViewSize);
-        _shader.Parameters.Set(DebugLineShaderKeys.LineWidth, LineWidth);
+        _shader.Parameters.Set(DebugLineShaderBaseKeys.ViewportSize, renderView.ViewSize);
+        _shader.Parameters.Set(DebugLineShaderBaseKeys.LineWidth, LineWidth);
         _sphereShader.UpdateEffect(context.GraphicsDevice);
         _sphereShader.Parameters.Set(TransformationKeys.View, renderView.View);
         _sphereShader.Parameters.Set(TransformationKeys.Projection, renderView.Projection);
         _sphereShader.Parameters.Set(TransformationKeys.ViewProjection, renderView.ViewProjection);
-        _sphereShader.Parameters.Set(DebugSphereShaderKeys.ViewportSize, renderView.ViewSize);
-        _sphereShader.Parameters.Set(DebugSphereShaderKeys.LineWidth, LineWidth);
+        _sphereShader.Parameters.Set(DebugLineShaderBaseKeys.ViewportSize, renderView.ViewSize);
+        _sphereShader.Parameters.Set(DebugLineShaderBaseKeys.LineWidth, LineWidth);
 
         for (int index = startIndex; index < endIndex; index++)
         {
@@ -112,7 +112,7 @@ public class LineRenderFeature : RootRenderFeature
         pipelineState.State.Output.CaptureState(context.CommandList);
         pipelineState.Update();
 
-        shader.Parameters.Set(lines.Spheres ? DebugSphereShaderKeys.Opacity : DebugLineShaderKeys.Opacity, opacity);
+        shader.Parameters.Set(DebugLineShaderBaseKeys.Opacity, opacity);
         context.CommandList.SetPipelineState(pipelineState.CurrentState);
         shader.Apply(context.GraphicsContext);
         context.CommandList.Draw(lines.VertexCount);

@@ -5,26 +5,21 @@
 /// Draws spheres as camera-facing circles of constant line width, or as dots once they are too small on screen to show a hole.
 /// </summary>
 /// <remarks> Each sphere is a segment from its center to a point of its surface. </remarks>
-shader DebugSphereShader : ShaderBase, Transformation, PositionStream4, ColorBase
+shader DebugSphereShader : DebugLineShaderBase, Math
 {
     static const int Segments = 16;
-    // Clip-space w under which a sphere is considered behind the camera
-    static const float NearW = 1e-4;
+    // A strip of two vertices per segment end, the last one closing the circle
+    static const int VertexCount = 2 * (Segments + 1);
     // Spheres come by the hundred, overlapping: thinner outlines keep them readable
     static const float WidthScale = 0.5;
     static const float MinWidth = 1;
-
-    float2 ViewportSize;
-    float LineWidth;
-    // 1 for spheres drawn where nothing hides them, lower for the pass that draws them where something does
-    float Opacity;
 
     stage override void VSMain()
     {
         streams.ShadingPosition = mul(streams.Position, ViewProjection);
     }
 
-    [maxvertexcount(34)]
+    [maxvertexcount(VertexCount)]
     void GSMain(line Input input[2], inout TriangleStream<Output> triangleStream)
     {
         float4 clip = input[0].ShadingPosition;
@@ -48,7 +43,7 @@ shader DebugSphereShader : ShaderBase, Transformation, PositionStream4, ColorBas
         streams = input[0];
         for (int i = 0; i <= Segments; i++)
         {
-            float angle = i * (6.2831853 / Segments);
+            float angle = i * (2 * Math.PI / Segments);
             float2 direction = float2(cos(angle), sin(angle)) * toClip;
             streams.ShadingPosition = clip + float4(direction * outer, 0, 0);
             triangleStream.Append(streams);
@@ -56,11 +51,5 @@ shader DebugSphereShader : ShaderBase, Transformation, PositionStream4, ColorBas
             triangleStream.Append(streams);
         }
         triangleStream.RestartStrip();
-    }
-
-    stage override void PSMain()
-    {
-        // Premultiplied, for the AlphaBlend state; the alpha of the vertex color is ignored, as with an opaque blend
-        streams.ColorTarget = float4(streams.Color.rgb * Opacity, Opacity);
     }
 };

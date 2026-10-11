@@ -57,8 +57,8 @@ namespace Stride.Assets.Presentation.NodePresenters.Updaters
         {
             foreach (var member in owner.Children)
             {
-                if (IsEntityReference(member.Type))
-                    return (member.Value as Entity ?? (member.Value as EntityComponent)?.Entity)?.Get<ModelComponent>()?.Model;
+                if (IsEntityReference(member.Type) && (member.Value as Entity ?? (member.Value as EntityComponent)?.Entity)?.Get<ModelComponent>()?.Model is { } model)
+                    return model;
             }
             return entity.Get<ModelComponent>()?.Model;
         }

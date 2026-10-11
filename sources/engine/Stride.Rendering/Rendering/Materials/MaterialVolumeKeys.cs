@@ -1,6 +1,8 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System;
+using System.Runtime.InteropServices;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 
@@ -27,8 +29,16 @@ namespace Stride.Rendering.Materials
         /// <summary>1 when the medium shows its lit colour, as water or fog; 0 when it only filters what is behind, as tinted glass.</summary>
         public static readonly ValueParameterKey<float> Scattering = ParameterKeys.NewValue<float>();
 
-        // Tested with ContainsKey first: Get would add the key to the parameters of every other material
+        // Reads the key in place: Get would add it to the parameters of every other material
         internal static bool IsVolume(MaterialPass materialPass)
-            => materialPass.Parameters.ContainsKey(Absorption) && materialPass.Parameters.Get(Absorption) > 0;
+        {
+            var parameters = materialPass.Parameters;
+            foreach (var info in parameters.ParameterKeyInfos)
+            {
+                if (info.Key == Absorption)
+                    return MemoryMarshal.Read<float>(parameters.DataValues.AsSpan(info.Offset)) > 0;
+            }
+            return false;
+        }
     }
 }

@@ -51,7 +51,7 @@ public abstract class VoxelColliderBase<TSource> : ICollider
 
     /// <summary>Gets or sets the edge length of one cell, before the entity's scale.</summary>
     /// <remarks>A value that is not positive and finite is ignored, as for <see cref="SphereRadiusScale"/> and <see cref="Mass"/>.</remarks>
-    [DataMemberRange(MinimumPositive, 3)]
+    [DataMemberRange(BepuAndStrideExtensions.MinimumPositive, 3)]
     public float CellSize
     {
         get => _cellSize;
@@ -83,7 +83,7 @@ public abstract class VoxelColliderBase<TSource> : ICollider
 
     /// <summary>Gets or sets the radius of the <see cref="VoxelCellShape.Sphere"/> children, as a multiple of half a cell.</summary>
     /// <remarks>At 1 neighbouring spheres touch and small bodies can slip between them; around 1.4 covers the face diagonals.</remarks>
-    [DataMemberRange(MinimumPositive, 3)]
+    [DataMemberRange(BepuAndStrideExtensions.MinimumPositive, 3)]
     public float SphereRadiusScale
     {
         get => _sphereRadiusScale;
@@ -91,7 +91,7 @@ public abstract class VoxelColliderBase<TSource> : ICollider
     }
 
     /// <summary>Gets or sets the mass of a body using this collider, spread over the grid's whole box.</summary>
-    [DataMemberRange(MinimumPositive, 3)]
+    [DataMemberRange(BepuAndStrideExtensions.MinimumPositive, 3)]
     public float Mass
     {
         get => _mass;
@@ -177,13 +177,9 @@ public abstract class VoxelColliderBase<TSource> : ICollider
         buffer.Add(new BasicMeshBuffers { Vertices = vertices.ToArray(), Indices = indices.ToArray() });
     }
 
-    /// <summary>The smallest value the property grid accepts for the sizes and the mass.</summary>
-    private const float MinimumPositive = 0.001f;
-
-    /// <summary>Keeps the previous value when <paramref name="value"/> is not positive and finite, rather than throwing from a property the editor sets.</summary>
     private void SetPositive(ref float field, float value)
     {
-        if (value > 0f && float.IsFinite(value))
+        if (value.IsGreaterThanZeroFinite())
             Set(ref field, value);
     }
 

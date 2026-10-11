@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System.ComponentModel;
+using System.Diagnostics;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
@@ -179,7 +180,7 @@ public sealed class BoneCollider : ICollider
                 SphereCollider sph => Add(shapes, new Sphere(sph.Radius * scale), shape.Mass, generated),
                 CapsuleCollider cap => Add(shapes, new Capsule(cap.Radius * scale, cap.Length * scale), shape.Mass, generated),
                 CylinderCollider cyl => Add(shapes, new Cylinder(cyl.Radius * scale, cyl.Length * scale), shape.Mass, generated),
-                _ => throw new NotSupportedException($"{nameof(BoneCollider)} does not support {shape.GetType().Name}, use a box, sphere, capsule or cylinder"),
+                _ => throw new UnreachableException(), // TryResolveBones skips the other shapes
             };
             _created.Add((bone, scale, position, rotation, created.Index, created.Inertia));
         }
