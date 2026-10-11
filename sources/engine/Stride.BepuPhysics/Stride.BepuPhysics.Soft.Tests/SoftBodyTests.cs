@@ -461,6 +461,8 @@ public class SoftBodyTests : GameTestBase
             scene.Add(entity);
             await Seconds(flesh, 0.1f);
 
+            // The particle couplings, plus headroom for the ragdoll joints between the bones
+            const int maximumConstraints = VolumetricSoftBodyComponent.CouplingsPerBone + 8;
             var simulation = flesh.Simulation!.Simulation;
             var active = simulation.Bodies.ActiveSet;
             int boneBodies = 0;
@@ -469,7 +471,7 @@ public class SoftBodyTests : GameTestBase
                 if (flesh.Simulation.GetComponent(new CollidableReference(CollidableMobility.Dynamic, active.IndexToHandle[i])) != bones)
                     continue;
                 boneBodies++;
-                Assert.True(active.Constraints[i].Count <= 24, $"A bone is in {active.Constraints[i].Count} constraints");
+                Assert.True(active.Constraints[i].Count <= maximumConstraints, $"A bone is in {active.Constraints[i].Count} constraints");
             }
             Assert.Equal(2, boneBodies);
             Assert.True(simulation.Solver.ActiveSet.Batches.Count <= simulation.Solver.FallbackBatchThreshold, $"{simulation.Solver.ActiveSet.Batches.Count} batches");
