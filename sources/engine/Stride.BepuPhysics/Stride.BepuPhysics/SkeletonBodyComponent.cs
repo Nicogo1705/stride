@@ -500,7 +500,7 @@ public class SkeletonBodyComponent : CollidableComponent
         }
     }
 
-    private BodyReference Body(int index) => Simulation!.Simulation.Bodies[_bodies[index]];
+    internal BodyReference Body(int index) => Simulation!.Simulation.Bodies[_bodies[index]];
 
     private NRigidPose TargetPose(SkeletonUpdater skeleton, int index, BoneCollider collider)
     {

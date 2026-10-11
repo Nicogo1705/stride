@@ -184,8 +184,36 @@ public sealed class BoneCollider : ICollider
             _created.Add((bone, scale, position, rotation, created.Index, created.Inertia));
         }
 
+        BoundInertia();
+
         index = _created[0].Index;
         return true;
+    }
+
+    /// <summary> Bodies rotating thousands of times more easily than the rest of the skeleton, like short and thin bones, make the joints blow up: their inertia is raised to a bounded ratio </summary>
+    private void BoundInertia()
+    {
+        const float maximumRatio = 100f;
+        float hardest = float.MaxValue;
+        foreach (var created in _created)
+        {
+            ref readonly var tensor = ref created.Inertia.InverseInertiaTensor;
+            hardest = MathF.Min(hardest, MathF.Min(tensor.XX, MathF.Min(tensor.YY, tensor.ZZ)));
+        }
+
+        if (hardest <= 0f)
+            return;
+        float limit = hardest * maximumRatio;
+        for (int i = 0; i < _created.Count; i++)
+        {
+            var entry = _created[i];
+            ref var tensor = ref entry.Inertia.InverseInertiaTensor;
+            // The shapes are not rotated in their body, their tensors are diagonal
+            tensor.XX = MathF.Min(tensor.XX, limit);
+            tensor.YY = MathF.Min(tensor.YY, limit);
+            tensor.ZZ = MathF.Min(tensor.ZZ, limit);
+            _created[i] = entry;
+        }
     }
 
     private static (TypedIndex Index, BodyInertia Inertia) Add<TShape>(Shapes shapes, TShape shape, float mass, bool fromVolume) where TShape : unmanaged, IConvexShape
