@@ -10,9 +10,11 @@ using System.Reflection;
 using BepuPhysics;
 using Stride.BepuPhysics.Debug;
 using Stride.BepuPhysics.Definitions;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Extensions;
+using Stride.Games;
 using Stride.Graphics;
 using Stride.Harness.Demo;
 using Stride.Input;
@@ -38,6 +40,16 @@ internal sealed class VideoDemoGame : BepuDemoGame
     private float _orbitAngle, _orbitRadius, _orbitHeight;
     private readonly List<double> _frameTimes = new();
     private long _lastFrame;
+    private SoftBodyDeformationMode _deformation = SoftBodyDeformationMode.Gpu;
+
+    // Timing of the deformation: the soft body processor on the CPU, the whole frame on the GPU (timestamps read a few frames later)
+    private const int GpuTimerLatency = 4;
+    private readonly QueryPool?[] _gpuTimers = new QueryPool?[GpuTimerLatency];
+    private readonly long[] _gpuTicks = new long[2];
+    private readonly List<double> _gpuFrameTimes = new();
+    private readonly List<double> _deformationTimes = new();
+    private System.Threading.Channels.ChannelReader<ProfilingEvent>? _profilingEvents;
+    private int _gpuFrame;
 
     public VideoDemoGame(IEnumerable<DemoScene> scenes, string buildLabel, string captureFolder) : base(scenes, buildLabel, captureFolder)
     {
@@ -47,7 +59,29 @@ internal sealed class VideoDemoGame : BepuDemoGame
     /// <summary> Frame times in milliseconds since the scene was loaded </summary>
     public IReadOnlyList<double> FrameTimes => _frameTimes;
 
-    public void ClearFrameTimes() => _frameTimes.Clear();
+    public void ClearFrameTimes()
+    {
+        _frameTimes.Clear();
+        _gpuFrameTimes.Clear();
+        _deformationTimes.Clear();
+    }
+
+    /// <summary> Where the soft bodies of every scene are deformed, F4 switches it </summary>
+    public SoftBodyDeformationMode Deformation
+    {
+        get => _deformation;
+        set
+        {
+            _deformation = value;
+            ApplyDeformation();
+        }
+    }
+
+    private void ApplyDeformation()
+    {
+        foreach (var body in SoftBodies())
+            body.DeformationMode = _deformation;
+    }
 
     /// <summary> Hides or shows the whole overlay, as the third press of H does </summary>
     public void SetOverlay(bool visible)
@@ -165,7 +199,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
         base.OnSceneLoaded(scene);
         if (scene is VideoScene video)
             DebugView = video.DefaultDebugView;
-        _frameTimes.Clear();
+        ClearFrameTimes();
         _orbit = false;
     }
 
@@ -193,6 +227,11 @@ internal sealed class VideoDemoGame : BepuDemoGame
             Flash("Scene reset");
             return;
         }
+        if (Input.IsKeyPressed(Keys.F4))
+        {
+            Deformation = _deformation == SoftBodyDeformationMode.Gpu ? SoftBodyDeformationMode.Cpu : SoftBodyDeformationMode.Gpu;
+            Flash("Soft body deformation: " + DeformationText);
+        }
         if (Input.IsKeyPressed(Keys.C))
         {
             _orbit = !_orbit;
@@ -215,6 +254,8 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override void BeforeDraw()
     {
         base.BeforeDraw();
+        // Bodies created since the last frame (a scene load, a cannon) take the current mode
+        ApplyDeformation();
         // After the physics step, as the soft body processor deforms the models: particles and meshes show the same instant
         _particles?.Update();
         var now = Stopwatch.GetTimestamp();
@@ -228,7 +269,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         yield return ("Camera", "Z Q S D: move  |  A / E: down / up  |  right click: look  |  wheel, Shift: speed  |  C: orbit camera");
         yield return ("Demo", "Esc: scenes  |  R: reset the scene  |  H: overlay full / none / compact  |  P: capture  |  " + FpsLimitKeyHelp);
-        yield return ("View", "V: next debug view (" + string.Join(" / ", DebugViews) + ")");
+        yield return ("View", "V: next debug view (" + string.Join(" / ", DebugViews) + ")  |  F4: soft body deformation GPU / CPU");
     }
 
     protected override IEnumerable<(string Theme, string Keys)> SubjectKeys()
@@ -259,6 +300,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         if (Simulation is { Enabled: false })
             yield return "PAUSED (Space)";
+        yield return "Soft body deformation: " + DeformationText + " (F4)  |  " + DeformationTiming(OverlayWindow);
         if (CurrentScene is VideoScene scene)
         {
             foreach (var line in scene.Status())
@@ -528,6 +570,49 @@ internal sealed class VideoDemoGame : BepuDemoGame
             for (int i = 0; i < soft.ParticleCount; i++)
                 soft.SetParticleVelocity(i, velocity);
         }
+    }
+
+    private string DeformationText => _deformation == SoftBodyDeformationMode.Gpu ? "GPU" : "CPU";
+
+    protected override void Draw(GameTime gameTime)
+    {
+        // The pool written GpuTimerLatency frames ago is read, then written again for this frame
+        var commandList = GraphicsContext.CommandList;
+        ref var pool = ref _gpuTimers[_gpuFrame % GpuTimerLatency];
+        pool ??= QueryPool.New(GraphicsDevice, QueryType.Timestamp, 2);
+        if (_gpuFrame >= GpuTimerLatency && pool.TryGetData(_gpuTicks))
+            _gpuFrameTimes.Add((_gpuTicks[1] - _gpuTicks[0]) * 1000.0 / GraphicsDevice.TimestampFrequency);
+        commandList.WriteTimestamp(pool, 0);
+        base.Draw(gameTime);
+        commandList.WriteTimestamp(pool, 1);
+        _gpuFrame++;
+
+        if (_profilingEvents is null)
+        {
+            Profiler.Enable(Rendering.SoftBodyProcessor.DrawKey);
+            _profilingEvents = Profiler.Subscribe();
+        }
+        while (_profilingEvents.TryRead(out var profilingEvent))
+        {
+            if (profilingEvent.Key == Rendering.SoftBodyProcessor.DrawKey && profilingEvent.Type == ProfilingMessageType.End)
+                _deformationTimes.Add(profilingEvent.ElapsedTime.TotalMilliseconds);
+        }
+    }
+
+    private const int OverlayWindow = 120; // Frames the overlay averages over
+
+    /// <summary>
+    /// Mean and 95th percentile of the soft body processor (deformation and upload, CPU) and of the frame on the GPU,
+    /// over the last <paramref name="window"/> frames since the last clear
+    /// </summary>
+    public string DeformationTiming(int window = int.MaxValue) => string.Format(CultureInfo.InvariantCulture, "processor CPU {0}  |  frame GPU {1}", Stats(_deformationTimes, window), Stats(_gpuFrameTimes, window));
+
+    private static string Stats(List<double> times, int window)
+    {
+        if (times.Count == 0)
+            return "-";
+        var sorted = times.Skip(Math.Max(0, times.Count - window)).OrderBy(t => t).ToArray();
+        return string.Format(CultureInfo.InvariantCulture, "{0:0.000} ms (p95 {1:0.000})", sorted.Average(), sorted[Math.Min(sorted.Length - 1, (int)(sorted.Length * 0.95))]);
     }
 
     /// <summary> Median frames per second and the 5 % slowest frame, over the frames since the scene was loaded (or the last clear) </summary>

@@ -31,6 +31,7 @@ public class VideoShowcaseDemo : GameTestBase
         new TortureLabScene(),
         new RopesScene(),
         new FinaleScene(),
+        new DeformationStressScene(),
     };
 
     [SkippableFact]
@@ -285,6 +286,80 @@ public class VideoShowcaseDemo : GameTestBase
                 report.Add($"{index:00} {scene.Name}: limit {game.FpsLimit}, {game.FpsText()}");
             }
             game.FpsLimit = 0;
+        }, g => RunGameTest(g));
+        Directory.CreateDirectory(folder);
+        File.WriteAllLines(Path.Combine(folder, "report.txt"), report);
+        Console.WriteLine(string.Join(Environment.NewLine, report));
+    }
+
+    /// <summary>
+    /// GPU against CPU deformation of the soft bodies, on the scenes with the most of them: per mode, the soft body processor on the CPU,
+    /// the frame on the GPU and the frame rate without a limit, two passes in alternating order; then the same frozen instant captured in
+    /// both modes for a pixel diff. STRIDE_BEPU_DEMO_DEFORMATION=1 (or =captures for the captures only), report and captures in the tour folder.
+    /// </summary>
+    [SkippableFact]
+    public static void DeformationBench()
+    {
+        var setting = Environment.GetEnvironmentVariable("STRIDE_BEPU_DEMO_DEFORMATION");
+        Skip.IfNot(setting is "1" or "captures", "Deformation bench, set STRIDE_BEPU_DEMO_DEFORMATION=1 to run it");
+        var game = new VideoDemoGame(Scenes(), DemoSettings.Label, DemoSettings.CaptureFolder);
+        var folder = Path.Combine(DemoSettings.TourFolder, "deformation");
+        var report = new List<string>();
+        var benched = game.Scenes.Select((scene, i) => (Scene: scene, Index: i + 1))
+            .Where(s => s.Scene is SoftBodiesScene or StandingSoftBodiesScene or FinaleScene or DeformationStressScene).ToList();
+        SoftBodyDeformationMode[] modes = [SoftBodyDeformationMode.Cpu, SoftBodyDeformationMode.Gpu];
+        DemoSettings.RunTour(game, async () =>
+        {
+            game.FpsLimit = 0;
+            foreach (var (scene, index) in benched)
+            {
+                for (int pass = 0; pass < (setting == "captures" ? 0 : 2); pass++)
+                {
+                    foreach (var mode in pass == 0 ? modes : modes.Reverse())
+                    {
+                        game.LoadScene(scene);
+                        game.Deformation = mode;
+                        // Effects of both modes compile during the first warm up
+                        await game.Steps(pass == 0 ? 240 : 120);
+                        game.ClearFrameTimes();
+                        await game.Steps(360);
+                        report.Add($"{index:00} {scene.Name} | {mode} | pass {pass + 1} | {game.FpsText()} | {game.DeformationTiming()}");
+                    }
+                }
+
+                // One frozen instant in both modes, without the overlay: physics paused, animations of the skeletons held
+                game.LoadScene(scene);
+                game.Deformation = SoftBodyDeformationMode.Cpu;
+                await game.Steps(150);
+                game.SetOverlay(false);
+                foreach (var component in game.SceneSystem.SceneInstance.RootScene.Entities.SelectMany(e => e.Components))
+                {
+                    if (component is Bean.Animator bean)
+                        bean.Speed = 0f;
+                    else if (component is ProceduralCharacter.Animator character)
+                        character.Paused = true;
+                }
+                await game.Press(Keys.Space);
+                await game.Frames(10);
+                await game.CaptureTo(Path.Combine(folder, $"{index:00}-cpu"));
+                // Control: the same mode 30 frames later, what is left moving without the physics
+                await game.Frames(30);
+                await game.CaptureTo(Path.Combine(folder, $"{index:00}-cpu-control"));
+                game.Deformation = SoftBodyDeformationMode.Gpu;
+                await game.Frames(30);
+                await game.CaptureTo(Path.Combine(folder, $"{index:00}-gpu"));
+                // The rigid wireframes, classified against the soft models by the debug id pass
+                await game.Press(Keys.V);
+                await game.Frames(30);
+                await game.CaptureTo(Path.Combine(folder, $"{index:00}-gpu-rigid"));
+                game.Deformation = SoftBodyDeformationMode.Cpu;
+                await game.Frames(30);
+                await game.CaptureTo(Path.Combine(folder, $"{index:00}-cpu-rigid"));
+                for (int view = 1; view < VideoDemoGame.Views.Length; view++)
+                    await game.Press(Keys.V);
+                await game.Press(Keys.Space);
+                game.SetOverlay(true);
+            }
         }, g => RunGameTest(g));
         Directory.CreateDirectory(folder);
         File.WriteAllLines(Path.Combine(folder, "report.txt"), report);
