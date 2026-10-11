@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Stride.BepuPhysics.Debug;
 using Stride.BepuPhysics.Debug.Effects;
 using Stride.BepuPhysics.Debug.Effects.RenderFeatures;
+using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.Core.Mathematics;
 using Stride.Engine;
@@ -154,6 +155,52 @@ namespace Stride.BepuPhysics.Tests
                 Assert.Equal([statics, kinematic, character], await Shown());
                 dynamic.Awake = true;
                 Assert.Equal([statics, dynamic, kinematic, character], await Shown());
+                game.Exit();
+            });
+            RunGameTest(game);
+        }
+
+        [Fact]
+        public static void SkeletonBodiesFilterByTheirMode()
+        {
+            var game = new GameTest();
+            game.GraphicsDeviceManager.PreferredGraphicsProfile = [GraphicsProfile.Level_11_0];
+            game.GraphicsDeviceManager.ShaderProfile = GraphicsProfile.Level_11_0;
+            game.Script.AddTask(async () =>
+            {
+                game.ScreenShotAutomationEnabled = false;
+                var compositor = GraphicsCompositorHelper.CreateDefault(false, graphicsProfile: GraphicsProfile.Level_11_0);
+                game.SceneSystem.GraphicsCompositor = compositor;
+                var scene = game.SceneSystem.SceneInstance.RootScene;
+                var debug = new DebugRenderComponent { Visible = true, ShowKinematicBodies = false };
+                scene.Entities.Add(new Entity { debug, new CameraComponent { Slot = compositor.Cameras[0].ToSlotId() } });
+                var body = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Animated };
+                ((BoneCollider)body.Collider).GeneratedRadius = 0.05f;
+                var skeleton = new Skeleton
+                {
+                    Nodes =
+                    [
+                        new ModelNodeDefinition { Name = "Root", ParentIndex = -1, Transform = { Rotation = Quaternion.Identity, Scale = Vector3.One } },
+                        new ModelNodeDefinition { Name = "Hips", ParentIndex = 0, Transform = { Position = new Vector3(0, 1, 0), Rotation = Quaternion.Identity, Scale = Vector3.One } },
+                        new ModelNodeDefinition { Name = "Leg", ParentIndex = 1, Transform = { Position = new Vector3(0, -0.8f, 0), Rotation = Quaternion.Identity, Scale = Vector3.One } },
+                    ],
+                };
+                scene.Entities.Add(new Entity { new ModelComponent { Model = new Model { Skeleton = skeleton } }, body });
+                for (int i = 0; i < 3; i++) await game.Script.NextFrame();
+
+                var visibility = game.SceneSystem.SceneInstance.VisibilityGroups.First();
+                async Task<bool> Shown()
+                {
+                    await game.Script.NextFrame();
+                    return visibility.RenderObjects.OfType<WireFrameRenderObject>().Any(w => w.Enabled);
+                }
+
+                // Animated bones are kinematic, a ragdoll is simulated
+                Assert.False(await Shown());
+                body.Mode = SkeletonBodyMode.Ragdoll;
+                Assert.True(await Shown());
+                debug.ShowDynamicBodies = false;
+                Assert.False(await Shown());
                 game.Exit();
             });
             RunGameTest(game);

@@ -399,6 +399,9 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
         return collidable switch
         {
             StaticComponent => options.ShowStatics,
+            // Animated bones are kinematic and follow the animation, the other modes are simulated
+            SkeletonBodyComponent skeleton => (skeleton.Mode == SkeletonBodyMode.Animated ? options.ShowKinematicBodies : options.ShowDynamicBodies)
+                                              && (options.ShowSleepingBodies || skeleton.BodyCount == 0 || skeleton.Body(0).Awake),
             BodyComponent body => (body is CharacterComponentAbstract ? options.ShowCharacters : body.Kinematic ? options.ShowKinematicBodies : options.ShowDynamicBodies)
                                   && (options.ShowSleepingBodies || body.Awake),
             _ => true,
