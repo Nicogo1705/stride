@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using BepuPhysics;
 using BepuPhysics.Collidables;
+using BepuPhysics.CollisionDetection;
 using BepuPhysics.Constraints;
 using BepuPhysics.Trees;
 using Stride.BepuPhysics.Components;
@@ -45,7 +46,7 @@ public class SkeletonBodyComponent : CollidableComponent
 
     private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(SkeletonBodyComponent));
     private static readonly BoneJoint DefaultJoint = new();
-    private const float GhostMassRatio = 0.01f;
+    private const float GhostMassRatio = 1f / 3f; // Lighter bones can no longer hold up the bodies joined to them within the solver's iterations
 
     private float _teleportDistance = 1f;
     private BodyHandle[] _bodies = [];
@@ -232,7 +233,7 @@ public class SkeletonBodyComponent : CollidableComponent
 
     /// <summary>
     /// Whether the bodies only carry the joints and servos of the skeleton: they collide with nothing, rays go through them,
-    /// and they weigh a hundredth of the <see cref="ColliderBase.Mass"/> of their shape.
+    /// and they weigh a third of the <see cref="ColliderBase.Mass"/> of their shape.
     /// </summary>
     /// <remarks>
     /// For a character whose mass and contacts come from other bodies joined to its bones, like soft flesh following the skeleton.
@@ -705,9 +706,18 @@ public class SkeletonBodyComponent : CollidableComponent
     /// <summary> Sets the forces of the Standing servos from the weight of the bones and of the bodies other components join to them </summary>
     private void UpdateStandingStrength()
     {
+        // Contacts come and go every step and hold nothing up: only joints count
+        var solver = Simulation!.Simulation.Solver;
         int count = 0;
         for (int i = 0; i < _bodies.Length; i++)
-            count += Body(i).Constraints.Count;
+        {
+            var constraints = Body(i).Constraints;
+            for (int c = 0; c < constraints.Count; c++)
+            {
+                if (NarrowPhase.IsContactConstraintType(solver.HandleToConstraint[constraints[c].ConnectingConstraintHandle.Value].TypeId) == false)
+                    count++;
+            }
+        }
         if (count == _heldConstraintCount)
             return;
         _heldConstraintCount = count;
@@ -730,7 +740,8 @@ public class SkeletonBodyComponent : CollidableComponent
             {
                 var handle = constraints[c].ConnectingConstraintHandle;
                 // Only active constraints can be enumerated; the Standing servos keep the character awake
-                if (own.Contains(handle) || simulation.Solver.HandleToConstraint[handle.Value].SetIndex != 0)
+                ref var location = ref simulation.Solver.HandleToConstraint[handle.Value];
+                if (own.Contains(handle) || location.SetIndex != 0 || NarrowPhase.IsContactConstraintType(location.TypeId))
                     continue;
                 simulation.Solver.EnumerateConnectedBodyReferences(handle, ref collector);
             }
