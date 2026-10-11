@@ -62,6 +62,11 @@ internal sealed class GpuDeformation : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     internal readonly record struct RingTriangle(uint Next, uint Previous, float NextWeight, float PreviousWeight);
 
+    // How much larger than at rest a lattice cell is assumed to stretch, for the bounds of the vertices beyond the lattice
+    private const float MaximumCellStretch = 2f;
+    // Area of the texture coordinates under which a triangle has no usable tangent direction
+    private const float DegenerateUvArea = 1e-12f;
+
     private static readonly ShaderClassSource LatticeShader = new("SoftBodyLatticeDeformation");
     private static readonly ShaderClassSource SurfaceShader = new("SoftBodySurfaceDeformation");
 
@@ -108,8 +113,8 @@ internal sealed class GpuDeformation : IDisposable
                 extrapolation = MathF.Max(extrapolation, MathF.Max(outside.X, MathF.Max(outside.Y, outside.Z)));
             }
 
-            // A vertex inside its cell stays within the bounds of the particles; one beyond the lattice by a fraction of a cell, given cells stretched up to twice their size
-            _latticeMargin = extrapolation * topology.Spacing * 2f;
+            // A vertex inside its cell stays within the bounds of the particles; one beyond the lattice by a fraction of a stretched cell
+            _latticeMargin = extrapolation * topology.Spacing * MaximumCellStretch;
             Layout = LatticeVertex.Layout;
             VertexBuffer = Buffer.Vertex.New(device, MemoryMarshal.AsBytes(vertices.AsSpan()));
             _gradients = new Vector3[topology.ParticleCount * 3];
@@ -230,7 +235,7 @@ internal sealed class GpuDeformation : IDisposable
                 var uv1 = mesh.TexCoords[b] - mesh.TexCoords[a];
                 var uv2 = mesh.TexCoords[c] - mesh.TexCoords[a];
                 var determinant = uv1.X * uv2.Y - uv2.X * uv1.Y;
-                var (weightB, weightC) = MathF.Abs(determinant) > 1e-12f ? (uv2.Y / determinant, -uv1.Y / determinant) : (1f, 0f);
+                var (weightB, weightC) = MathUtil.WithinEpsilon(determinant, 0f, DegenerateUvArea) ? (1f, 0f) : (uv2.Y / determinant, -uv1.Y / determinant);
                 weights[0] = -(weightB + weightC);
                 weights[1] = weightB;
                 weights[2] = weightC;
