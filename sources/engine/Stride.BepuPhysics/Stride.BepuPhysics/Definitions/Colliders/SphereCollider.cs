@@ -6,6 +6,7 @@ using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
+using Stride.Core.Annotations;
 using NRigidPose = BepuPhysics.RigidPose;
 
 namespace Stride.BepuPhysics.Definitions.Colliders;
@@ -18,12 +19,14 @@ public sealed class SphereCollider : ColliderBase
     /// <remarks>
     /// Changing this value will reset some of the internal physics state of this body
     /// </remarks>
+    [DataMemberRange(0.001, 3)]
     public float Radius
     {
         get => _radius;
         set
         {
-            value.ValidateGreaterThanZeroFinite(this);
+            if (value.IsGreaterThanZeroFinite() == false)
+                return; // Set as typed by the property grid, which an exception would take down
             _radius = value;
             TryUpdateFeatures();
         }

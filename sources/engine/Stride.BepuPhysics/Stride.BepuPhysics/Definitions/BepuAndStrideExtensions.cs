@@ -49,6 +49,10 @@ internal static class BepuAndStrideExtensions
             throw new ArgumentOutOfRangeException($"{owner}'s {fieldName} must be normalized");
     }
 
+    /// <summary> Whether <paramref name="fp"/> can be a size or a mass: finite and greater than zero </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool IsGreaterThanZeroFinite(this float fp) => fp > 0 && float.IsFinite(fp);
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ValidateGreaterThanZeroFinite<T>(this float fp, T owner, [CallerMemberName] string? fieldName = null)
     {
