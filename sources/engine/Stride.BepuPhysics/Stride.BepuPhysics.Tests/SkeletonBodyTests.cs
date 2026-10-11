@@ -689,6 +689,36 @@ public class SkeletonBodyTests : GameTestBase
         Assert.True(MathF.Abs(hips.Y - 1f) < 0.08f, $"hips at {hips}, not at their animated height above the floor");
     }
 
+    [Fact]
+    public static void GhostBonesCollideWithNothing()
+    {
+        Vector3 hips = default;
+        CollidableComponent? hit = null, floor = null;
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            var scene = game.SceneSystem.SceneInstance.RootScene;
+            floor = AddGround(scene).Get<StaticComponent>();
+            var (_, body) = AddHumanoid(scene, new Vector3(0, 0.5f, 0), Quaternion.Identity, SkeletonBodyMode.Animated);
+            body.Ghost = true;
+            await game.Script.NextFrame();
+
+            // Rays go through the bones to the floor, and the ragdoll falls through it
+            body.Simulation!.RayCast(new Vector3(0, 3f, 0), -Vector3.UnitY, 10f, out var result);
+            hit = result.Collidable;
+            body.Mode = SkeletonBodyMode.Ragdoll;
+            for (int frame = 0; frame < 60; frame++)
+                await game.Script.NextFrame();
+            hips = body.GetBodyPosition(0);
+            game.Exit();
+        });
+        RunGameTest(game);
+
+        Assert.Same(floor, hit);
+        Assert.True(hips.Y < -1f, $"hips at {hips}, the bones should fall through the floor");
+    }
+
     private static (Entity Entity, SkeletonBodyComponent Body) AddHumanoid(Scene scene, Vector3 position, Quaternion rotation, SkeletonBodyMode mode)
     {
         var body = new SkeletonBodyComponent { Mode = mode };

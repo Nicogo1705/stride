@@ -22,6 +22,8 @@ using Stride.Rendering;
 using NRigidPose = BepuPhysics.RigidPose;
 using NQuaternion = System.Numerics.Quaternion;
 using NVector3 = System.Numerics.Vector3;
+using Symmetric3x3 = BepuUtilities.Symmetric3x3;
+using BodyIndexLoop = BepuUtilities.IForEach<int>;
 
 namespace Stride.BepuPhysics;
 
@@ -43,6 +45,7 @@ public class SkeletonBodyComponent : CollidableComponent
 
     private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(SkeletonBodyComponent));
     private static readonly BoneJoint DefaultJoint = new();
+    private const float GhostMassRatio = 0.01f;
 
     private float _teleportDistance = 1f;
     private BodyHandle[] _bodies = [];
@@ -69,6 +72,9 @@ public class SkeletonBodyComponent : CollidableComponent
     private ConstraintHandle[] _servos = [];
     private readonly List<(int Body, ConstraintHandle Linear, ConstraintHandle Angular)> _upright = new();
     private float _standingForce, _standingTorque;
+    private float _bonesMass, _standingLever;
+    private int _heldConstraintCount = -1; // Constraints on the bones when the weight held by the character was last measured
+    private bool _ghost;
     private CollidableComponent? _ground;
     private float _groundHeight;
     private Matrix[] _animated = [];
@@ -212,7 +218,8 @@ public class SkeletonBodyComponent : CollidableComponent
     /// How strongly <see cref="SkeletonBodyMode.Standing"/> holds the character up, as a multiple of its weight; below 1, it cannot lift itself.
     /// </summary>
     /// <remarks>
-    /// Each lifting servo may push with this many times the weight of all the bodies, and each turning servo apply that force
+    /// Each lifting servo may push with this many times the weight of all the bodies, those joined to the bones by other components included,
+    /// and each turning servo apply that force
     /// at the distance between the root and the topmost body; a hit or a grab stronger than that wins.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
@@ -221,6 +228,26 @@ public class SkeletonBodyComponent : CollidableComponent
     {
         get => _standingStrength;
         set => _standingStrength = MathF.Max(0f, value);
+    }
+
+    /// <summary>
+    /// Whether the bodies only carry the joints and servos of the skeleton: they collide with nothing, rays go through them,
+    /// and they weigh a hundredth of the <see cref="ColliderBase.Mass"/> of their shape.
+    /// </summary>
+    /// <remarks>
+    /// For a character whose mass and contacts come from other bodies joined to its bones, like soft flesh following the skeleton.
+    /// Changes are applied when the bodies are created, see <see cref="Rebuild"/>.
+    /// </remarks>
+    [Display(category: CategoryRagdoll)]
+    [DefaultValue(false)]
+    public bool Ghost
+    {
+        get => _ghost;
+        set
+        {
+            _ghost = value;
+            TryUpdateFeatures();
+        }
     }
 
     /// <summary>
@@ -368,7 +395,9 @@ public class SkeletonBodyComponent : CollidableComponent
         var activity = new BodyActivityDescription(0.01f);
         for (int i = 0; i < _bodies.Length; i++)
         {
-            var description = BodyDescription.CreateKinematic(TargetPose(skeleton, i, collider), new CollidableDescription(collider.GetCreatedIndex(i)), activity);
+            // A body without a shape is left out of collision detection and ray casts
+            var shape = _ghost ? default : collider.GetCreatedIndex(i);
+            var description = BodyDescription.CreateKinematic(TargetPose(skeleton, i, collider), new CollidableDescription(shape), activity);
             var handle = bodies.Add(description);
             _bodies[i] = handle;
             _shapeOfBody[handle.Value] = i;
@@ -418,7 +447,7 @@ public class SkeletonBodyComponent : CollidableComponent
 
     internal override void RayTest<TRayHitHandler>(in Vector3 origin, in Vector3 dir, ref float maximumT, ref TRayHitHandler hitHandler)
     {
-        if (Simulation is null)
+        if (Simulation is null || _ghost)
             return;
 
         var collider = (BoneCollider)Collider;
@@ -518,7 +547,7 @@ public class SkeletonBodyComponent : CollidableComponent
         {
             _blendRemaining = 0f;
             for (int i = 0; i < _bodies.Length; i++)
-                Body(i).SetLocalInertia(collider.GetCreatedInertia(i));
+                Body(i).SetLocalInertia(Inertia(collider, i));
         }
 
         AddConstraints(collider);
@@ -625,7 +654,7 @@ public class SkeletonBodyComponent : CollidableComponent
         float rootHeight = 0f, topHeight = float.MinValue;
         for (int i = 0; i < _bodies.Length; i++)
         {
-            var inertia = collider.GetCreatedInertia(i);
+            var inertia = Inertia(collider, i);
             mass += inertia.InverseMass > 0f ? 1f / inertia.InverseMass : 0f;
             float height = Vector3.TransformCoordinate(GetBoneShape(i).Shape.PositionLocal, rest[_nodes[i]]).Y;
             if (_jointParents[i] < 0)
@@ -641,10 +670,10 @@ public class SkeletonBodyComponent : CollidableComponent
         }
 
         // Forces in proportion to the weight of the whole character; turning acts over the height of the trunk
-        float gravity = Simulation!.PoseGravity.Length();
-        _standingForce = _standingStrength * mass * (gravity > 0f ? gravity : 9.81f);
-        float lever = top >= 0 ? MathF.Max(0.1f, (topHeight - rootHeight) * _nodeScales[root].Y) : 0.5f;
-        _standingTorque = _standingForce * lever;
+        _bonesMass = mass;
+        _standingLever = top >= 0 ? MathF.Max(0.1f, (topHeight - rootHeight) * _nodeScales[root].Y) : 0.5f;
+        _heldConstraintCount = -1;
+        UpdateStandingStrength();
         // A topmost body barely above the root adds nothing to holding the trunk up
         if (top >= 0 && topHeight - rootHeight > 0.1f)
             Add(top);
@@ -659,6 +688,71 @@ public class SkeletonBodyComponent : CollidableComponent
             _constraints.Add(angular);
             _upright.Add((body, linear, angular));
         }
+    }
+
+    /// <summary> The inertia of the body at <paramref name="index"/> once dynamic, from the mass of its shape </summary>
+    private BodyInertia Inertia(BoneCollider collider, int index)
+    {
+        var inertia = collider.GetCreatedInertia(index);
+        if (_ghost)
+        {
+            inertia.InverseMass *= 1f / GhostMassRatio;
+            Symmetric3x3.Scale(inertia.InverseInertiaTensor, 1f / GhostMassRatio, out inertia.InverseInertiaTensor);
+        }
+        return inertia;
+    }
+
+    /// <summary> Sets the forces of the Standing servos from the weight of the bones and of the bodies other components join to them </summary>
+    private void UpdateStandingStrength()
+    {
+        int count = 0;
+        for (int i = 0; i < _bodies.Length; i++)
+            count += Body(i).Constraints.Count;
+        if (count == _heldConstraintCount)
+            return;
+        _heldConstraintCount = count;
+
+        float gravity = Simulation!.PoseGravity.Length();
+        _standingForce = _standingStrength * (_bonesMass + HeldMass()) * (gravity > 0f ? gravity : 9.81f);
+        _standingTorque = _standingForce * _standingLever;
+    }
+
+    /// <summary> The mass of the awake dynamic bodies of other components joined to the bones, each counted once </summary>
+    private float HeldMass()
+    {
+        var simulation = Simulation!.Simulation;
+        var own = new HashSet<ConstraintHandle>(_constraints);
+        var collector = new BodyCollector { Indices = new HashSet<int>() };
+        for (int i = 0; i < _bodies.Length; i++)
+        {
+            var constraints = Body(i).Constraints;
+            for (int c = 0; c < constraints.Count; c++)
+            {
+                var handle = constraints[c].ConnectingConstraintHandle;
+                // Only active constraints can be enumerated; the Standing servos keep the character awake
+                if (own.Contains(handle) || simulation.Solver.HandleToConstraint[handle.Value].SetIndex != 0)
+                    continue;
+                simulation.Solver.EnumerateConnectedBodyReferences(handle, ref collector);
+            }
+        }
+
+        float mass = 0f;
+        var active = simulation.Bodies.ActiveSet;
+        foreach (var index in collector.Indices)
+        {
+            if (_shapeOfBody.ContainsKey(active.IndexToHandle[index].Value))
+                continue;
+            float inverseMass = active.DynamicsState[index].Inertia.Local.InverseMass;
+            mass += inverseMass > 0f ? 1f / inverseMass : 0f;
+        }
+        return mass;
+    }
+
+    private struct BodyCollector : BodyIndexLoop
+    {
+        public HashSet<int> Indices;
+
+        public void LoopBody(int bodyIndex) => Indices.Add(bodyIndex);
     }
 
     private OneBodyLinearServo Lift(NVector3 target, float maximumForce) => new()
@@ -795,6 +889,8 @@ public class SkeletonBodyComponent : CollidableComponent
 
         if (_upright.Count > 0)
         {
+            UpdateStandingStrength();
+
             // Heights in the animated pose are measured from the feet, the origin of the entity
             float feet = _animated[0].TranslationVector.Y;
             var (root, _, _) = _upright[0];
