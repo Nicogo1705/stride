@@ -17,7 +17,7 @@ using Xunit;
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
-/// The video showcase: soft bodies, an animated human, Standing NPCs, Standing soft bodies, and a finale with all of them.
+/// The video showcase: soft bodies, an animated human, Standing NPCs, Standing soft bodies, a torture lab, ropes and cables, and a finale with all of them.
 /// Opt-in: STRIDE_BEPU_DEMO=1 (interactive), STRIDE_BEPU_DEMO_SMOKE=1 (smoke test), STRIDE_BEPU_DEMO_TOUR=1 (scripted tour).
 /// </summary>
 public class VideoShowcaseDemo : GameTestBase
@@ -28,6 +28,8 @@ public class VideoShowcaseDemo : GameTestBase
         new AnimatedHumanScene(),
         new StandingNpcScene(),
         new StandingSoftBodiesScene(),
+        new TortureLabScene(),
+        new RopesScene(),
         new FinaleScene(),
     };
 
@@ -117,6 +119,16 @@ public class VideoShowcaseDemo : GameTestBase
                         game.SetCamera(new Vector3(1.6f, 2.0f, 3.4f), new Vector3(0f, 1.0f, 0f));
                         await game.Steps(90);
                         await game.CaptureTo(Shot("b-jellies-close"));
+                        if (((SoftBodiesScene)scene).Crane is { } crane)
+                        {
+                            // The load thrown sideways: the jib follows it around
+                            game.SetCamera(new Vector3(4.2f, 2.6f, 4.4f), new Vector3(5.6f, 1.6f, 0.4f));
+                            crane.Load.LinearVelocity = new Vector3(0f, 0f, -4f);
+                            crane.Load.Awake = true;
+                            await game.Steps(50);
+                            await game.CaptureTo(Shot("b-crane"));
+                            report.Add(string.Format(CultureInfo.InvariantCulture, "{0:00} crane: jib at {1:0} deg after the push", index, crane.JibAngle));
+                        }
                         if (((SoftBodiesScene)scene).Rope is { } rope)
                         {
                             // Four turns each way, and the block pulled away and up as the gravity gun does, held there
@@ -157,10 +169,78 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.Steps(70);
                         await game.CaptureTo(Shot("b-cannon"));
                         break;
-                    case StandingSoftBodiesScene:
+                    case StandingSoftBodiesScene standingSoft:
                         game.SetCamera(new Vector3(1.8f, 2.2f, 5.6f), new Vector3(0f, 0.6f, 0f));
                         await game.Steps(180);
                         await game.CaptureTo(Shot("b-beans-close"));
+                        if (standingSoft.FallGuys.Count > 0)
+                        {
+                            var guy = standingSoft.FallGuys[0];
+                            game.SetCamera(guy.Hips + new Vector3(1.2f, 1.0f, 2.2f), guy.Hips + new Vector3(0f, 0.3f, 0f));
+                            await game.Steps(2);
+                            await game.CaptureTo(Shot("b-fallguy"));
+                            // A ball in the belly: the whole body dents, then it stands again
+                            var ball = Props.Ball(game, 0.2f, 12f, Look.Navy, guy.Hips + new Vector3(-2f, 0.5f, 0f));
+                            game.AddToScene(ball);
+                            await game.Steps(1);
+                            ball.Get<BodyComponent>()!.LinearVelocity = new Vector3(14f, 0f, 0f);
+                            await game.Steps(6);
+                            await game.CaptureTo(Shot("b-fallguy-hit"));
+                            await game.Steps(240);
+                            game.SetCamera(guy.Hips + new Vector3(1.2f, 1.0f, 2.2f), guy.Hips + new Vector3(0f, 0.3f, 0f));
+                            await game.Steps(2);
+                            await game.CaptureTo(Shot("b-fallguy-after"));
+                            report.Add($"{index:00} Fall Guy 4 s after the ball: grounded {guy.Body.IsGrounded}, hips at {guy.Hips.Y:0.00} m, on {guy.Body.Ground?.Entity.Name}");
+                        }
+                        game.SetCamera(scene.Eye, scene.Target);
+                        break;
+                    case TortureLabScene lab:
+                        // The extreme cases, held for the whole long run: five turns each way, ropes pulled all the way out
+                        lab.SetTwisting(true);
+                        lab.SetPulling(true);
+                        await game.Steps(660);
+                        foreach (var (name, eye, target) in new[]
+                        {
+                            ("press", new Vector3(-3.0f, 2.2f, 2.2f), new Vector3(-4.6f, 0.8f, -1.2f)),
+                            ("rollers", new Vector3(-0.4f, 2.4f, 2.0f), new Vector3(-1.6f, 1.0f, -1.2f)),
+                            ("quartering", new Vector3(2.8f, 2.8f, 2.4f), new Vector3(1.6f, 1.2f, -1.2f)),
+                            ("fan", new Vector3(6.6f, 2.4f, 2.4f), new Vector3(4.8f, 1.4f, -1.4f)),
+                            ("sausage", new Vector3(-2.2f, 1.8f, 4.6f), new Vector3(-2.6f, 1.1f, 2.0f)),
+                            ("pile-driver", new Vector3(4.8f, 1.6f, 4.6f), new Vector3(3.4f, 0.6f, 2.2f)),
+                        })
+                        {
+                            game.SetCamera(eye, target);
+                            await game.Steps(2);
+                            await game.CaptureTo(Shot("b-" + name));
+                        }
+                        report.Add(string.Format(CultureInfo.InvariantCulture, "{0:00} torture lab: sausage at {1:0.0} turns each way, quartering ropes {2:0.00} m out", index, lab.Turns, lab.Pull));
+                        game.SetCamera(scene.Eye, scene.Target);
+                        break;
+                    case RopesScene ropes:
+                        await game.Press(Keys.I);
+                        await game.Press(Keys.M);
+                        if (ropes.Crane is { } ropeCrane)
+                        {
+                            ropeCrane.Load.LinearVelocity = new Vector3(0f, 0f, 4f);
+                            ropeCrane.Load.Awake = true;
+                        }
+                        await game.Steps(40);
+                        foreach (var (name, eye, target) in new[]
+                        {
+                            ("crane", new Vector3(-3.6f, 2.8f, 2.4f), new Vector3(-5.0f, 1.8f, -1.6f)),
+                            ("hanging", new Vector3(-1.4f, 2.4f, 1.6f), new Vector3(-2.4f, 1.8f, -1.6f)),
+                            ("cable-car", new Vector3(2.0f, 3.0f, 1.6f), new Vector3(1.2f, 2.6f, -1.8f)),
+                            ("swing", new Vector3(6.4f, 2.0f, 1.6f), new Vector3(5.0f, 1.2f, -1.4f)),
+                            ("tug-of-war", new Vector3(-1.6f, 2.0f, 6.0f), new Vector3(-1.6f, 0.9f, 2.4f)),
+                            ("trampoline", new Vector3(5.2f, 2.4f, 5.6f), new Vector3(3.6f, 1.2f, 2.4f)),
+                        })
+                        {
+                            game.SetCamera(eye, target);
+                            await game.Steps(15);
+                            await game.CaptureTo(Shot("b-" + name));
+                        }
+                        foreach (var line in ropes.Status())
+                            report.Add($"{index:00} ropes: {line}");
                         game.SetCamera(scene.Eye, scene.Target);
                         break;
                     case FinaleScene:
@@ -187,6 +267,11 @@ public class VideoShowcaseDemo : GameTestBase
                 report.Add($"{index:00} {scene.Name}: no limit, {game.FpsText()}");
                 report.Add($"{index:00}   {game.StepTiming()}");
                 report.Add($"{index:00}   after {stabilitySteps} steps: {probe.Summary()}");
+                if (scene is VideoScene video)
+                {
+                    foreach (var line in video.Status())
+                        report.Add($"{index:00}   status: {line}");
+                }
                 await game.CaptureTo(Shot($"c-after-{stabilitySteps}"));
             }
 

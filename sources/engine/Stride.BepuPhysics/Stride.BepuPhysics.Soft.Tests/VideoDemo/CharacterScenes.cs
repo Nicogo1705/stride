@@ -26,8 +26,9 @@ internal sealed class AnimatedHumanScene : VideoScene
     public override string Description => "kinematic hitboxes follow the walk; hit him (F: ball, gravity gun, a thrown prop) and he goes Ragdoll; U stands him back up";
     public override Vector3 Eye => new(0.6f, 2.5f, 5.8f);
     public override Vector3 Target => new(0f, 0.9f, -0.6f);
-    public override string SceneKeys => "U: put the human back (Animated)  |  F / middle click: throw a ball  |  left click a bone: grab (Ragdoll)  |  V: hitbox wireframes";
+    public override string SceneKeys => "U: put the human back (Animated)  |  F / middle click: throw a ball  |  left click a bone: grab (Ragdoll)";
     public override IReadOnlyList<SkeletonBodyMode> LegendModes => new[] { SkeletonBodyMode.Animated, SkeletonBodyMode.Ragdoll };
+    public override int DefaultDebugView => VideoDemoGame.RigidView;
 
     public SkeletonBodyMode Mode => _walk?.Body.Mode ?? SkeletonBodyMode.Animated;
 

@@ -27,12 +27,15 @@ internal sealed class SoftBodiesScene : VideoScene
     /// <summary> The striped rope between the twister and the block </summary>
     public SoftPiece? Rope { get; private set; }
 
+    /// <summary> The jib on its mast, the soft rope and the load hanging from it </summary>
+    public SwingingCrane? Crane { get; private set; }
+
     public override string Title => "Soft bodies";
     public override string Pr => "PR #3528, #3530, #3564, FollowSkeleton / AnchorNode (upcoming)";
     public override string Description => "jellies whose opacity grows with the thickness crossed, a rope twisted by a motor (pull its block to stretch it), cloth in the wind, molluscs with flesh on a skeleton";
     public override Vector3 Eye => new(0.3f, 2.7f, 6.6f);
     public override Vector3 Target => new(0f, 0.9f, -0.7f);
-    public override string SceneKeys => "O: OpacityThickness on / off  |  left click: grab a jelly, a flag, the rope's block (stretch it)  |  V: particles";
+    public override string SceneKeys => "O: OpacityThickness on / off  |  left click: grab a jelly, a flag, the rope's block (stretch it), the crane's load (swing it)";
 
 
     protected override void BuildScene(VideoDemoGame game)
@@ -132,13 +135,16 @@ internal sealed class SoftBodiesScene : VideoScene
         var driver = new MolluscDriver();
         Mollusc.Add(game, Look.Coral, driver, Mollusc.Circle(rock, 1.05f, 0.5f, MathF.PI));
         var path = Mollusc.Circle(rock, 1.05f, 0.5f, 0f);
-        var sailed = Mollusc.Add(game, Look.Violet, driver, path, PhysicalWorm.FleshLayer);
+        var sailed = Mollusc.Add(game, Look.Violet, driver, path);
         Mollusc.AddSail(game, sailed, path(0f).Yaw, Look.Sun);
         game.AddToScene(new Entity("mollusc driver") { driver });
 
         // A striped rope pinned at both ends: a motor twists it from the left, the block on the right stretches it when pulled
         Rope = new SoftPiece(game, new Vector3(1.2f, 1.0f, 2.0f), new Vector3(3.4f, 1.0f, 2.0f), Look.Coral, Look.Ivory);
         var rope = Rope;
+
+        // A crane on the right: a load on a soft rope from a jib turning freely, both ends body anchors
+        Crane = new SwingingCrane(game, new Vector3(5.2f, 0f, 0.4f), Look.Sun, Look.Navy);
 
         game.AddToScene(new Entity("press, wind and lifter")
         {
@@ -187,10 +193,11 @@ internal sealed class SoftBodiesScene : VideoScene
         yield return (new Vector3(3.5f, 3.2f, -2.6f), "cloth + kinematic sphere");
         yield return (new Vector3(-2.3f, 1.4f, 1.3f), "FollowSkeleton flesh, AnchorNode sail");
         yield return (new Vector3(2.3f, 1.65f, 2.0f), "two pins, each anchored to a rigid handle");
+        yield return (new Vector3(6.0f, 3.1f, 0.4f), "BodyAnchor both ways: swing the load, the jib turns");
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return $"OpacityThickness: {(_on ? "on" : "off")} (O)  |  5 jellies, 3 flags, 1 tent, 2 soft balls, 2 molluscs + sail, 1 rope (twister at {Rope?.Angle / MathUtil.TwoPi ?? 0f:0.0} turns)";
+        yield return $"OpacityThickness: {(_on ? "on" : "off")} (O)  |  5 jellies, 3 flags, 1 tent, 2 soft balls, 2 molluscs + sail, 1 rope (twister at {Rope?.Angle / MathUtil.TwoPi ?? 0f:0.0} turns), crane jib at {Crane?.JibAngle ?? 0f:0} deg";
     }
 }

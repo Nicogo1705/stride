@@ -13,43 +13,16 @@ using Stride.Harness.Demo;
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
-/// The mollusc with a physical spine: a <see cref="SkeletonBodyComponent"/> in Active mode on its bones (the crawl wave is the servos' target),
-/// and the soft flesh following that skeleton (FollowSkeleton): the ragdoll writes the bones after each step, the flesh reads them before the next.
-/// Bones and flesh of the same worm do not collide; only the head is pulled toward a point moving ahead, the rest is physics.
+/// The mollusc with a physical spine: a <see cref="SkeletonBodyComponent"/> in Standing mode on its bones (the crawl wave is the servos' target),
+/// and the soft flesh following that skeleton (FollowSkeleton): flesh and bones are joined and pull on each other, and never collide.
+/// Only the head is pulled toward a point moving ahead, the rest is physics.
 /// </summary>
-/// <remarks>
-/// Active rather than Standing: Standing looks for the ground with a ray from the root that only skips its own component,
-/// so it would find the worm's own flesh under the bones and lift itself off it.
-/// </remarks>
 internal static class PhysicalWorm
 {
-    public const CollisionLayer BoneLayer = CollisionLayer.Layer20;
-    public const CollisionLayer FleshLayer = CollisionLayer.Layer21;
-    public const CollisionLayer SailLayer = CollisionLayer.Layer22;
-
-    /// <summary> Soft pieces held at both ends by rigid handles, and those handles: pinned particles must not push their own anchor </summary>
-    public const CollisionLayer PieceLayer = CollisionLayer.Layer23, HandleLayer = CollisionLayer.Layer24;
-
-    /// <summary>
-    /// Bones and flesh overlap by design: they must not push each other. Nor may a sail pinned to the head push its bones or its flesh:
-    /// its pinned particles are kinematic and follow the head, so each push moves their own target and they push again (the worm flew off at 80 m/s)
-    /// </summary>
-    public static void Filter(BepuSimulation simulation)
-    {
-        simulation.CollisionMatrix.Set(BoneLayer, FleshLayer, false);
-        simulation.CollisionMatrix.Set(SailLayer, BoneLayer, false);
-        simulation.CollisionMatrix.Set(SailLayer, FleshLayer, false);
-        simulation.CollisionMatrix.Set(PieceLayer, HandleLayer, false);
-    }
-
     public static Entity Add(DemoGame game, Color color, Vector3 position, float yaw, Func<float, Vector3> carrot)
     {
-        // Filtered before the first step: the bones start inside the flesh
-        foreach (var simulation in game.Services.GetService<BepuConfiguration>()?.BepuSimulations ?? new List<BepuSimulation>())
-            Filter(simulation);
         var flesh = Mollusc.Body();
-        flesh.CollisionLayer = FleshLayer;
-        var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Active, SelfCollision = false, CollisionLayer = BoneLayer, ActiveSpringFrequency = 6f, ActiveMaximumForce = 60f };
+        var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Standing, SelfCollision = false, ActiveSpringFrequency = 6f, ActiveMaximumForce = 60f };
         float half = Mollusc.Length / 2f + Mollusc.Radius * 0.6f, step = 2f * half / (Mollusc.Bones - 1);
         var collider = (BoneCollider)bones.Collider;
         for (int i = 0; i < Mollusc.Bones; i++)

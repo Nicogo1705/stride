@@ -13,10 +13,10 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 /// A striped soft rope held at both ends by rigid handles, one <see cref="SoftBodyPin"/> per end anchored to its handle:
 /// a kinematic disk turned by a motor twists it, a dynamic block pulled with the gravity gun stretches it.
 /// </summary>
-/// <remarks> The rope follows its handles and never pulls them back; it sits on a layer that does not touch them, so its pinned particles do not push their own anchors </remarks>
+/// <remarks> Each end is a body anchor: the rope pulls on its handles as they pull on it, and its pinned particles never touch them </remarks>
 internal sealed class SoftPiece
 {
-    private const float Radius = 0.17f, PinLength = 0.16f;
+    private const float Radius = 0.17f, PinLength = 0.2f;
 
     public Entity Piece { get; }
 
@@ -46,7 +46,7 @@ internal sealed class SoftPiece
         // The twister: a disk facing the rope, kinematic, on a post
         Look.StaticBox(game, new Vector3(0.16f, left.Y - 0.25f, 0.16f), new Vector3(left.X - _axis.X * 0.1f, (left.Y - 0.25f) / 2f, left.Z - _axis.Z * 0.1f), post, "twister post");
         _twisterRest = Quaternion.BetweenDirections(Vector3.UnitY, _axis);
-        Twister = new BodyComponent { Kinematic = true, CollisionLayer = PhysicalWorm.HandleLayer, Collider = new CompoundCollider { Colliders = { new CylinderCollider { Radius = 0.25f, Length = 0.12f } } } };
+        Twister = new BodyComponent { Kinematic = true, Collider = new CompoundCollider { Colliders = { new CylinderCollider { Radius = 0.25f, Length = 0.12f } } } };
         var twister = new Entity("twister") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.25f, Height = 0.12f, Tessellation = 40 }, Look.Wood, 0.6f)), Twister };
         twister.Transform.Position = left;
         twister.Transform.Rotation = _twisterRest;
@@ -58,7 +58,7 @@ internal sealed class SoftPiece
 
         // The handle: a dynamic block resting on a stand
         Look.StaticBox(game, new Vector3(0.36f, right.Y - 0.18f, 0.36f), new Vector3(right.X, (right.Y - 0.18f) / 2f, right.Z), post, "handle stand");
-        Handle = new BodyComponent { CollisionLayer = PhysicalWorm.HandleLayer, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(0.36f), Mass = 3f } } } };
+        Handle = new BodyComponent { Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(0.36f), Mass = 3f } } } };
         var handle = new Entity("handle") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.36f) }, Look.Wood, 0.6f)), Handle };
         handle.Transform.Position = right;
         handle.Transform.Rotation = _twisterRest;
@@ -69,7 +69,7 @@ internal sealed class SoftPiece
         float half = length / 2f;
         var body = new VolumetricSoftBodyComponent
         {
-            Resolution = 14, Stiffness = 12f, ShearStiffness = 12f, VolumeStiffness = 10f, Damping = 0.3f, Mass = 1.5f, CollisionLayer = PhysicalWorm.PieceLayer,
+            Resolution = 14, Stiffness = 12f, ShearStiffness = 12f, VolumeStiffness = 10f, Damping = 0.3f, Mass = 1.5f,
             Pins =
             {
                 new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = twister },

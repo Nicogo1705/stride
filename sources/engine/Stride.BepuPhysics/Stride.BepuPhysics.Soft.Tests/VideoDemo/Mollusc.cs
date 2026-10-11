@@ -68,7 +68,7 @@ internal static class Mollusc
         var sail = new Entity("sail")
         {
             new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(0.8f, 0.55f), Tessellation = new Int2(16, 10), Normal = NormalDirection.UpZ, GenerateBackFace = true }, color, 0.3f)),
-            new ClothComponent { CollisionLayer = PhysicalWorm.SailLayer, Pins = { edge } },
+            new ClothComponent { Pins = { edge } },
         };
         sail.Transform.Position = head - Forward(yaw) * 0.4f + new Vector3(0f, Radius + 0.25f, 0f);
         sail.Transform.Rotation = Quaternion.RotationY(yaw);
@@ -76,10 +76,9 @@ internal static class Mollusc
         return sail;
     }
 
-    public static Entity Add(DemoGame game, Color color, MolluscDriver driver, Func<float, (Vector3 Position, float Yaw)> path, CollisionLayer layer = CollisionLayer.Layer0)
+    public static Entity Add(DemoGame game, Color color, MolluscDriver driver, Func<float, (Vector3 Position, float Yaw)> path)
     {
         var body = Body();
-        body.CollisionLayer = layer;
         var entity = new Entity("mollusc") { new ModelComponent(Model(game, color)), body };
         var (position, yaw) = path(0f);
         entity.Transform.Position = position;

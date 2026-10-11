@@ -30,7 +30,7 @@ internal sealed class FinaleScene : VideoScene
 
     public override string Title => "Grand Finale";
     public override string Pr => "every PR at once";
-    public override string Description => "soft beans and a sweeper, Standing humans under cannon fire, an animated guard, a worm, flags, jellies, a voxel hill; grab anything";
+    public override string Description => "soft beans, an all-soft Fall Guy and a sweeper, Standing humans under cannon fire, an animated guard, a worm, flags, jellies, a voxel hill; grab anything";
     public override Vector3 Eye => new(0.8f, 6.0f, 12.6f);
     public override Vector3 Target => new(0.2f, 0.9f, -1.2f);
     public override string SceneKeys => "X: crater in the hill  |  B: cannonball  |  U: put the guard back  |  L: lift the nearest human 6 m up";
@@ -64,6 +64,10 @@ internal sealed class FinaleScene : VideoScene
             _beans.Add(walker);
         }
 
+        // A Fall Guy on the arena too, in the line of fire of the cannon
+        var fallGuy = StandingSoftBodiesScene.AddFallGuy(game, ArenaTop + new Vector3(-0.8f, 0f, 0.6f), 0.4f, ArenaTop, 2.2f, 0.2f);
+        _beans.Add(fallGuy);
+
         // Standing humans on the left, under cannon fire
         for (int i = 0; i < 3; i++)
         {
@@ -73,7 +77,7 @@ internal sealed class FinaleScene : VideoScene
             character.Add(walker);
             _humans.Add(walker);
         }
-        _cannon = Cannon.Build(game, _humans, new Vector3(-8.4f, 0.75f, -2.4f), 5f);
+        _cannon = Cannon.Build(game, _humans.Append(fallGuy).ToList(), new Vector3(-8.4f, 0.75f, -2.4f), 5f);
 
         // An animated guard walking a circle at the front; hit him and he goes Ragdoll
         var (guard, guardBody, _) = Humans.Add(game, SkeletonBodyMode.Animated, Vector3.Zero, 0f, name: "guard");
@@ -81,7 +85,11 @@ internal sealed class FinaleScene : VideoScene
         guard.Add(_guard);
 
         // A worm with a physical spine crawling at the back left
-        PhysicalWorm.Add(game, Modes.Of(SkeletonBodyMode.Active), new Vector3(-3.6f, 0f, -4.0f), MathUtil.PiOverTwo, PhysicalWorm.Circle(new Vector3(-5.2f, 0f, -4.0f), 1.6f, 0.6f, 0.4f));
+        PhysicalWorm.Add(game, Modes.Of(SkeletonBodyMode.Standing), new Vector3(-3.6f, 0f, -4.0f), MathUtil.PiOverTwo, PhysicalWorm.Circle(new Vector3(-5.2f, 0f, -4.0f), 1.6f, 0.6f, 0.4f));
+
+        // From the ropes scene: a crane whose load swings its jib, a ragdoll hanging by the ankle
+        _ = new SwingingCrane(game, new Vector3(8.2f, 0f, 1.6f), Look.Sun, Look.Navy);
+        RopesScene.AddHangingRagdoll(game, new Vector3(-7.6f, 0f, 4.6f));
 
         // Two flags at the back
         var flags = new List<ClothComponent>();
@@ -158,10 +166,11 @@ internal sealed class FinaleScene : VideoScene
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
         yield return (new Vector3(6.4f, 2.4f, -4.6f), "VoxelCollider hill (X: crater)");
+        yield return (new Vector3(9.0f, 3.1f, 1.6f), "crane: body anchors both ways");
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return $"{_humans.Count} Standing humans, {_beans.Count} Standing beans, guard {(_guard?.Body.Mode ?? SkeletonBodyMode.Animated)}  |  cannonballs fired: {_cannon?.Shots ?? 0}  |  craters: {_hill?.Craters ?? 0}";
+        yield return $"{_humans.Count} Standing humans, {_beans.Count - 1} Standing beans + 1 Fall Guy, guard {(_guard?.Body.Mode ?? SkeletonBodyMode.Animated)}  |  cannonballs fired: {_cannon?.Shots ?? 0}  |  craters: {_hill?.Craters ?? 0}";
     }
 }

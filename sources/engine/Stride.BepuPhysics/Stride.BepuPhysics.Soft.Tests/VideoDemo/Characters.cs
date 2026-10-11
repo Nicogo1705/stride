@@ -20,7 +20,7 @@ internal static class Humans
     public static readonly Color Skin = new(236, 196, 160);
 
     /// <summary> A character with its hitboxes in <paramref name="mode"/>, standing at <paramref name="position"/> and facing <paramref name="yaw"/> </summary>
-    public static (Entity Entity, SkeletonBodyComponent Body, ProceduralCharacter.Animator Animator) Add(DemoGame game, SkeletonBodyMode mode, Vector3 position, float yaw, ProceduralCharacter.Animator? animator = null, string name = "human")
+    public static (Entity Entity, SkeletonBodyComponent Body, ProceduralCharacter.Animator Animator) Add(DemoGame game, SkeletonBodyMode mode, Vector3 position, float yaw, ProceduralCharacter.Animator? animator = null, string name = "human", Quaternion? rotation = null)
     {
         var device = game.GraphicsDevice;
         var body = ProceduralCharacter.CreateHitboxes();
@@ -30,7 +30,7 @@ internal static class Humans
         var entity = ProceduralCharacter.Create(model, animator, body);
         entity.Name = name;
         entity.Transform.Position = position;
-        entity.Transform.Rotation = Quaternion.RotationY(yaw);
+        entity.Transform.Rotation = rotation ?? Quaternion.RotationY(yaw);
         entity.Add(new ModeTint(body, new[] { entity.Get<ModelComponent>()! }));
         game.AddToScene(entity);
         return (entity, body, animator);
@@ -124,7 +124,8 @@ internal sealed class CircleWalk : ScriptComponent, ISimulationUpdate
 /// and the friction of the floor. The entity turns toward a heading the root servo follows, and stays under the hips.
 /// Off when it is grabbed, lying or in the air; a character thrown away stays where it lands and walks from there.
 /// </summary>
-internal sealed class Walker(Entity character, SkeletonBodyComponent body, Func<float> stanceSpeed, int trunk, float heading, Vector3 center, float radius) : ScriptComponent, ISimulationUpdate
+/// <remarks> A character whose bones are ghosts carries its mass in <paramref name="flesh"/>: the push goes to the flesh above the legs instead. </remarks>
+internal sealed class Walker(Entity character, SkeletonBodyComponent body, Func<float> stanceSpeed, int trunk, float heading, Vector3 center, float radius, SoftBodyComponent? flesh = null) : ScriptComponent, ISimulationUpdate
 {
     private float _heading = heading;
     private float _time;
@@ -186,6 +187,15 @@ internal sealed class Walker(Entity character, SkeletonBodyComponent body, Func<
         var wantedVelocity = direction * stanceSpeed();
         var current = body.GetBodyLinearVelocity(0);
         var push = (wantedVelocity - new Vector3(current.X, 0f, current.Z)) * 0.6f;
+        if (flesh is { ParticleCount: > 0 })
+        {
+            for (int i = 0; i < flesh.ParticleCount; i++)
+            {
+                if (flesh.GetParticlePosition(i).Y > hips.Y - 0.15f)
+                    flesh.SetParticleVelocity(i, flesh.GetParticleVelocity(i) + push);
+            }
+            return;
+        }
         for (int i = 0; i < body.BodyCount; i++)
         {
             if (!_upper[i])

@@ -15,28 +15,32 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
 /// Round soft beans standing on a physical skeleton, waddling around an arena while a spinning bar sweeps their legs;
-/// see-through jelly bumpers on the rim, and a worm with a physical spine crawling outside
+/// two Fall Guys made of nothing but one soft body around ghost bones; see-through jelly bumpers on the rim, and a worm with a Standing spine crawling outside
 /// </summary>
 internal sealed class StandingSoftBodiesScene : VideoScene
 {
     public static readonly Color[] FleshColors = { new(255, 120, 170), new(160, 120, 255), new(150, 220, 80), new(90, 190, 255), new(255, 160, 110) };
     private static readonly Vector3 Arena = new(0f, 0.15f, 0f), Worm = new(5.8f, 0f, -4.4f);
     private readonly List<Walker> _beans = new();
+    private readonly List<Walker> _fallGuys = new();
     private Entity? _worm;
+
+    public IReadOnlyList<Walker> FallGuys => _fallGuys;
 
     public override string Title => "Standing soft bodies";
     public override string Pr => "FollowSkeleton flesh on a Standing ragdoll (upcoming PRs, on #3528)";
-    public override string Description => "soft beans on a Standing skeleton waddle, get swept off their feet by the bar and stand back up; the worm's spine is Active";
+    public override string Description => "soft beans and all-soft Fall Guys on Standing skeletons waddle, get swept off their feet by the bar and stand back up; the worm's spine is Standing too";
     public override Vector3 Eye => new(0.6f, 4.0f, 8.8f);
     public override Vector3 Target => new(0f, 0.6f, 0f);
-    public override string SceneKeys => "left click a bean: grab it by the nearest bone, F: throw  |  F with empty hands: a ball  |  V: particles";
-    public override IReadOnlyList<SkeletonBodyMode> LegendModes => new[] { SkeletonBodyMode.Standing, SkeletonBodyMode.Active };
-    public override string LegendCaption => "Mode color: beans' shorts and limbs, the worm's flesh";
+    public override string SceneKeys => "left click a bean: grab it by the nearest bone, a Fall Guy: grab its flesh, F: throw  |  F with empty hands: a ball";
+    public override IReadOnlyList<SkeletonBodyMode> LegendModes => new[] { SkeletonBodyMode.Standing };
+    public override string LegendCaption => "Mode color: beans' shorts and limbs, the Fall Guys, the worm";
 
 
     protected override void BuildScene(VideoDemoGame game)
     {
         _beans.Clear();
+        _fallGuys.Clear();
         var device = game.GraphicsDevice;
 
         BuildArena(game, Arena, 5f, 4.6f);
@@ -67,8 +71,25 @@ internal sealed class StandingSoftBodiesScene : VideoScene
             _beans.Add(walker);
         }
 
-        // A worm with a physical spine crawling behind the arena, Active: Standing would take its own flesh for the floor
-        _worm = PhysicalWorm.Add(game, Modes.Of(SkeletonBodyMode.Active), new Vector3(6.2f, 0f, -5.8f), MathF.PI, PhysicalWorm.Circle(Worm, 1.4f, 0.6f, MathUtil.PiOverTwo + 0.3f));
+        // Two Fall Guys, one soft body each around ghost bones, in the middle of the arena
+        for (int i = 0; i < 2; i++)
+        {
+            float angle = i * MathUtil.Pi + 1.2f;
+            var at = Arena + new Vector3(1.3f * MathF.Sin(angle), 0f, 1.3f * MathF.Cos(angle));
+            _fallGuys.Add(AddFallGuy(game, at, angle + MathUtil.PiOverTwo, Arena, 3.4f, i * 0.45f));
+        }
+
+        // A worm with a physical spine crawling behind the arena
+        _worm = PhysicalWorm.Add(game, Modes.Of(SkeletonBodyMode.Standing), new Vector3(6.2f, 0f, -5.8f), MathF.PI, PhysicalWorm.Circle(Worm, 1.4f, 0.6f, MathUtil.PiOverTwo + 0.3f));
+    }
+
+    /// <summary> A Fall Guy in the Standing color wandering within <paramref name="radius"/> of <paramref name="center"/> </summary>
+    public static Walker AddFallGuy(VideoDemoGame game, Vector3 at, float yaw, Vector3 center, float radius, float time)
+    {
+        var (entity, body, flesh, animator) = FallGuy.Add(game, Modes.Of(SkeletonBodyMode.Standing), at, yaw, time);
+        var walker = new Walker(entity, body, animator.StanceSpeed, Bean.TrunkBody, yaw, center, radius, flesh);
+        entity.Add(walker);
+        return walker;
     }
 
     /// <summary> A round arena whose top is at <paramref name="top"/>, a pillar in the middle with a bar sweeping at hip height </summary>
@@ -99,12 +120,15 @@ internal sealed class StandingSoftBodiesScene : VideoScene
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
         if (_worm is not null)
-            yield return (_worm.Transform.Position + new Vector3(0f, 0.8f, 0f), "worm: Active spine + FollowSkeleton flesh");
+            yield return (_worm.Transform.Position + new Vector3(0f, 0.8f, 0f), "worm: Standing spine + FollowSkeleton flesh");
+        foreach (var fallGuy in _fallGuys)
+            yield return (fallGuy.Hips + new Vector3(0f, 1.3f, 0f), "one soft body, ghost bones");
     }
 
     public override IEnumerable<string> Status()
     {
         var standing = _beans.Count(b => b.Body.IsGrounded && Vector3.Transform(Vector3.UnitY, b.Body.BodyCount > Bean.TrunkBody ? b.Body.GetBodyOrientation(Bean.TrunkBody) : Quaternion.Identity).Y > 0.8f);
-        yield return $"{_beans.Count} soft beans, {standing} on their feet  |  {Bean.Hitboxes().Count} bones each, flesh Resolution 6";
+        var fallGuysUp = _fallGuys.Count(b => b.Body.IsGrounded && Vector3.Transform(Vector3.UnitY, b.Body.BodyCount > Bean.TrunkBody ? b.Body.GetBodyOrientation(Bean.TrunkBody) : Quaternion.Identity).Y > 0.8f);
+        yield return $"{_beans.Count} soft beans, {standing} on their feet  |  {_fallGuys.Count} Fall Guys, {fallGuysUp} on their feet  |  {Bean.Hitboxes().Count} bones each";
     }
 }

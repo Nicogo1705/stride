@@ -60,30 +60,24 @@ internal sealed class VideoDemoGame : BepuDemoGame
     /// <summary> The handle of one body of a skeleton, read by reflection: the component has no API to push a single bone </summary>
     public static BodyReference BoneBody(SkeletonBodyComponent bones, int index) => bones.Simulation!.Simulation.Bodies[((BodyHandle[])SkeletonBodies.GetValue(bones)!)[index]];
 
-    // Bepu's wireframe has no shape for a soft body (its particle collider gives none): the particles have their own view.
-    // They sit inside the soft models, the view that shows them with the colliders hides those models
-    protected override IReadOnlyList<string> DebugViews { get; } = new[]
-    {
-        "Auto (per scene)",
-        "Colliders (Bepu wireframe)",
-        "Colliders + back faces",
-        "Colliders + particles (soft bodies hidden)",
-        "Particles + models",
-        "Off",
-    };
+    /// <summary> The debug views, in the order V goes through them </summary>
+    public static readonly string[] Views = { "Rigid", "Rigid + soft", "Soft (without mesh)", "No debug draw" };
+
+    public const int RigidView = 0, RigidAndSoftView = 1, SoftView = 2, NoDebugView = 3;
+
+    // Bepu's wireframe has no shape for a soft body (its particle collider gives none): particles and springs have their own view.
+    // They sit inside the soft models, the soft view hides those models
+    protected override IReadOnlyList<string> DebugViews => Views;
 
     protected override void OnDebugViewChanged(int view)
     {
-        var scene = CurrentScene as VideoScene;
-        ShowRigidWireframe(view is 1 or 2 or 3 || (view == 0 && scene?.WireframeByDefault == true));
-        if (DebugRenderer is { } renderer)
-            renderer.ShowBackFaces = view == 2;
+        ShowRigidWireframe(view is RigidView or RigidAndSoftView);
         _particles ??= new ParticleView(this);
-        _particles.Visible = view is 3 or 4;
+        _particles.Visible = view is RigidAndSoftView or SoftView;
         foreach (var body in SoftBodies())
         {
             if (body.Entity.Get<ModelComponent>() is { } model)
-                model.Enabled = view != 3;
+                model.Enabled = view != SoftView;
         }
     }
 
@@ -97,8 +91,6 @@ internal sealed class VideoDemoGame : BepuDemoGame
         base.OnSceneUnloading(scene);
         _particles?.Clear();
     }
-
-    private DebugRenderComponent? DebugRenderer => SceneSystem.SceneInstance.RootScene.Entities.Select(e => e.Get<DebugRenderComponent>()).FirstOrDefault(c => c is not null);
 
     protected override void OnViewReady()
     {
@@ -171,6 +163,8 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override void OnSceneLoaded(DemoScene scene)
     {
         base.OnSceneLoaded(scene);
+        if (scene is VideoScene video)
+            DebugView = video.DefaultDebugView;
         _frameTimes.Clear();
         _orbit = false;
     }
@@ -234,7 +228,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         yield return ("Camera", "Z Q S D: move  |  A / E: down / up  |  right click: look  |  wheel, Shift: speed  |  C: orbit camera");
         yield return ("Demo", "Esc: scenes  |  R: reset the scene  |  H: overlay full / none / compact  |  P: capture  |  " + FpsLimitKeyHelp);
-        yield return ("View", "V: next debug view (" + string.Join(", ", DebugViews) + ")");
+        yield return ("View", "V: next debug view (" + string.Join(" / ", DebugViews) + ")");
     }
 
     protected override IEnumerable<(string Theme, string Keys)> SubjectKeys()
@@ -317,6 +311,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     protected override string? DescribeGrabbable(CollidableComponent collidable) => collidable switch
     {
         ClothComponent => "cloth (grabbable)",
+        SoftBodyComponent when collidable.Entity.Get<SkeletonBodyComponent>() is { Ghost: true } => "soft body on ghost bones (grabbable)",
         SoftBodyComponent when collidable.Entity.Get<SkeletonBodyComponent>() is not null => "flesh on a physical skeleton (grabbed by the nearest bone)",
         SoftBodyComponent => "soft body (grabbable)",
         SkeletonBodyComponent { Mode: SkeletonBodyMode.Animated } => "animated bone (grabbable: the character goes Ragdoll)",
@@ -333,7 +328,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
                 if (bones.Mode == SkeletonBodyMode.Animated)
                     bones.Mode = SkeletonBodyMode.Ragdoll;
                 return new HeldBone(bones, hit.ChildIndex, hit.Point);
-            case SoftBodyComponent when hit.Collidable.Entity.Get<SkeletonBodyComponent>() is { BodyCount: > 0 } inner:
+            case SoftBodyComponent when hit.Collidable.Entity.Get<SkeletonBodyComponent>() is { BodyCount: > 0, Ghost: false } inner:
                 // Flesh on a physical skeleton: hold the bone nearest to the point, the flesh follows it
                 int nearest = 0;
                 for (int i = 1; i < inner.BodyCount; i++)
@@ -395,12 +390,12 @@ internal sealed class VideoDemoGame : BepuDemoGame
         }
     }
 
-    /// <summary> The particles of every soft body as small octahedra, pinned ones in red, as in the soft body sample's particle view </summary>
+    /// <summary> The particles of every soft body as small octahedra, pinned ones in red, as in the soft body sample's particle view, and the springs along the edges of its cells or triangles as lines </summary>
     private sealed class ParticleView(VideoDemoGame game)
     {
         private readonly Dictionary<SoftBodyComponent, View> _views = new();
 
-        private sealed record View(Entity Entity, Stride.Graphics.Buffer VertexBuffer, Stride.Graphics.Buffer IndexBuffer, VertexPositionNormalTexture[] Vertices);
+        private sealed record View(Entity Entity, Stride.Graphics.Buffer VertexBuffer, Stride.Graphics.Buffer IndexBuffer, VertexPositionNormalTexture[] Vertices, Stride.Graphics.Buffer LineBuffer, Stride.Graphics.Buffer LineIndexBuffer, VertexPositionNormalTexture[] LineVertices);
 
         public bool Visible { get; set; }
 
@@ -433,6 +428,8 @@ internal sealed class VideoDemoGame : BepuDemoGame
             game.SceneSystem.SceneInstance.RootScene.Entities.Remove(view.Entity);
             view.VertexBuffer.Dispose();
             view.IndexBuffer.Dispose();
+            view.LineBuffer.Dispose();
+            view.LineIndexBuffer.Dispose();
             _views.Remove(body);
         }
 
@@ -469,9 +466,26 @@ internal sealed class VideoDemoGame : BepuDemoGame
             model.Meshes.Add(new Mesh { MaterialIndex = 0, BoundingBox = everywhere, Draw = new MeshDraw { PrimitiveType = PrimitiveType.TriangleList, DrawCount = free, VertexBuffers = [vertexBinding], IndexBuffer = indexBinding } });
             model.Meshes.Add(new Mesh { MaterialIndex = 1, BoundingBox = everywhere, Draw = new MeshDraw { PrimitiveType = PrimitiveType.TriangleList, StartLocation = free, DrawCount = indices.Count - free, VertexBuffers = [vertexBinding], IndexBuffer = indexBinding } });
 
+            // The springs: one vertex per particle, a line per stretch edge
+            var lineVertices = new VertexPositionNormalTexture[body.ParticleCount];
+            var lineIndices = new List<int>();
+            foreach (var edge in body.Topology!.Edges)
+            {
+                if (edge.Kind == Topology.EdgeKind.Stretch)
+                    lineIndices.AddRange([edge.A, edge.B]);
+            }
+            var lineBuffer = Stride.Graphics.Buffer.Vertex.New(device, bufferSize: lineVertices.Length * VertexPositionNormalTexture.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
+            var lineIndexBuffer = Stride.Graphics.Buffer.Index.New(device, lineIndices.Count > 0 ? lineIndices.ToArray() : [0, 0]);
+            model.Materials.Add(new MaterialInstance(Look.Paint(device, Look.Teal, 0.2f)));
+            model.Meshes.Add(new Mesh
+            {
+                MaterialIndex = 2, BoundingBox = everywhere,
+                Draw = new MeshDraw { PrimitiveType = PrimitiveType.LineList, DrawCount = lineIndices.Count, VertexBuffers = [new VertexBufferBinding(lineBuffer, VertexPositionNormalTexture.Layout, lineVertices.Length)], IndexBuffer = new IndexBufferBinding(lineIndexBuffer, true, Math.Max(2, lineIndices.Count)) },
+            });
+
             var entity = new Entity("particles") { new ModelComponent(model) { IsShadowCaster = false } };
             game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
-            return new View(entity, vertexBuffer, indexBuffer, vertices);
+            return new View(entity, vertexBuffer, indexBuffer, vertices, lineBuffer, lineIndexBuffer, lineVertices);
         }
 
         private void Refresh(SoftBodyComponent body, View view)
@@ -488,6 +502,9 @@ internal sealed class VideoDemoGame : BepuDemoGame
                 }
             }
             view.VertexBuffer.SetData<VertexPositionNormalTexture>(game.GraphicsContext.CommandList, view.Vertices.AsSpan());
+            for (int p = 0; p < body.ParticleCount; p++)
+                view.LineVertices[p] = new VertexPositionNormalTexture(body.GetParticlePosition(p), Vector3.UnitY, Vector2.Zero);
+            view.LineBuffer.SetData<VertexPositionNormalTexture>(game.GraphicsContext.CommandList, view.LineVertices.AsSpan());
         }
     }
 

@@ -28,8 +28,8 @@ internal abstract class VideoScene : BepuDemoScene
 
     public override string Name => $"{Title}  ·  {Pr}";
 
-    /// <summary> Shows Bepu's wireframes while the debug view is on « Auto » </summary>
-    public virtual bool WireframeByDefault => false;
+    /// <summary> The debug view the scene opens with, an index into <see cref="VideoDemoGame.Views"/> </summary>
+    public virtual int DefaultDebugView => VideoDemoGame.NoDebugView;
 
     /// <summary> Keys of this scene only, one line </summary>
     public virtual string? SceneKeys => null;
@@ -55,7 +55,6 @@ internal abstract class VideoScene : BepuDemoScene
     public override void OnSimulationReady(BepuSimulation simulation)
     {
         simulation.ThreadCount = Math.Min(PhysicsThreads, Environment.ProcessorCount);
-        PhysicalWorm.Filter(simulation);
     }
 
     public sealed override void Build(DemoGame game)
