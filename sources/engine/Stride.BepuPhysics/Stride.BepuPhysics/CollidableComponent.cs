@@ -287,6 +287,12 @@ public abstract class CollidableComponent : EntityComponent
     /// <summary> Whether two bodies owned by this component may collide, called from the narrow phase on any thread </summary>
     internal virtual bool AllowContactBetween(BodyHandle a, BodyHandle b) => true;
 
+    /// <summary> Whether the narrow phase asks <see cref="AllowContactWith"/> before a body of this component touches a body of another component </summary>
+    internal bool FiltersContactsWithOthers { get; set; }
+
+    /// <summary> Whether <paramref name="body"/>, owned by this component, may collide with a body of <paramref name="other"/>; called from the narrow phase on any thread when <see cref="FiltersContactsWithOthers"/> is set </summary>
+    internal virtual bool AllowContactWith(BodyHandle body, CollidableComponent other) => true;
+
     public CollidableComponent()
     {
         _collider = new CompoundCollider();

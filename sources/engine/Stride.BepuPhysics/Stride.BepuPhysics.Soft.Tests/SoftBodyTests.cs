@@ -60,8 +60,9 @@ public class SoftBodyTests : GameTestBase
                 for (int i = 0; i < cloth.ParticleCount; i++)
                 {
                     var position = cloth.GetParticlePosition(i);
+                    // Pinned particles are held by a stiff spring, they give a little under the weight of the cloth
                     if (cloth.IsParticlePinned(i))
-                        Assert.Equal(2f, position.Y, 3);
+                        Assert.InRange(position.Y, 1.97f, 2.03f);
                     else
                         Assert.True(position.Y < 2.05f, $"Particle {i} at {position}");
                     lowest = MathF.Min(lowest, position.Y);
@@ -157,7 +158,55 @@ public class SoftBodyTests : GameTestBase
             await Seconds(cloth, 0.5f);
 
             for (int i = 0; i < pinned.Length; i++)
-                Assert.True(Vector3.Distance(cloth.GetParticlePosition(pinned[i]), before[i] + new Vector3(1f, 0.5f, 0f)) < 0.01f, $"Pinned particle {pinned[i]} at {cloth.GetParticlePosition(pinned[i])}");
+                Assert.True(Vector3.Distance(cloth.GetParticlePosition(pinned[i]), before[i] + new Vector3(1f, 0.5f, 0f)) < 0.02f, $"Pinned particle {pinned[i]} at {cloth.GetParticlePosition(pinned[i])}");
+        });
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public static void PinnedParticlesPullTheirBodyAnchor(bool anchorFirst)
+    {
+        RunScene(async scene =>
+        {
+            // A floating block above the pinned edge of a cloth, added before or after the cloth
+            var block = new BodyComponent { Gravity = false, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(0.1f), Mass = 1f } } } };
+            var anchor = new Entity { block };
+            anchor.Transform.Position = new Vector3(-0.5f, 2.3f, 0f);
+            if (anchorFirst)
+                scene.Add(anchor);
+
+            var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
+            var cloth = new ClothComponent { Pins = { new SoftBodyPin { Region = edge, Anchor = anchor } } };
+            scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
+            if (anchorFirst == false)
+                scene.Add(anchor);
+
+            // The weight of the cloth drags the block down
+            await Seconds(cloth, 1f);
+            Assert.True(block.Position.Y < 2f, $"Block at {block.Position}");
+        });
+    }
+
+    [Fact]
+    public static void PinnedParticlesDoNotPushTheirBodyAnchor()
+    {
+        RunScene(async scene =>
+        {
+            // The pinned edge of a weightless cloth runs through a floating block
+            var block = new BodyComponent { Gravity = false, Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(0.08f), Mass = 1f } } } };
+            var anchor = new Entity { block };
+            anchor.Transform.Position = new Vector3(-0.5f, 2f, 0f);
+            scene.Add(anchor);
+
+            var edge = new BoundingBox(new Vector3(-0.51f, -1f, -1f), new Vector3(-0.49f, 1f, 1f));
+            var cloth = new ClothComponent { Gravity = false, Pins = { new SoftBodyPin { Region = edge, Anchor = anchor } } };
+            scene.Add(cloth, new PlaneProceduralModel { Size = new Vector2(1f), Tessellation = new Int2(10), Normal = NormalDirection.UpY, GenerateBackFace = true }, new Vector3(0f, 2f, 0f));
+
+            // Contacts between the pinned particles and the block would push it, then the particles after it, forever
+            await Seconds(cloth, 2f);
+            Assert.True(Vector3.Distance(block.Position, new Vector3(-0.5f, 2f, 0f)) < 0.05f, $"Block at {block.Position}");
+            Assert.True(block.LinearVelocity.Length() < 0.05f, $"Block moving at {block.LinearVelocity}");
         });
     }
 

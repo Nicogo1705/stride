@@ -49,12 +49,18 @@ internal struct StrideNarrowPhaseCallbacks(BepuSimulation Simulation, ContactEve
             }
         }
 
-        // Two bodies of the same component, like the bones of a ragdoll, let their owner decide
+        // Two bodies of the same component, like the bones of a ragdoll, let their owner decide; a component may also refuse some of its bodies to others
         if (a.Mobility != CollidableMobility.Static && b.Mobility != CollidableMobility.Static)
         {
             var owner = Simulation.Bodies[a.BodyHandle.Value];
-            if (owner is not null && ReferenceEquals(owner, Simulation.Bodies[b.BodyHandle.Value]))
+            var other = Simulation.Bodies[b.BodyHandle.Value];
+            if (owner is not null && ReferenceEquals(owner, other))
                 return owner.AllowContactBetween(a.BodyHandle, b.BodyHandle);
+
+            if (owner is { FiltersContactsWithOthers: true } && other is not null && owner.AllowContactWith(a.BodyHandle, other) == false)
+                return false;
+            if (other is { FiltersContactsWithOthers: true } && owner is not null && other.AllowContactWith(b.BodyHandle, owner) == false)
+                return false;
         }
 
         return true;

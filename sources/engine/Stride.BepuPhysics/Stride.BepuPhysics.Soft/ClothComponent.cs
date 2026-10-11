@@ -148,8 +148,6 @@ public sealed class ClothComponent : SoftBodyComponent
         var bend = Spring(_bendStiffness, _damping);
         foreach (var edge in topology.Edges)
         {
-            if (pinned[edge.A] && pinned[edge.B])
-                continue;
             var length = System.Numerics.Vector3.Distance(simulation.Bodies[particles[edge.A]].Pose.Position, simulation.Bodies[particles[edge.B]].Pose.Position);
             if (edge.Kind == EdgeKind.Bend)
                 simulation.Solver.Add(particles[edge.A], particles[edge.B], new CenterDistanceConstraint(length, bend));
