@@ -293,6 +293,12 @@ public abstract class CollidableComponent : EntityComponent
     /// <summary> Whether <paramref name="body"/>, owned by this component, may collide with a body of <paramref name="other"/>; called from the narrow phase on any thread when <see cref="FiltersContactsWithOthers"/> is set </summary>
     internal virtual bool AllowContactWith(BodyHandle body, CollidableComponent other) => true;
 
+    /// <summary> The index of the skeleton node the body at <paramref name="index"/> follows, -1 when it follows none </summary>
+    internal virtual int GetFollowedNode(int index) => -1;
+
+    /// <summary> Whether bodies of this component are joined to the bodies of <paramref name="other"/> and move with them, like flesh on its bones or particles pinned to them </summary>
+    internal virtual bool IsAttachedTo(CollidableComponent other) => false;
+
     public CollidableComponent()
     {
         _collider = new CompoundCollider();
