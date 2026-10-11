@@ -12,7 +12,7 @@ using Buffer = Stride.Graphics.Buffer;
 namespace Stride.BepuPhysics.Soft.Rendering;
 
 /// <summary>
-/// A copy of a soft body's model whose vertices are rewritten every frame from the position of its particles.
+/// A copy of a soft body's model whose vertices follow its particles: rewritten every frame on the CPU, or moved by the vertex shader.
 /// </summary>
 internal sealed class DeformableModel : IDisposable
 {
@@ -35,31 +35,47 @@ internal sealed class DeformableModel : IDisposable
 
     private readonly Buffer _vertexBuffer;
     private readonly Buffer _indexBuffer;
-    private readonly Vertex[] _vertices;
     private readonly Vector3[] _particles;
-    private readonly Vector3[] _positions;
-    private readonly Vector3[] _normals;
-    private readonly Vector4[] _tangents;
+
+    // Deformation on the CPU
+    private readonly Vertex[] _vertices = [];
+    private readonly Vector3[] _positions = [];
+    private readonly Vector3[] _normals = [];
+    private readonly Vector4[] _tangents = [];
+
+    private readonly GpuDeformation? _gpu;
 
     public Model Model { get; }
 
     public SoftBodyTopology Topology { get; }
 
-    public DeformableModel(GraphicsDevice device, Model source, SoftBodyTopology topology)
+    public SoftBodyDeformationMode Mode => _gpu is null ? SoftBodyDeformationMode.Cpu : SoftBodyDeformationMode.Gpu;
+
+    public DeformableModel(GraphicsDevice device, Model source, SoftBodyTopology topology, SoftBodyDeformationMode mode)
     {
         Topology = topology;
         var mesh = topology.Mesh;
         int vertexCount = mesh.Positions.Length;
-
-        _vertices = new Vertex[vertexCount];
-        for (int i = 0; i < vertexCount; i++)
-            _vertices[i].TexCoord = mesh.TexCoords[i];
         _particles = new Vector3[topology.ParticleCount];
-        _positions = new Vector3[vertexCount];
-        _normals = new Vector3[vertexCount];
-        _tangents = new Vector4[vertexCount];
 
-        _vertexBuffer = Buffer.Vertex.New(device, bufferSize: vertexCount * Vertex.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
+        VertexDeclaration layout;
+        if (mode == SoftBodyDeformationMode.Gpu)
+        {
+            _gpu = new GpuDeformation(device, topology);
+            _vertexBuffer = _gpu.VertexBuffer;
+            layout = _gpu.Layout;
+        }
+        else
+        {
+            _vertices = new Vertex[vertexCount];
+            for (int i = 0; i < vertexCount; i++)
+                _vertices[i].TexCoord = mesh.TexCoords[i];
+            _positions = new Vector3[vertexCount];
+            _normals = new Vector3[vertexCount];
+            _tangents = new Vector4[vertexCount];
+            _vertexBuffer = Buffer.Vertex.New(device, bufferSize: vertexCount * Vertex.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
+            layout = Vertex.Layout;
+        }
         _indexBuffer = Buffer.Index.New(device, mesh.Indices);
 
         // The skeleton stays, so an animation of the source model still plays and the soft body can follow it
@@ -68,11 +84,11 @@ internal sealed class DeformableModel : IDisposable
         foreach (var material in source.Materials)
             Model.Materials.Add(material);
 
-        var vertexBinding = new VertexBufferBinding(_vertexBuffer, Vertex.Layout, vertexCount);
+        var vertexBinding = new VertexBufferBinding(_vertexBuffer, layout, vertexCount);
         var indexBinding = new IndexBufferBinding(_indexBuffer, true, mesh.Indices.Length);
         foreach (var part in mesh.Parts)
         {
-            Model.Meshes.Add(new Mesh
+            var renderMesh = new Mesh
             {
                 MaterialIndex = part.MaterialIndex,
                 Draw = new MeshDraw
@@ -83,7 +99,9 @@ internal sealed class DeformableModel : IDisposable
                     VertexBuffers = [vertexBinding],
                     IndexBuffer = indexBinding,
                 },
-            });
+            };
+            _gpu?.Bind(renderMesh);
+            Model.Meshes.Add(renderMesh);
         }
     }
 
@@ -94,6 +112,12 @@ internal sealed class DeformableModel : IDisposable
     public void Deform(SoftBodyComponent body, Matrix world)
     {
         body.CopyParticlePositions(_particles);
+        if (_gpu is not null)
+        {
+            DeformOnGpu(body, world);
+            return;
+        }
+
         Topology.Deform(_particles, _positions);
 
         // Normals and tangents are first found in world space
@@ -106,12 +130,9 @@ internal sealed class DeformableModel : IDisposable
             RebuildFrames();
 
             // Pushes the two faces of a double sided model apart, just enough for them not to fight over the same depth
-            if (body.Collider is Colliders.ParticleCollider particle)
-            {
-                var offset = particle.ActualRadius * 0.1f;
-                for (int i = 0; i < _positions.Length; i++)
-                    _positions[i] += _normals[i] * offset;
-            }
+            var offset = SurfaceOffset(body);
+            for (int i = 0; i < _positions.Length; i++)
+                _positions[i] += _normals[i] * offset;
         }
 
         var worldToLocal = Matrix.Invert(world);
@@ -130,6 +151,28 @@ internal sealed class DeformableModel : IDisposable
             BoundingBox.Merge(ref bounds, ref vertex.Position, out bounds);
         }
 
+        SetBounds(bounds);
+    }
+
+    /// <summary> Takes the particles and finds the bounds, the vertex shader does the rest </summary>
+    private void DeformOnGpu(SoftBodyComponent body, Matrix world)
+    {
+        // The shader pushes along normals in world space, the bounds are in local space
+        var offset = Topology.LatticeCoordinates is null ? SurfaceOffset(body) : 0f;
+        foreach (var mesh in Model.Meshes)
+            mesh.Parameters.Set(SoftBodySurfaceDeformationKeys.SurfaceOffset, offset);
+
+        world.Decompose(out var scale, out Quaternion _, out _);
+        var smallestScale = MathF.Min(MathF.Abs(scale.X), MathF.Min(MathF.Abs(scale.Y), MathF.Abs(scale.Z)));
+        var localOffset = MathUtil.IsZero(smallestScale) ? 0f : offset / smallestScale;
+        SetBounds(_gpu!.Update(_particles, Matrix.Invert(world), localOffset));
+    }
+
+    /// <summary> How far the vertices of a surface are pushed along their normal, so the two faces of a double sided model do not fight over the same depth </summary>
+    private static float SurfaceOffset(SoftBodyComponent body) => body.Collider is Colliders.ParticleCollider particle ? particle.ActualRadius * 0.1f : 0f;
+
+    private void SetBounds(BoundingBox bounds)
+    {
         var sphere = BoundingSphere.FromBox(bounds);
         foreach (var mesh in Model.Meshes)
         {
@@ -138,11 +181,16 @@ internal sealed class DeformableModel : IDisposable
         }
         Model.BoundingBox = bounds;
         Model.BoundingSphere = sphere;
-
     }
 
-    /// <summary> Sends the vertices computed by <see cref="Deform"/> to the GPU </summary>
-    public void Upload(CommandList commandList) => _vertexBuffer.SetData<Vertex>(commandList, _vertices.AsSpan());
+    /// <summary> Sends what <see cref="Deform"/> computed to the GPU: the vertices, or only the particles </summary>
+    public void Upload(CommandList commandList)
+    {
+        if (_gpu is not null)
+            _gpu.Upload(commandList);
+        else
+            _vertexBuffer.SetData<Vertex>(commandList, _vertices.AsSpan());
+    }
 
     /// <summary> Carries the authored normals and tangents along the deformation of the lattice cell each vertex is in </summary>
     private void DeformFrames(Vector3[] coordinates)
@@ -172,7 +220,10 @@ internal sealed class DeformableModel : IDisposable
 
     public void Dispose()
     {
-        _vertexBuffer.Dispose();
+        if (_gpu is not null)
+            _gpu.Dispose();
+        else
+            _vertexBuffer.Dispose();
         _indexBuffer.Dispose();
     }
 }
