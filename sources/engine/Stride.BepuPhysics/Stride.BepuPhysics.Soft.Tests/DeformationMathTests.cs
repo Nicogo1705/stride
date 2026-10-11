@@ -36,12 +36,14 @@ public class DeformationMathTests
         Matrix.Transpose(Matrix.Invert(map), out var normalMap);
         var topology = LatticeBuilder.Build(Grid(4, closedBox: true, clockwise: false), 3, 0.5f);
         var particles = Array.ConvertAll(topology.RestPositions, p => Vector3.TransformCoordinate(p, map));
+        var gradients = new Vector3[particles.Length * 3];
+        topology.ComputeLatticeGradients(particles, gradients);
         // The cofactors carry the sign of the determinant: a mirroring map turns the normals inside out, as it does the faces
         var flip = map.Determinant() < 0f ? -1f : 1f;
 
         for (int v = 0; v < topology.Mesh.Positions.Length; v++)
         {
-            topology.DeformFrame(v, particles, out var normal, out var tangent);
+            topology.DeformFrame(v, gradients, out var normal, out var tangent);
             var expectedNormal = Vector3.Normalize(Vector3.TransformNormal(topology.Mesh.Normals[v], normalMap)) * flip;
             var expectedTangent = Vector3.Normalize(Vector3.TransformNormal((Vector3)topology.Mesh.Tangents[v], map));
             AssertNear(expectedNormal, Vector3.Normalize(normal), $"normal of vertex {v}");

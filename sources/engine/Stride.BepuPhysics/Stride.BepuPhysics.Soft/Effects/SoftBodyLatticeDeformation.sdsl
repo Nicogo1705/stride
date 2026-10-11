@@ -3,10 +3,16 @@
 
 /// <summary>
 /// Moves a vertex embedded in a cell of a volumetric soft body's lattice: trilinear interpolation of the cell's eight corners for the position,
-/// the jacobian of that interpolation for the normal (through its cofactors) and the tangent.
+/// and of the lattice's gradients at those corners for the normal (through its cofactors) and the tangent.
 /// </summary>
 shader SoftBodyLatticeDeformation : SoftBodyDeformation
 {
+    rgroup PerDraw.SoftBodyLattice
+    {
+        // Three per particle: the derivatives of the positions along the lattice's x, y and z, as SoftBodyTopology.ComputeLatticeGradients finds them
+        stage StructuredBuffer<float4> Gradients;
+    }
+
     // Corners are numbered by their offset on each axis: bit 0 is x, bit 1 is y and bit 2 is z
     stage stream uint4 CellCorners0 : SOFTBODYCORNERS0;
     stage stream uint4 CellCorners1 : SOFTBODYCORNERS1;
@@ -17,20 +23,19 @@ shader SoftBodyLatticeDeformation : SoftBodyDeformation
     override void Deform()
     {
         float3 t = streams.CellCoordinates;
-        float3 p0 = Particle(streams.CellCorners0.x), p1 = Particle(streams.CellCorners0.y);
-        float3 p2 = Particle(streams.CellCorners0.z), p3 = Particle(streams.CellCorners0.w);
-        float3 p4 = Particle(streams.CellCorners1.x), p5 = Particle(streams.CellCorners1.y);
-        float3 p6 = Particle(streams.CellCorners1.z), p7 = Particle(streams.CellCorners1.w);
-
-        // Along x, then y, then z; each derivative is the difference across its axis, interpolated over the two others
-        float3 y0z0 = lerp(p0, p1, t.x), y1z0 = lerp(p2, p3, t.x);
-        float3 y0z1 = lerp(p4, p5, t.x), y1z1 = lerp(p6, p7, t.x);
-        float3 z0 = lerp(y0z0, y1z0, t.y), z1 = lerp(y0z1, y1z1, t.y);
-        float3 position = lerp(z0, z1, t.z);
-
-        float3 dx = lerp(lerp(p1 - p0, p3 - p2, t.y), lerp(p5 - p4, p7 - p6, t.y), t.z);
-        float3 dy = lerp(y1z0 - y0z0, y1z1 - y0z1, t.z);
-        float3 dz = z1 - z0;
+        float3 position = 0, dx = 0, dy = 0, dz = 0;
+        for (uint corner = 0; corner < 8; corner++)
+        {
+            uint4 corners = corner < 4 ? streams.CellCorners0 : streams.CellCorners1;
+            uint index = corners[corner & 3];
+            // Bit 0 of the corner takes t.x rather than 1 - t.x, bit 1 t.y, bit 2 t.z
+            float3 w = lerp(1 - t, t, float3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1));
+            float weight = w.x * w.y * w.z;
+            position += Particle(index) * weight;
+            dx += Gradients[index * 3].xyz * weight;
+            dy += Gradients[index * 3 + 1].xyz * weight;
+            dz += Gradients[index * 3 + 2].xyz * weight;
+        }
 
         // Normals transform with the cofactor matrix, the inverse transpose up to a scale that the normalization removes
         float3 n = streams.meshNormal;

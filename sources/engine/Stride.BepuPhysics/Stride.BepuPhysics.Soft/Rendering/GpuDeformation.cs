@@ -67,7 +67,11 @@ internal sealed class GpuDeformation : IDisposable
 
     private readonly Buffer _particleBuffer;
     private readonly Buffer? _ringBuffer;
+    private readonly Buffer? _gradientBuffer;
     private readonly Vector4[] _particles;
+    private readonly Vector3[] _gradients = [];
+    private readonly Vector4[] _gradientData = [];
+    private readonly SoftBodyTopology _topology;
     private readonly float _latticeMargin;
 
     public Buffer VertexBuffer { get; }
@@ -76,6 +80,7 @@ internal sealed class GpuDeformation : IDisposable
 
     public GpuDeformation(GraphicsDevice device, SoftBodyTopology topology)
     {
+        _topology = topology;
         _particles = new Vector4[topology.ParticleCount];
         _particleBuffer = Buffer.New<Vector4>(device, topology.ParticleCount, BufferFlags.ShaderResource | BufferFlags.StructuredBuffer, GraphicsResourceUsage.Dynamic);
 
@@ -107,6 +112,9 @@ internal sealed class GpuDeformation : IDisposable
             _latticeMargin = extrapolation * topology.Spacing * 2f;
             Layout = LatticeVertex.Layout;
             VertexBuffer = Buffer.Vertex.New(device, MemoryMarshal.AsBytes(vertices.AsSpan()));
+            _gradients = new Vector3[topology.ParticleCount * 3];
+            _gradientData = new Vector4[_gradients.Length];
+            _gradientBuffer = Buffer.New<Vector4>(device, _gradients.Length, BufferFlags.ShaderResource | BufferFlags.StructuredBuffer, GraphicsResourceUsage.Dynamic);
         }
         else
         {
@@ -140,6 +148,8 @@ internal sealed class GpuDeformation : IDisposable
         mesh.Parameters.Set(SoftBodyDeformationKeys.Particles, _particleBuffer);
         if (_ringBuffer is not null)
             mesh.Parameters.Set(SoftBodySurfaceDeformationKeys.Ring, _ringBuffer);
+        if (_gradientBuffer is not null)
+            mesh.Parameters.Set(SoftBodyLatticeDeformationKeys.Gradients, _gradientBuffer);
     }
 
     /// <summary> Makes <paramref name="mesh"/> drawn from its vertex buffer again </summary>
@@ -149,6 +159,7 @@ internal sealed class GpuDeformation : IDisposable
         mesh.Parameters.Set(StrideEffectBaseKeys.ExtensionPostVertexStageShader, null);
         mesh.Parameters.Set(SoftBodyDeformationKeys.Particles, null);
         mesh.Parameters.Set(SoftBodySurfaceDeformationKeys.Ring, null);
+        mesh.Parameters.Set(SoftBodyLatticeDeformationKeys.Gradients, null);
     }
 
     /// <summary> Takes the particles for the next upload and returns their bounds in the space of <paramref name="worldToLocal"/>, grown to contain the vertices </summary>
@@ -164,12 +175,23 @@ internal sealed class GpuDeformation : IDisposable
             BoundingBox.Merge(ref bounds, ref local, out bounds);
         }
 
+        if (_gradientBuffer is not null)
+        {
+            _topology.ComputeLatticeGradients(particles, _gradients);
+            for (int i = 0; i < _gradients.Length; i++)
+                _gradientData[i] = new Vector4(_gradients[i], 0f);
+        }
+
         var margin = _latticeMargin + MathF.Abs(localSurfaceOffset);
         return new BoundingBox(bounds.Minimum - new Vector3(margin), bounds.Maximum + new Vector3(margin));
     }
 
-    /// <summary> Sends the particles taken by <see cref="Update"/> to the GPU </summary>
-    public void Upload(CommandList commandList) => _particleBuffer.SetData<Vector4>(commandList, _particles.AsSpan());
+    /// <summary> Sends the particles taken by <see cref="Update"/> to the GPU, with the lattice gradients found from them </summary>
+    public void Upload(CommandList commandList)
+    {
+        _particleBuffer.SetData<Vector4>(commandList, _particles.AsSpan());
+        _gradientBuffer?.SetData<Vector4>(commandList, _gradientData.AsSpan());
+    }
 
     /// <summary>
     /// For each vertex of a surface, the triangles around it as the CPU deformation sums them: normals from the cross product of the edges,
@@ -237,5 +259,6 @@ internal sealed class GpuDeformation : IDisposable
         VertexBuffer.Dispose();
         _particleBuffer.Dispose();
         _ringBuffer?.Dispose();
+        _gradientBuffer?.Dispose();
     }
 }
