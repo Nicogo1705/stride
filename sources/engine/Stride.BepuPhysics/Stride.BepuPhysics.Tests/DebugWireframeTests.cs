@@ -186,7 +186,10 @@ namespace Stride.BepuPhysics.Tests
                     ],
                 };
                 scene.Entities.Add(new Entity { new ModelComponent { Model = new Model { Skeleton = skeleton } }, body });
-                for (int i = 0; i < 3; i++) await game.Script.NextFrame();
+                for (int i = 0; i < 3; i++)
+                {
+                    await game.Script.NextFrame();
+                }
 
                 var visibility = game.SceneSystem.SceneInstance.VisibilityGroups.First();
                 async Task<bool> Shown()
