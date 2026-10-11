@@ -128,6 +128,15 @@ public class VideoShowcaseDemo : GameTestBase
                         report.Add($"{index:00} view {VideoDemoGame.Views[view]}: {game.FpsText()}");
                         await game.CaptureTo(Shot($"a-view{view}"));
                     }
+                    if (scene is SoftBodiesScene)
+                    {
+                        // The particles up close, where their circles show the collision radius
+                        game.SetDebugView(VideoDemoGame.CollidersView);
+                        game.SetCamera(new Vector3(1.6f, 2.0f, 3.4f), new Vector3(0f, 1.0f, 0f));
+                        await game.Steps(60);
+                        await game.CaptureTo(Shot("a-view0-close"));
+                        game.SetCamera(scene.Eye, scene.Target);
+                    }
                     game.SetDebugView(scene is VideoScene videoScene ? videoScene.DefaultDebugView : VideoDemoGame.NoDebugView);
                 }
                 switch (scene)
