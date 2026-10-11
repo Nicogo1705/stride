@@ -102,7 +102,7 @@ internal sealed class VoxelTerrain
         model.Meshes.Add(mesh);
         model.Materials.Add(new MaterialInstance(material));
 
-        Entity = new Entity("terrain voxel") { new StaticComponent { Collider = _collider }, new ModelComponent(model) };
+        Entity = new Entity("voxel terrain") { new StaticComponent { Collider = _collider }, new ModelComponent(model) };
         // The lowest surface the field allows sits on the ground
         Entity.Transform.Position = center - new Vector3(Size / 2f, cell * 1.5f - 0.02f, Size / 2f);
         game.AddToScene(Entity);

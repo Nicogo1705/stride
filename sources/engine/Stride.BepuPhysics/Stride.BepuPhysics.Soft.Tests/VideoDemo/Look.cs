@@ -91,6 +91,32 @@ internal static class Look
         return Material.New(device, descriptor);
     }
 
+    /// <summary> Stripes running along V, around the U direction of the texture: on a capsule, lines along its length that a twist turns into a spiral </summary>
+    public static Material Striped(GraphicsDevice device, Color color, Color stripe, int count, float gloss = 0.7f)
+    {
+        const int width = 256;
+        var image = Image.New2D(width, 4, MipMapCount.Auto, PixelFormat.R8G8B8A8_UNorm_SRgb);
+        for (int mip = 0; mip < image.Description.MipLevels; mip++)
+        {
+            var buffer = image.PixelBuffer[mip];
+            var pixels = new Color[buffer.Width * buffer.Height];
+            int step = width / buffer.Width;
+            for (int x = 0; x < buffer.Width; x++)
+            {
+                // Each level averages the full resolution stripes over its texels
+                Vector4 sum = Vector4.Zero;
+                for (int sx = 0; sx < step; sx++)
+                    sum += ((x * step + sx) * count * 2 / width % 2 == 0 ? color : stripe).ToVector4();
+                for (int y = 0; y < buffer.Height; y++)
+                    pixels[y * buffer.Width + x] = new Color(sum / step);
+            }
+            buffer.SetPixels(pixels);
+        }
+        var descriptor = Describe(color, gloss);
+        descriptor.Attributes.Diffuse = new MaterialDiffuseMapFeature(new ComputeTextureColor(Texture.New(device, image)) { Filtering = TextureFilter.Anisotropic });
+        return Material.New(device, descriptor);
+    }
+
     /// <summary> A procedural model with one material </summary>
     public static Model Model(DemoGame game, PrimitiveProceduralModelBase shape, Material material)
     {
@@ -187,7 +213,7 @@ internal static class Look
     }
 
     /// <summary> A static box whose top is at <paramref name="top"/> </summary>
-    public static Entity StaticBox(DemoGame game, Vector3 size, Vector3 center, Material material, string name = "bloc")
+    public static Entity StaticBox(DemoGame game, Vector3 size, Vector3 center, Material material, string name = "block")
     {
         var entity = new Entity(name)
         {
@@ -199,10 +225,10 @@ internal static class Look
         return entity;
     }
 
-    /// <summary> The checkered ground of every scene, its top at y = 0 </summary>
-    public static void Ground(DemoGame game, float size = 120f)
+    /// <summary> The checkered ground of every scene, its top at y = 0; wide enough that nothing rolled away falls off its edge during a take </summary>
+    public static void Ground(DemoGame game, float size = 1000f)
     {
-        var floor = new Entity("sol")
+        var floor = new Entity("ground")
         {
             new StaticComponent { Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(size, 1f, size) } } } },
             new ModelComponent(Model(game, new CubeProceduralModel { Size = new Vector3(size, 1f, size), UvScale = new Vector2(size / 4f) }, Floor(game.GraphicsDevice))),

@@ -138,7 +138,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
 
         // A skybox rather than a sphere around the camera: a sky in the depth buffer at 400 m gets the ambient occlusion's
         // depth precision noise, rings and black dots
-        root.Add(new Entity("ciel") { new BackgroundComponent { Texture = Look.Sky(GraphicsDevice), Intensity = 1f, Is2D = false } });
+        root.Add(new Entity("sky") { new BackgroundComponent { Texture = Look.Sky(GraphicsDevice), Intensity = 1f, Is2D = false } });
 
         // Antialiasing, ambient occlusion and a touch of bloom on top of the tone mapping of the default compositor
         if (FindForwardRenderer(SceneSystem.GraphicsCompositor.Game) is { PostEffects: PostProcessingEffects effects })
@@ -172,9 +172,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         base.OnSceneLoaded(scene);
         _frameTimes.Clear();
-        _orbit = scene is VideoScene { AutoOrbit: true };
-        if (_orbit)
-            StartOrbit();
+        _orbit = false;
     }
 
     private void StartOrbit()
@@ -274,6 +272,14 @@ internal sealed class VideoDemoGame : BepuDemoGame
         }
     }
 
+    /// <summary> The rolling mean and 95th percentile of the physics step, as the full overlay shows them </summary>
+    public string StepTiming() => base.SubjectStatus().FirstOrDefault() ?? string.Empty;
+
+    protected override IEnumerable<string> SubjectReport()
+    {
+        yield return StepTiming();
+    }
+
     protected override void DrawCustomOverlay()
     {
         if (!OverlayVisible || CurrentScene is not VideoScene scene)
@@ -293,7 +299,11 @@ internal sealed class VideoDemoGame : BepuDemoGame
             DrawText(text, corner, Color.White, 18, true);
         }
         scene.DrawOverlay(this);
+        if (scene.LegendModes.Count > 0)
+            Modes.DrawLegend(this, scene.LegendModes, scene.LegendCaption);
     }
+
+    public Vector3 CameraPosition => CameraEntity.Transform.Position;
 
     // Helpers the scenes draw their own panels with
     public Int2 Screen => ScreenSize;
@@ -459,7 +469,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
             model.Meshes.Add(new Mesh { MaterialIndex = 0, BoundingBox = everywhere, Draw = new MeshDraw { PrimitiveType = PrimitiveType.TriangleList, DrawCount = free, VertexBuffers = [vertexBinding], IndexBuffer = indexBinding } });
             model.Meshes.Add(new Mesh { MaterialIndex = 1, BoundingBox = everywhere, Draw = new MeshDraw { PrimitiveType = PrimitiveType.TriangleList, StartLocation = free, DrawCount = indices.Count - free, VertexBuffers = [vertexBinding], IndexBuffer = indexBinding } });
 
-            var entity = new Entity("particules") { new ModelComponent(model) { IsShadowCaster = false } };
+            var entity = new Entity("particles") { new ModelComponent(model) { IsShadowCaster = false } };
             game.SceneSystem.SceneInstance.RootScene.Entities.Add(entity);
             return new View(entity, vertexBuffer, indexBuffer, vertices);
         }

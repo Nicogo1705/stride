@@ -68,18 +68,19 @@ internal static class ProceduralCharacter
         return shapes;
     }
 
-    /// <summary> A model with the skeleton of <see cref="Nodes"/> and a mesh skinned to it, slightly inside the hitboxes so their wireframe shows </summary>
-    public static Model CreateModel(GraphicsDevice device, Material material)
+    /// <summary>
+    /// A model with the skeleton of <see cref="Nodes"/> and two meshes skinned to it, slightly inside the hitboxes so their wireframe shows:
+    /// the clothes (material 0, the color of the mode) and the skin of the head and hands (material 1)
+    /// </summary>
+    public static Model CreateModel(GraphicsDevice device, Material clothes, Material skin)
     {
         var nodes = Nodes();
         var rest = RestWorld(nodes);
-        var vertices = new List<SkinnedVertex>();
-        var indices = new List<int>();
+        var parts = new[] { (Vertices: new List<SkinnedVertex>(), Indices: new List<int>()), (Vertices: new List<SkinnedVertex>(), Indices: new List<int>()) };
         foreach (var bone in Hitboxes())
         {
             int node = Array.FindIndex(nodes, n => n.Name == bone.NodeName);
             var shape = bone.Shape;
-            // Thinner than the hitbox, so its wireframe stays outside the mesh
             var size = shape switch
             {
                 BoxCollider box => box.Size * new Vector3(0.75f, 0.9f, 0.75f),
@@ -88,34 +89,43 @@ internal static class ProceduralCharacter
                 _ => throw new NotSupportedException(),
             };
             var local = Matrix.RotationQuaternion(shape.RotationLocal) * Matrix.Translation(shape.PositionLocal);
-            AddBox(vertices, indices, size, local * rest[node], (ushort)node);
+            var part = parts[node == Head ? 1 : 0];
+            AddBox(part.Vertices, part.Indices, size, local * rest[node], (ushort)node);
         }
+        // Hands have no hitbox: a small block of skin each
+        foreach (var hand in new[] { HandL, HandR })
+            AddBox(parts[1].Vertices, parts[1].Indices, new Vector3(0.07f, 0.12f, 0.09f), Matrix.Translation(0f, -0.05f, 0f) * rest[hand], (ushort)hand);
 
-        var vertexBuffer = Buffer.Vertex.New(device, vertices.ToArray(), GraphicsResourceUsage.Immutable);
-        var indexBuffer = Buffer.Index.New(device, indices.ToArray(), GraphicsResourceUsage.Immutable);
         var bones = new MeshBoneDefinition[nodes.Length];
         for (int i = 0; i < nodes.Length; i++)
             bones[i] = new MeshBoneDefinition { NodeIndex = i, LinkToMeshMatrix = Matrix.Invert(rest[i]) };
 
-        var mesh = new Mesh
-        {
-            Draw = new MeshDraw
-            {
-                PrimitiveType = PrimitiveType.TriangleList,
-                VertexBuffers = [new VertexBufferBinding(vertexBuffer, SkinnedVertex.Layout, vertices.Count)],
-                IndexBuffer = new IndexBufferBinding(indexBuffer, true, indices.Count),
-                DrawCount = indices.Count,
-            },
-            Skinning = new MeshSkinningDefinition { Bones = bones },
-            BoundingBox = new BoundingBox(new Vector3(-0.6f, 0f, -0.4f), new Vector3(0.6f, 2f, 0.4f)),
-            BoundingSphere = new BoundingSphere(new Vector3(0f, 1f, 0f), 1.2f),
-        };
-        mesh.Parameters.Set(MaterialKeys.HasSkinningPosition, true);
-        mesh.Parameters.Set(MaterialKeys.HasSkinningNormal, true);
-
         var model = new Model { Skeleton = new Skeleton { Nodes = nodes } };
-        model.Meshes.Add(mesh);
-        model.Materials.Add(new MaterialInstance(material));
+        for (int p = 0; p < parts.Length; p++)
+        {
+            var (vertices, indices) = parts[p];
+            var vertexBuffer = Buffer.Vertex.New(device, vertices.ToArray(), GraphicsResourceUsage.Immutable);
+            var indexBuffer = Buffer.Index.New(device, indices.ToArray(), GraphicsResourceUsage.Immutable);
+            var mesh = new Mesh
+            {
+                Draw = new MeshDraw
+                {
+                    PrimitiveType = PrimitiveType.TriangleList,
+                    VertexBuffers = [new VertexBufferBinding(vertexBuffer, SkinnedVertex.Layout, vertices.Count)],
+                    IndexBuffer = new IndexBufferBinding(indexBuffer, true, indices.Count),
+                    DrawCount = indices.Count,
+                },
+                MaterialIndex = p,
+                Skinning = new MeshSkinningDefinition { Bones = bones },
+                BoundingBox = new BoundingBox(new Vector3(-0.6f, 0f, -0.4f), new Vector3(0.6f, 2f, 0.4f)),
+                BoundingSphere = new BoundingSphere(new Vector3(0f, 1f, 0f), 1.2f),
+            };
+            mesh.Parameters.Set(MaterialKeys.HasSkinningPosition, true);
+            mesh.Parameters.Set(MaterialKeys.HasSkinningNormal, true);
+            model.Meshes.Add(mesh);
+        }
+        model.Materials.Add(new MaterialInstance(clothes));
+        model.Materials.Add(new MaterialInstance(skin));
         return model;
     }
 
@@ -134,24 +144,6 @@ internal static class ProceduralCharacter
         var body = new SkeletonBodyComponent();
         ((BoneCollider)body.Collider).Bones.AddRange(Hitboxes());
         return body;
-    }
-
-    /// <summary> Puts the character lying on the ground as a ragdoll, the entity lying with it so the bodies are rebuilt there </summary>
-    public static void LayDown(Entity character, SkeletonBodyComponent body, bool onBack)
-    {
-        body.Mode = SkeletonBodyMode.Ragdoll;
-        character.Transform.Position = new Vector3(0f, 0.2f, 0.95f * (onBack ? 1f : -1f));
-        character.Transform.Rotation = Quaternion.RotationX(onBack ? -MathF.PI / 2f : MathF.PI / 2f);
-        body.Rebuild();
-    }
-
-    /// <summary> Stands the entity upright under the hips and lets Standing lift the character </summary>
-    public static void StandUpright(Entity character, SkeletonBodyComponent body)
-    {
-        var hips = body.GetBodyPosition(0);
-        character.Transform.Position = new Vector3(hips.X, 0f, hips.Z);
-        character.Transform.Rotation = Quaternion.Identity;
-        body.Mode = SkeletonBodyMode.Standing;
     }
 
     // Masses in kilograms, about 76 kg in total, only used once the bodies form a ragdoll
@@ -235,6 +227,9 @@ internal static class ProceduralCharacter
         /// <summary> Stops the clock, the pose stays </summary>
         public bool Paused { get; set; }
 
+        /// <summary> Stands still, breathing and looking around, instead of walking </summary>
+        public bool Idle { get; set; }
+
         public override void Update()
         {
             if (!Paused)
@@ -242,7 +237,6 @@ internal static class ProceduralCharacter
             Apply(Entity.Get<ModelComponent>()!.Skeleton.NodeTransformations, Time);
         }
 
-        /// <summary> Writes the pose at <paramref name="time"/> into the node transforms </summary>
         /// <summary> The forward speed of the hips over the planted foot: the straight leg's foot moves back under the hips at this speed </summary>
         public float StanceSpeed()
         {
@@ -253,8 +247,14 @@ internal static class ProceduralCharacter
             return 0.84f * MathF.Cos(thigh) * 0.55f * omega * MathF.Abs(MathF.Cos(phase));
         }
 
+        /// <summary> Writes the pose at <paramref name="time"/> into the node transforms </summary>
         public void Apply(ModelNodeTransformation[] nodes, float time)
         {
+            if (Idle)
+            {
+                ApplyIdle(nodes, time);
+                return;
+            }
             if (Kick)
             {
                 ApplyKick(nodes, time % KickPeriod);
@@ -275,6 +275,18 @@ internal static class ProceduralCharacter
             nodes[UpperArmR].Transform.Rotation = Quaternion.RotationX(0.6f * swing) * Quaternion.RotationZ(-0.12f);
             nodes[ForeArmL].Transform.Rotation = Quaternion.RotationX(-0.5f - 0.3f * MathF.Max(0f, -swing));
             nodes[ForeArmR].Transform.Rotation = Quaternion.RotationX(-0.5f - 0.3f * MathF.Max(0f, swing));
+        }
+
+        private static void ApplyIdle(ModelNodeTransformation[] nodes, float t)
+        {
+            float breath = MathF.Sin(t * 1.7f);
+            nodes[Hips].Transform.Position = new Vector3(0f, 0.95f, 0f);
+            nodes[Spine].Transform.Rotation = Quaternion.RotationX(0.02f * breath);
+            nodes[Head].Transform.Rotation = Quaternion.RotationY(0.5f * MathF.Sin(t * 0.45f));
+            foreach (var node in new[] { ThighL, ThighR, ShinL, ShinR, ForeArmL, ForeArmR })
+                nodes[node].Transform.Rotation = node is ForeArmL or ForeArmR ? Quaternion.RotationX(-0.25f) : Quaternion.Identity;
+            nodes[UpperArmL].Transform.Rotation = Quaternion.RotationZ(0.12f + 0.03f * breath);
+            nodes[UpperArmR].Transform.Rotation = Quaternion.RotationZ(-0.12f - 0.03f * breath);
         }
 
         private static void ApplyKick(ModelNodeTransformation[] nodes, float t)

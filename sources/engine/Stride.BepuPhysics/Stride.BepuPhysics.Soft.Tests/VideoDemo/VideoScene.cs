@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.BepuPhysics.Components;
 using Stride.Core.Mathematics;
@@ -13,7 +14,8 @@ using Stride.Rendering.ProceduralModels;
 
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
-/// <summary> A scene of the video showcase: a feature and its pull request, a checkered ground, labels anchored in the scene </summary>
+/// <summary> A scene of the video showcase: a feature and its pull requests, a checkered ground, labels anchored in the scene </summary>
+/// <remarks> Nothing is ever put back automatically: what is thrown away stays away until R or Backspace reloads the scene </remarks>
 internal abstract class VideoScene : BepuDemoScene
 {
     public override string Group => "Video";
@@ -29,13 +31,14 @@ internal abstract class VideoScene : BepuDemoScene
     /// <summary> Shows Bepu's wireframes while the debug view is on « Auto » </summary>
     public virtual bool WireframeByDefault => false;
 
-    /// <summary> Starts with the camera turning slowly around <see cref="DemoScene.Target"/> (C toggles it) </summary>
-    public virtual bool AutoOrbit => false;
-
     /// <summary> Keys of this scene only, one line </summary>
     public virtual string? SceneKeys => null;
 
-    protected virtual bool HasGround => true;
+    /// <summary> The modes listed in the color legend, none for a scene without skeletons </summary>
+    public virtual IReadOnlyList<SkeletonBodyMode> LegendModes => Array.Empty<SkeletonBodyMode>();
+
+    /// <summary> What carries the mode color in this scene, the title of the legend </summary>
+    public virtual string LegendCaption => "SkeletonBodyComponent.Mode (body color)";
 
     /// <summary> Texts drawn at points of the scene </summary>
     public virtual IEnumerable<(Vector3 World, string Text)> Labels() => Enumerable.Empty<(Vector3, string)>();
@@ -46,11 +49,19 @@ internal abstract class VideoScene : BepuDemoScene
     /// <summary> Panels of the scene over the image, only while the overlay is visible </summary>
     public virtual void DrawOverlay(VideoDemoGame game) { }
 
+    /// <summary> Physics threads of every scene: past about eight, dispatching the small jobs of soft bodies and ragdolls costs more than it saves </summary>
+    public const int PhysicsThreads = 8;
+
+    public override void OnSimulationReady(BepuSimulation simulation)
+    {
+        simulation.ThreadCount = Math.Min(PhysicsThreads, Environment.ProcessorCount);
+        PhysicalWorm.Filter(simulation);
+    }
+
     public sealed override void Build(DemoGame game)
     {
         Look.Reset(game.GraphicsDevice);
-        if (HasGround)
-            Look.Ground(game);
+        Look.Ground(game);
         BuildScene((VideoDemoGame)game);
     }
 
@@ -82,56 +93,48 @@ internal static class Props
             2 => (new CapsuleProceduralModel { Radius = 0.14f * scale, Length = 0.3f * scale, Tessellation = 16 }, new CompoundCollider { Colliders = { new CapsuleCollider { Radius = 0.14f * scale, Length = 0.3f * scale, Mass = 1f } } }),
             _ => (new CylinderProceduralModel { Radius = 0.2f * scale, Height = 0.3f * scale, Tessellation = 24 }, new CompoundCollider { Colliders = { new CylinderCollider { Radius = 0.2f * scale, Length = 0.3f * scale, Mass = 1f } } }),
         };
-        var entity = new Entity("objet") { new ModelComponent(Look.Model(game, shape, color, 0.55f)), new BodyComponent { Collider = collider } };
+        var entity = new Entity("prop") { new ModelComponent(Look.Model(game, shape, color, 0.55f)), new BodyComponent { Collider = collider } };
         entity.Transform.Position = position;
         entity.Transform.Rotation = rotation;
         return entity;
     }
 
     /// <summary> A dynamic ball </summary>
-    public static Entity Ball(DemoGame game, float radius, float mass, Color color, Vector3 position)
+    public static Entity Ball(DemoGame game, float radius, float mass, Color color, Vector3 position, float gloss = 0.7f)
     {
-        var entity = new Entity("balle")
+        var entity = new Entity("ball")
         {
-            new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = radius, Tessellation = 28 }, color, 0.7f)),
+            new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = radius, Tessellation = 28 }, color, gloss)),
             new BodyComponent { Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = radius, Mass = mass } } } },
         };
         entity.Transform.Position = position;
         return entity;
     }
 
-    /// <summary> A static cylinder standing on the ground </summary>
-    public static Entity Pillar(DemoGame game, Vector3 foot, float radius, float height, Color color)
+    /// <summary> A dynamic crate </summary>
+    public static Entity Crate(DemoGame game, Vector3 size, float mass, Vector3 position, Color? color = null)
     {
-        var entity = new Entity("pilier")
+        var entity = new Entity("crate")
+        {
+            new BodyComponent { Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = size, Mass = mass } } } },
+            new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = size }, color ?? Look.Wood, 0.35f)),
+        };
+        entity.Transform.Position = position;
+        return entity;
+    }
+
+    /// <summary> A static cylinder standing on the ground </summary>
+    public static Entity Pillar(DemoGame game, Vector3 foot, float radius, float height, Color color, float gloss = 0.5f)
+    {
+        var entity = new Entity("pillar")
         {
             new StaticComponent { Collider = new CompoundCollider { Colliders = { new CylinderCollider { Radius = radius, Length = height } } } },
-            new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = radius, Height = height, Tessellation = 32 }, color, 0.5f)),
+            new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = radius, Height = height, Tessellation = 40 }, color, gloss)),
         };
         entity.Transform.Position = foot + new Vector3(0f, height / 2f, 0f);
         game.AddToScene(entity);
         return entity;
     }
-
-    /// <summary> Puts a body back at <paramref name="position"/>, at rest </summary>
-    public static void Respawn(Entity entity, Vector3 position, Quaternion rotation)
-    {
-        if (entity.Get<BodyComponent>() is { } body)
-        {
-            body.Teleport(position, rotation);
-            body.LinearVelocity = Vector3.Zero;
-            body.AngularVelocity = Vector3.Zero;
-            body.Awake = true;
-        }
-        else if (entity.Get<SoftBodyComponent>() is { } soft)
-        {
-            soft.Teleport(position, rotation);
-            soft.LinearVelocity = Vector3.Zero;
-            soft.Awake = true;
-        }
-    }
-
-    public static Vector3 PositionOf(Entity entity) => entity.Get<BodyComponent>() is { Simulation: not null } body ? body.Position : entity.Transform.WorldMatrix.TranslationVector;
 }
 
 /// <summary> Calls a delegate before each physics step with the time since the scene started: kinematic motions, wind, servos </summary>
@@ -148,50 +151,25 @@ internal sealed class StepDriver(Action<float, float> step) : ScriptComponent, I
     public void AfterSimulationUpdate(BepuSimulation simulation, float simTimeStep) { }
 }
 
-/// <summary>
-/// Drops new objects at a rate up to a count, then reuses the oldest one; objects that leave the area come back from the top.
-/// The scene keeps moving forever without ever being reloaded.
-/// </summary>
-internal sealed class Spawner(DemoGame game, Func<int, Entity> create, Func<int, Vector3> spawnPoint, float interval, int count, Vector3 center, float radius) : SyncScript
+/// <summary> Drops <paramref name="count"/> objects, one every <paramref name="interval"/> seconds, then stops; nothing is recycled </summary>
+internal sealed class Dropper(DemoGame game, Func<int, Entity> create, Func<int, Vector3> spawnPoint, float interval, int count) : SyncScript
 {
-    private readonly List<Entity> _items = new();
-    private float _time;
-    private int _spawned;
+    private float _time = interval;
+    private int _dropped;
 
-    public IReadOnlyList<Entity> Items => _items;
+    public int Dropped => _dropped;
 
     public override void Update()
     {
+        if (_dropped >= count)
+            return;
         _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;
-        if (_time >= interval)
-        {
-            _time = 0f;
-            if (_items.Count < count)
-            {
-                var entity = create(_spawned);
-                entity.Transform.Position = spawnPoint(_spawned);
-                game.AddToScene(entity);
-                _items.Add(entity);
-            }
-            else
-            {
-                // The oldest one goes back to the top, so the pile keeps churning
-                var oldest = _items[0];
-                _items.RemoveAt(0);
-                _items.Add(oldest);
-                Props.Respawn(oldest, spawnPoint(_spawned), RandomRotation(_spawned));
-            }
-            _spawned++;
-        }
-
-        foreach (var entity in _items)
-        {
-            var position = Props.PositionOf(entity);
-            var flat = new Vector2(position.X - center.X, position.Z - center.Z);
-            if (position.Y < -4f || flat.Length() > radius)
-                Props.Respawn(entity, spawnPoint(_spawned++), RandomRotation(_spawned));
-        }
+        if (_time < interval)
+            return;
+        _time = 0f;
+        var entity = create(_dropped);
+        entity.Transform.Position = spawnPoint(_dropped);
+        game.AddToScene(entity);
+        _dropped++;
     }
-
-    public static Quaternion RandomRotation(int seed) => Quaternion.RotationYawPitchRoll(seed * 1.7f, seed * 0.9f, seed * 0.4f);
 }

@@ -27,14 +27,19 @@ internal static class PhysicalWorm
     public const CollisionLayer FleshLayer = CollisionLayer.Layer21;
     public const CollisionLayer SailLayer = CollisionLayer.Layer22;
 
+    /// <summary> Soft pieces held at both ends by rigid handles, and those handles: pinned particles must not push their own anchor </summary>
+    public const CollisionLayer PieceLayer = CollisionLayer.Layer23, HandleLayer = CollisionLayer.Layer24;
+
     /// <summary>
-    /// Bones and flesh overlap by design: they must not push each other. Nor may a sail pinned to the head push its bones:
+    /// Bones and flesh overlap by design: they must not push each other. Nor may a sail pinned to the head push its bones or its flesh:
     /// its pinned particles are kinematic and follow the head, so each push moves their own target and they push again (the worm flew off at 80 m/s)
     /// </summary>
     public static void Filter(BepuSimulation simulation)
     {
         simulation.CollisionMatrix.Set(BoneLayer, FleshLayer, false);
         simulation.CollisionMatrix.Set(SailLayer, BoneLayer, false);
+        simulation.CollisionMatrix.Set(SailLayer, FleshLayer, false);
+        simulation.CollisionMatrix.Set(PieceLayer, HandleLayer, false);
     }
 
     public static Entity Add(DemoGame game, Color color, Vector3 position, float yaw, Func<float, Vector3> carrot)
@@ -56,7 +61,7 @@ internal static class PhysicalWorm
                 Shape = new CapsuleCollider { Radius = 0.17f, Length = step * 0.5f, PositionLocal = new Vector3(0f, i < Mollusc.Bones - 1 ? step / 2f : 0f, 0f), Mass = 0.5f },
             });
         }
-        var entity = new Entity("ver physique") { new ModelComponent(Mollusc.Model(game, color)), flesh, bones };
+        var entity = new Entity("physical worm") { new ModelComponent(Mollusc.Model(game, color)), flesh, bones };
         entity.Transform.Position = position + new Vector3(0f, Mollusc.Radius + 0.05f, 0f);
         entity.Transform.Rotation = Mollusc.Orientation(yaw);
         entity.Add(new Driver(bones, carrot));

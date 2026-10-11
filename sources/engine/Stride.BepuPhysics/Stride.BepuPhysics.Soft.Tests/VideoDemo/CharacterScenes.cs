@@ -3,199 +3,131 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
-using Stride.BepuPhysics.Components;
 using Stride.Core.Mathematics;
 using Stride.Engine;
-using Stride.Harness.Demo;
 using Stride.Input;
 using Stride.Rendering.ProceduralModels;
 
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
-/// <summary> Characters made in code with hitboxes on their bones: one kicks balls, two are hit by balls and go Ragdoll or Active </summary>
-internal sealed class HitboxScene : VideoScene
+/// <summary> An animated human walking a circle with kinematic hitboxes on its bones; anything that touches it turns it into a ragdoll, U puts it back </summary>
+internal sealed class AnimatedHumanScene : VideoScene
 {
-    private readonly List<(Entity Character, SkeletonBodyComponent Body, string Text)> _characters = new();
+    private const float PathRadius = 2.4f;
+    private static readonly Vector3 PathCenter = new(0f, 0f, -0.6f);
 
-    public override string Title => "Bone hitboxes and ragdoll (passive, active)";
-    public override string Pr => "upcoming PR (on #3528)";
-    public override string Description => "center: animated hitboxes kick the ball; left: Ragdoll, right: Active (servos hold the pose); V: show the hitboxes";
-    public override Vector3 Eye => new(0.4f, 2.3f, 6.4f);
-    public override Vector3 Target => new(0f, 0.85f, -0.6f);
-    public override string SceneKeys => "V: hitbox wireframes  |  M: mode of all (Animated / Ragdoll / Active / Standing)  |  click a bone: the character goes Ragdoll";
+    private CircleWalk? _walk;
+
+    public override string Title => "Animated human with bone hitboxes";
+    public override string Pr => "SkeletonBodyComponent, ragdoll (upcoming PRs, on #3528)";
+    public override string Description => "kinematic hitboxes follow the walk; hit him (F: ball, gravity gun, a thrown prop) and he goes Ragdoll; U stands him back up";
+    public override Vector3 Eye => new(0.6f, 2.5f, 5.8f);
+    public override Vector3 Target => new(0f, 0.9f, -0.6f);
+    public override string SceneKeys => "U: put the human back (Animated)  |  F / middle click: throw a ball  |  left click a bone: grab (Ragdoll)  |  V: hitbox wireframes";
+    public override IReadOnlyList<SkeletonBodyMode> LegendModes => new[] { SkeletonBodyMode.Animated, SkeletonBodyMode.Ragdoll };
+
+    public SkeletonBodyMode Mode => _walk?.Body.Mode ?? SkeletonBodyMode.Animated;
 
     protected override void BuildScene(VideoDemoGame game)
     {
-        _characters.Clear();
+        var (human, body, _) = Humans.Add(game, SkeletonBodyMode.Animated, PathCenter, 0f);
+        _walk = new CircleWalk(human, body, PathCenter, PathRadius, 1.35f);
+        human.Add(_walk);
 
-        // The kicker, turned so the ball leaves toward the back of the scene
-        var kickerBody = ProceduralCharacter.CreateHitboxes();
-        var animator = new ProceduralCharacter.Animator { Kick = true };
-        var kicker = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(game.GraphicsDevice, Look.Paint(game.GraphicsDevice, Look.Blue, 0.5f)), animator, kickerBody);
-        kicker.Name = "frappeur";
-        kicker.Transform.Position = new Vector3(0f, 0f, -1.2f);
-        kicker.Transform.Rotation = Quaternion.RotationY(MathUtil.Pi * 0.82f);
-        game.AddToScene(kicker);
-        game.AddToScene(new Entity { new KickBall(game, kicker, animator) });
-        _characters.Add((kicker, kickerBody, "Animated: kinematic hitboxes"));
-
-        foreach (var (mode, x, color) in new[] { (SkeletonBodyMode.Ragdoll, -2.7f, Look.Coral), (SkeletonBodyMode.Active, 2.7f, Look.Teal) })
+        // A table of props to throw on the right, a stack of crates to push on the left, a ring on the floor marking the walk
+        var device = game.GraphicsDevice;
+        Look.StaticBox(game, new Vector3(1.0f, 0.75f, 2.2f), new Vector3(3.9f, 0.375f, 0.6f), Look.Paint(device, Look.Wood, 0.45f), "table");
+        for (int i = 0; i < 8; i++)
+            game.AddToScene(Props.Rigid(game, i, new Vector3(3.75f + (i % 2) * 0.35f, 1.0f, -0.25f + i / 2 * 0.45f), Quaternion.RotationY(i * 0.7f), 0.8f));
+        for (int row = 0; row < 3; row++)
         {
-            var body = ProceduralCharacter.CreateHitboxes();
-            var character = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(game.GraphicsDevice, Look.Paint(game.GraphicsDevice, color, 0.5f)), new ProceduralCharacter.Animator { Time = x }, body);
-            character.Name = mode.ToString();
-            character.Transform.Position = new Vector3(x, 0f, -0.4f);
-            game.AddToScene(character);
-            game.AddToScene(new Entity { new HitReplay(game, character, body, mode, x > 0 ? 3f : 0f) });
-            _characters.Add((character, body, mode == SkeletonBodyMode.Ragdoll ? "Ragdoll, then back to the animation" : "Active: servos toward the animated pose"));
+            for (int i = 0; i < 3 - row; i++)
+                game.AddToScene(Props.Crate(game, new Vector3(0.45f), 4f, new Vector3(-4.0f + i * 0.47f + row * 0.235f, 0.225f + row * 0.45f, -1.0f)));
         }
+        var ring = new Entity("walk ring") { new ModelComponent(Look.Model(game, new TorusProceduralModel { Radius = PathRadius, Thickness = 0.03f, Tessellation = 96 }, Look.Ivory, 0.3f)) { IsShadowCaster = false } };
+        ring.Transform.Position = PathCenter + new Vector3(0f, 0.005f, 0f);
+        game.AddToScene(ring);
     }
 
     public override void UpdateInput(VideoDemoGame game)
     {
-        if (game.Input.IsKeyPressed(Keys.M) && _characters.Count > 0)
-        {
-            var next = (SkeletonBodyMode)(((int)_characters[1].Body.Mode + 1) % 4);
-            foreach (var (_, body, _) in _characters)
-                body.Mode = next;
-        }
+        if (game.Input.IsKeyPressed(Keys.U))
+            Restore();
     }
+
+    public void Restore() => _walk?.Restore();
 
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
-        foreach (var (character, body, text) in _characters)
-        {
-            var at = character.Transform.Position;
-            yield return (new Vector3(at.X, 2.25f, at.Z), text);
-        }
+        if (_walk is { Body.BodyCount: > 0 })
+            yield return (_walk.Body.GetBodyPosition(0) + new Vector3(0f, 1.25f, 0f), _walk.Body.Mode.ToString());
     }
 
     public override IEnumerable<string> Status()
     {
-        if (_characters.Count == 3)
-            yield return string.Format(CultureInfo.InvariantCulture, "modes: {0} / {1} / {2}  |  {3} bodies per character", _characters[0].Body.Mode, _characters[1].Body.Mode, _characters[2].Body.Mode, _characters[0].Body.BodyCount);
-    }
-
-    /// <summary> A new ball in front of the kicking foot at the start of each kick of the animator </summary>
-    private sealed class KickBall(DemoGame game, Entity kicker, ProceduralCharacter.Animator animator) : SyncScript
-    {
-        private int _cycle = int.MinValue;
-        private Entity? _ball;
-
-        public override void Update()
-        {
-            int cycle = (int)MathF.Floor(animator.Time / animator.KickPeriod);
-            if (cycle == _cycle)
-                return;
-            _cycle = cycle;
-            if (_ball is not null)
-                Entity.Scene?.Entities.Remove(_ball);
-            var local = new Vector3(-0.11f, 0.12f, 0.36f);
-            _ball = Props.Ball(game, 0.12f, 0.45f, Look.Sun, kicker.Transform.Position + Vector3.Transform(local, kicker.Transform.Rotation));
-            game.AddToScene(_ball);
-        }
-    }
-
-    /// <summary> Throws a heavy ball at the walking character every 6 s and switches its mode as the ball arrives; back to Animated before the next throw </summary>
-    private sealed class HitReplay(DemoGame game, Entity character, SkeletonBodyComponent body, SkeletonBodyMode mode, float delay) : SyncScript
-    {
-        private static readonly Vector3 BallStart = new(-2.6f, 1.6f, 2.6f), BallVelocity = new(6.36f, 1.65f, -6.36f);
-        private float _time = 6f - delay;
-        private BodyComponent? _ball;
-        private bool _launch;
-
-        public override void Update()
-        {
-            _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;
-            var origin = character.Transform.Position;
-            if (_time > 6f)
-            {
-                _time = 0f;
-                body.Mode = SkeletonBodyMode.Animated;
-                if (_ball is null)
-                {
-                    var entity = Props.Ball(game, 0.18f, 15f, Look.Navy, origin + BallStart);
-                    _ball = entity.Get<BodyComponent>();
-                    game.AddToScene(entity);
-                }
-                else
-                {
-                    _ball.Teleport(origin + BallStart, Quaternion.Identity);
-                }
-                _launch = true;
-                return;
-            }
-
-            if (_launch && _ball is { Simulation: not null })
-            {
-                _ball.AngularVelocity = Vector3.Zero;
-                _ball.LinearVelocity = BallVelocity;
-                _ball.Awake = true;
-                _launch = false;
-            }
-
-            var chest = character.Get<ModelComponent>()!.Skeleton.NodeTransformations[ProceduralCharacter.Chest].WorldMatrix.TranslationVector;
-            if (body.Mode != mode && body.Mode == SkeletonBodyMode.Animated && _ball is { Simulation: not null } ball && Vector3.Distance(ball.Position, chest) < 0.6f && _time < 3f)
-                body.Mode = mode;
-        }
+        yield return $"mode: {Mode}  |  knocked down {_walk?.Knockdowns ?? 0} time(s)  |  {_walk?.Body.BodyCount ?? 0} hitboxes  |  U: back to the animation";
     }
 }
 
-/// <summary>
-/// Standing ragdolls: they walk around, take cannon balls, fall and get back up where they land, stand on crates;
-/// the one furthest away is dropped from 6 m from time to time and lands on its feet.
-/// </summary>
-internal sealed class StandingScene : VideoScene
+/// <summary> Standing NPCs wandering a square under cannon fire, and one character in each mode on a pedestal at the back </summary>
+internal sealed class StandingNpcScene : VideoScene
 {
+    private static readonly Vector3 Square = new(0f, 0f, 1.3f);
     private readonly List<Walker> _walkers = new();
+    private readonly List<(SkeletonBodyComponent Body, Vector3 Pedestal)> _lineup = new();
     private Cannon? _cannon;
 
-    public override string Title => "Ragdoll Standing";
-    public override string Pr => "upcoming PR (on #3528)";
-    public override string Description => "they walk, take cannonballs, fall and get up where they land; dropped from 6 m, they land on their feet";
-    public override Vector3 Eye => new(0.5f, 3.6f, 8.6f);
-    public override Vector3 Target => new(0f, 0.9f, 0f);
-    public override string SceneKeys => "click a bone: grab, throw (F); released, it gets up  |  B: cannonball now  |  L: drop the nearest from 6 m";
+    public override string Title => "Standing NPCs, and every SkeletonBody mode";
+    public override string Pr => "ragdoll Active / Standing (upcoming PR, on #3528)";
+    public override string Description => "Standing NPCs walk, take cannonballs, fall and get up where they land; at the back, one character per mode";
+    public override Vector3 Eye => new(0.8f, 3.8f, 8.6f);
+    public override Vector3 Target => new(0f, 0.8f, -0.8f);
+    public override string SceneKeys => "B: cannonball now  |  L: lift the nearest NPC 6 m up and drop it  |  left click a bone: grab, F: throw";
+    public override IReadOnlyList<SkeletonBodyMode> LegendModes => Modes.All;
 
     protected override void BuildScene(VideoDemoGame game)
     {
         _walkers.Clear();
-        var colors = new[] { Look.Coral, Look.Teal, Look.Sun, Look.Violet, Look.Mint };
+        _lineup.Clear();
+        var device = game.GraphicsDevice;
 
-        // Two crates: a static one and a 100 kg dynamic one, a character dropped on each
-        foreach (var dynamic in new[] { false, true })
+        // One character per mode on a pedestal, facing the camera
+        var stone = Look.Paint(device, Look.Ivory, 0.55f);
+        for (int i = 0; i < Modes.All.Length; i++)
         {
-            float x = dynamic ? 1.6f : -1.6f;
-            var collider = new CompoundCollider { Colliders = { new BoxCollider { Size = new Vector3(1.1f, 0.5f, 1.1f), Mass = 100f } } };
-            CollidableComponent crate = dynamic ? new BodyComponent { Collider = collider } : new StaticComponent { Collider = collider };
-            var crateEntity = new Entity(dynamic ? "caisse dynamique (100 kg)" : "caisse statique") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(1.1f, 0.5f, 1.1f) }, dynamic ? Look.Wood : Look.Ivory, 0.35f)), crate };
-            crateEntity.Transform.Position = new Vector3(x, 0.25f, 0f);
-            game.AddToScene(crateEntity);
+            var mode = Modes.All[i];
+            var pedestal = new Vector3(-3.6f + i * 2.4f, 0f, -3.8f);
+            Look.StaticBox(game, new Vector3(1.5f, 0.3f, 1.5f), pedestal + new Vector3(0f, 0.15f, 0f), stone, "pedestal");
+            var animator = new ProceduralCharacter.Animator { Idle = mode != SkeletonBodyMode.Animated, Time = i * 0.7f };
+            var (_, body, _) = Humans.Add(game, mode, pedestal + new Vector3(0f, 0.3f, 0f), 0f, animator, mode + " exemplar");
+            _lineup.Add((body, pedestal));
         }
 
-        var spots = new[] { new Vector3(-1.6f, 0.9f, 0f), new Vector3(1.6f, 0.9f, 0f), new Vector3(-2.8f, 0f, 2.2f), new Vector3(2.6f, 0f, 2.4f), new Vector3(0f, 0f, -2.6f) };
+        // A static crate and a 100 kg dynamic one in the square
+        foreach (var dynamic in new[] { false, true })
+        {
+            var size = new Vector3(1.1f, 0.5f, 1.1f);
+            var collider = new CompoundCollider { Colliders = { new BoxCollider { Size = size, Mass = 100f } } };
+            CollidableComponent crate = dynamic ? new BodyComponent { Collider = collider } : new StaticComponent { Collider = collider };
+            var entity = new Entity(dynamic ? "dynamic crate (100 kg)" : "static crate") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = size }, dynamic ? Look.Wood : Look.Stone, 0.35f)), crate };
+            entity.Transform.Position = Square + new Vector3(dynamic ? 1.9f : -1.9f, 0.25f, -0.4f);
+            game.AddToScene(entity);
+        }
+
+        var spots = new[] { new Vector3(-1.9f, 0.5f, -0.4f), new Vector3(1.9f, 0.5f, -0.4f), new Vector3(-3.0f, 0f, 1.8f), new Vector3(2.8f, 0f, 2.0f), new Vector3(0f, 0f, -1.3f), new Vector3(0.2f, 0f, 2.4f) };
         for (int i = 0; i < spots.Length; i++)
         {
-            var body = ProceduralCharacter.CreateHitboxes();
-            body.Mode = SkeletonBodyMode.Standing;
             var animator = new ProceduralCharacter.Animator { Time = i * 0.41f };
-            var character = ProceduralCharacter.Create(ProceduralCharacter.CreateModel(game.GraphicsDevice, Look.Paint(game.GraphicsDevice, colors[i], 0.5f)), animator, body);
-            character.Name = $"perso {i + 1}";
-            character.Transform.Position = spots[i];
-            character.Transform.Rotation = Quaternion.RotationY(i * 1.3f);
-            game.AddToScene(character);
-            // The two on the crates stay there, the others walk
-            var walker = new Walker(character, body, animator, i * 1.3f, walks: i >= 2, Vector3.Zero, 4.2f);
+            var (character, body, _) = Humans.Add(game, SkeletonBodyMode.Standing, Square + spots[i], i * 1.3f, animator, $"npc {i + 1}");
+            var walker = new Walker(character, body, animator.StanceSpeed, 2, i * 1.3f, Square, 2.6f);
             character.Add(walker);
             _walkers.Add(walker);
         }
 
-        _cannon = Cannon.Build(game, _walkers, new Vector3(-5.5f, 0.75f, -4.5f), 4f);
-        game.AddToScene(new Entity("ascenseur") { new Lifter(_walkers, 9f) });
+        _cannon = Cannon.Build(game, _walkers, new Vector3(-6.2f, 0.75f, 3.4f), 4f);
     }
 
     public override void UpdateInput(VideoDemoGame game)
@@ -203,210 +135,19 @@ internal sealed class StandingScene : VideoScene
         if (game.Input.IsKeyPressed(Keys.B))
             _cannon?.FireNow();
         if (game.Input.IsKeyPressed(Keys.L) && _walkers.Count > 0)
-        {
-            var eye = game.Scenes.Count > 0 ? Eye : Vector3.Zero;
-            _walkers.OrderBy(w => Vector3.Distance(w.Hips, eye)).First().DropFrom(6f);
-        }
+            _walkers.OrderBy(w => Vector3.Distance(w.Hips, game.CameraPosition)).First().DropFrom(6f);
     }
 
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
-        yield return (new Vector3(-1.6f, 0f, 0.75f), "static crate");
-        yield return (new Vector3(1.6f, 0f, 0.75f), "dynamic crate, 100 kg");
+        foreach (var (body, pedestal) in _lineup)
+            yield return (pedestal + new Vector3(0f, 2.55f, 0f), body.Mode.ToString());
+        yield return (Square + new Vector3(1.9f, 0f, 0.35f), "100 kg crate");
     }
 
     public override IEnumerable<string> Status()
     {
         var grounded = _walkers.Count(w => w.Body.IsGrounded);
-        yield return $"{_walkers.Count} Standing characters, {grounded} on the ground  |  cannonball every 4 s (B: now)  |  6 m drop every 9 s (L)";
-    }
-}
-
-/// <summary>
-/// Walks a Standing character around. The animation walks in place: the foot on the ground slides back under the hips at a speed
-/// that changes through the stride, so the hips and upper body get exactly that speed forward, while the legs are left to their servos
-/// and the friction of the floor; the stance foot then stays planted. The entity turns toward a heading the root servo follows, and stays under the hips.
-/// Off when it is grabbed, lying or in the air.
-/// </summary>
-internal sealed class Walker(Entity character, SkeletonBodyComponent body, ProceduralCharacter.Animator animator, float heading, bool walks, Vector3 center, float radius) : ScriptComponent, ISimulationUpdate
-{
-    private float _heading = heading;
-    private float _time;
-    private bool[]? _upper;
-
-    public SkeletonBodyComponent Body => body;
-
-    public Entity Character => character;
-
-    public Vector3 Hips => body.BodyCount > 0 ? body.GetBodyPosition(0) : character.Transform.Position;
-
-    /// <summary> Seconds since it last fell from a drop </summary>
-    public float SinceDrop { get; private set; } = 100f;
-
-    public void DropFrom(float height)
-    {
-        var hips = Hips;
-        var at = new Vector3(Math.Clamp(hips.X, -3f, 3f), height, Math.Clamp(hips.Z, -3f, 3f));
-        character.Transform.Position = at;
-        character.Transform.Rotation = Quaternion.RotationY(_heading);
-        body.Mode = SkeletonBodyMode.Standing;
-        body.Rebuild();
-        SinceDrop = 0f;
-    }
-
-    public void SimulationUpdate(BepuSimulation simulation, float simTimeStep)
-    {
-        _time += simTimeStep;
-        SinceDrop += simTimeStep;
-        if (body.BodyCount == 0)
-            return;
-        var hips = body.GetBodyPosition(0);
-
-        // Far away or fallen off: back from the sky in the middle
-        if (hips.Y < -3f || new Vector2(hips.X - center.X, hips.Z - center.Z).Length() > radius + 4f)
-        {
-            DropFrom(6f);
-            return;
-        }
-
-        // Upright and on the ground: walk; anything else (held, knocked down, falling) lets physics do its work
-        var up = Vector3.Transform(Vector3.UnitY, body.GetBodyOrientation(2));
-        bool standing = body.Mode == SkeletonBodyMode.Standing && body.IsGrounded && up.Y > 0.8f;
-        if (!walks || !standing)
-            return;
-
-        if (_upper is null || _upper.Length != body.BodyCount)
-        {
-            _upper = new bool[body.BodyCount];
-            for (int i = 0; i < body.BodyCount; i++)
-            {
-                var node = body.GetBoneShape(i).NodeName;
-                _upper[i] = !(node.StartsWith("Thigh", StringComparison.Ordinal) || node.StartsWith("Shin", StringComparison.Ordinal) || node.StartsWith("Foot", StringComparison.Ordinal));
-            }
-        }
-
-        // Wander, and turn back toward the middle near the edge of the area
-        var toCenter = new Vector2(center.X - hips.X, center.Z - hips.Z);
-        _heading += simTimeStep * 0.3f * MathF.Sin(_time * 0.23f + heading * 3f);
-        if (toCenter.Length() > radius)
-        {
-            float wanted = MathF.Atan2(toCenter.X, toCenter.Y);
-            float delta = MathUtil.Mod(wanted - _heading + MathF.PI, MathUtil.TwoPi) - MathF.PI;
-            _heading += Math.Clamp(delta, -1f * simTimeStep, 1f * simTimeStep);
-        }
-        character.Transform.Rotation = Quaternion.RotationY(_heading);
-        character.Transform.Position = new Vector3(hips.X, character.Transform.Position.Y, hips.Z);
-
-        // The hips move at the speed the planted foot slides back in the animation
-        var direction = new Vector3(MathF.Sin(_heading), 0f, MathF.Cos(_heading));
-        var wantedVelocity = direction * animator.StanceSpeed();
-        var current = body.GetBodyLinearVelocity(0);
-        var push = (wantedVelocity - new Vector3(current.X, 0f, current.Z)) * 0.6f;
-        for (int i = 0; i < body.BodyCount; i++)
-        {
-            if (!_upper[i])
-                continue;
-            var reference = VideoDemoGame.BoneBody(body, i);
-            reference.Velocity.Linear += new System.Numerics.Vector3(push.X, 0f, push.Z);
-            reference.Awake = true;
-        }
-    }
-
-    public void AfterSimulationUpdate(BepuSimulation simulation, float simTimeStep) { }
-}
-
-/// <summary> Fires a heavy ball at the chest of one of the characters every few seconds, along an arc; the cannon turns toward it </summary>
-internal sealed class Cannon(DemoGame game, IReadOnlyList<Walker> targets, Vector3 muzzle, float period) : SyncScript
-{
-    private float _time = period - 1.5f;
-    private int _shot;
-    private BodyComponent? _ball;
-    private Vector3? _pending;
-
-    public void FireNow() => _time = period;
-
-    /// <summary> A wooden carriage on two wheels, and the barrel on top (this script) turning toward its target </summary>
-    public static Cannon Build(DemoGame game, IReadOnlyList<Walker> targets, Vector3 muzzle, float period)
-    {
-        var device = game.GraphicsDevice;
-        var wood = Look.Paint(device, Look.Wood, 0.35f);
-        var dark = Look.Paint(device, new Color(110, 72, 44), 0.3f);
-        var carriage = new Entity("affût") { new ModelComponent(Look.Model(game, new CubeProceduralModel { Size = new Vector3(0.75f, 0.28f, 0.5f) }, wood)) };
-        carriage.Transform.Position = muzzle - new Vector3(0f, 0.42f, 0f);
-        foreach (var side in new[] { -1f, 1f })
-        {
-            var wheel = new Entity("roue") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.3f, Height = 0.08f, Tessellation = 32 }, dark)) };
-            wheel.Transform.Position = new Vector3(0f, -0.08f, side * 0.3f);
-            wheel.Transform.Rotation = Quaternion.RotationX(MathUtil.PiOverTwo);
-            carriage.AddChild(wheel);
-        }
-        game.AddToScene(carriage);
-
-        var metal = Look.Paint(device, new Color(96, 104, 120), 0.85f);
-        var cannon = new Cannon(game, targets, muzzle, period);
-        var barrel = new Entity("canon") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.15f, Height = 1.0f, Tessellation = 32 }, metal)), cannon };
-        var ring = new Entity("bouche") { new ModelComponent(Look.Model(game, new TorusProceduralModel { Radius = 0.16f, Thickness = 0.045f, Tessellation = 32 }, metal)) };
-        ring.Transform.Position = new Vector3(0f, 0.48f, 0f);
-        barrel.AddChild(ring);
-        var breech = new Entity("culasse") { new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.2f, Tessellation = 24 }, metal)) };
-        breech.Transform.Position = new Vector3(0f, -0.5f, 0f);
-        barrel.AddChild(breech);
-        game.AddToScene(barrel);
-        return cannon;
-    }
-
-    public override void Update()
-    {
-        // The ball made on the first shot gets its velocity once it is in the simulation
-        if (_pending is { } launch && _ball is { Simulation: not null })
-        {
-            _ball.LinearVelocity = launch;
-            _pending = null;
-        }
-
-        Entity.Transform.Position = muzzle;
-        _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;
-        var target = targets.Count > 0 ? targets[_shot % targets.Count] : null;
-        if (target is not null)
-        {
-            var aim = target.Hips + new Vector3(0f, 0.35f, 0f) - muzzle;
-            Entity.Transform.Rotation = Quaternion.BetweenDirections(Vector3.UnitY, Vector3.Normalize(aim + new Vector3(0f, aim.Length() * 0.25f, 0f)));
-        }
-        if (_time < period || target is null)
-            return;
-        _time = 0f;
-        _shot++;
-
-        var chest = target.Hips + new Vector3(0f, 0.35f, 0f);
-        var flat = new Vector3(chest.X - muzzle.X, 0f, chest.Z - muzzle.Z);
-        float flight = flat.Length() / 9f;
-        var velocity = flat / flight + new Vector3(0f, (chest.Y - muzzle.Y) / flight + 0.5f * 9.81f * flight, 0f);
-        if (_ball is null)
-        {
-            var entity = Props.Ball(game, 0.2f, 12f, Look.Navy, muzzle);
-            _ball = entity.Get<BodyComponent>();
-            game.AddToScene(entity);
-            _pending = velocity;
-            return;
-        }
-        _ball.Teleport(muzzle, Quaternion.Identity);
-        _ball.AngularVelocity = Vector3.Zero;
-        _ball.LinearVelocity = velocity;
-        _ball.Awake = true;
-    }
-}
-
-/// <summary> Every few seconds, drops the walker furthest from the middle from 6 m: free fall, then it lands on its feet </summary>
-internal sealed class Lifter(IReadOnlyList<Walker> walkers, float period) : SyncScript
-{
-    private float _time;
-
-    public override void Update()
-    {
-        _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;
-        if (_time < period || walkers.Count == 0)
-            return;
-        _time = 0f;
-        walkers.Where(w => w.SinceDrop > period * 2f).OrderByDescending(w => w.Hips.Length()).FirstOrDefault()?.DropFrom(6f);
+        yield return $"{_walkers.Count} Standing NPCs, {grounded} on their feet  |  cannonball every 4 s (B: now)  |  lineup: {string.Join(", ", _lineup.Select(l => l.Body.Mode))}";
     }
 }

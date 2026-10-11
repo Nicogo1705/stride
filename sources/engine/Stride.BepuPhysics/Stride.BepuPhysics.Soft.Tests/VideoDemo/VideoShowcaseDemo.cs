@@ -3,9 +3,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Stride.Core.Mathematics;
+using Stride.Engine;
 using Stride.Graphics.Regression;
 using Stride.Harness.Demo;
 using Stride.Input;
@@ -14,22 +17,17 @@ using Xunit;
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
-/// The video showcase: ten scenes that run forever, one per feature, then a finale with all of them.
+/// The video showcase: soft bodies, an animated human, Standing NPCs, Standing soft bodies, and a finale with all of them.
 /// Opt-in: STRIDE_BEPU_DEMO=1 (interactive), STRIDE_BEPU_DEMO_SMOKE=1 (smoke test), STRIDE_BEPU_DEMO_TOUR=1 (scripted tour).
 /// </summary>
 public class VideoShowcaseDemo : GameTestBase
 {
     internal static List<DemoScene> Scenes() => new()
     {
-        new TitleScene(),
-        new JellyScene(),
-        new ClothScene(),
-        new MolluscScene(),
-        new HitboxScene(),
-        new StandingScene(),
-        new VoxelScene(),
-        new OpacityScene(),
-        new TargetPoseScene(),
+        new SoftBodiesScene(),
+        new AnimatedHumanScene(),
+        new StandingNpcScene(),
+        new StandingSoftBodiesScene(),
         new FinaleScene(),
     };
 
@@ -48,7 +46,10 @@ public class VideoShowcaseDemo : GameTestBase
         DemoSettings.RunSmoke(new VideoDemoGame(Scenes(), DemoSettings.Label, DemoSettings.CaptureFolder), game => RunGameTest(game));
     }
 
-    /// <summary> Every scene captured twice (after 2 s, then after an interaction and 5 s more), the finale four times; FPS per scene in fps.txt </summary>
+    /// <summary>
+    /// Every scene: a shot at load, a shot after its interaction, then 1800 physics steps watched for anything flying away and a last shot;
+    /// frames per second without a limit over those steps, then at 144; report in report.txt
+    /// </summary>
     [SkippableFact]
     public static void Tour()
     {
@@ -56,110 +57,209 @@ public class VideoShowcaseDemo : GameTestBase
         var game = new VideoDemoGame(Scenes(), DemoSettings.Label, DemoSettings.CaptureFolder);
         var folder = DemoSettings.TourFolder;
         var report = new List<string>();
+        int stabilitySteps = int.TryParse(Environment.GetEnvironmentVariable("VIDEO_TOUR_STEPS"), out var steps) ? steps : 1800;
+        var only = Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY") is { Length: > 0 } list ? list.Split(',').Select(int.Parse).ToHashSet() : null;
+        var picked = game.Scenes.Select((scene, i) => (Scene: scene, Index: i + 1)).Where(s => only is null || only.Contains(s.Index)).ToList();
         DemoSettings.RunTour(game, async () =>
         {
+            if (Environment.GetEnvironmentVariable("VIDEO_TOUR_PROFILE") == "1")
+            {
+                // The cost of each kind of physical object: the step time once all of them are removed
+                foreach (var (scene, index) in picked)
+                {
+                    foreach (var threads in new[] { 1, 2, 4, 8, 16, -1 })
+                    {
+                        game.LoadScene(scene);
+                        await game.Steps(60);
+                        var simulation = game.SceneSystem.SceneInstance.RootScene.Entities.SelectMany(e => e.Components).OfType<CollidableComponent>().Select(c => c.Simulation).First(s => s is not null)!;
+                        simulation.ThreadCount = threads;
+                        await game.Steps(240);
+                        report.Add($"{index:00} threads {threads}: {game.StepTiming()}");
+                    }
+                    if (Environment.GetEnvironmentVariable("VIDEO_TOUR_THREADS_ONLY") == "1")
+                        continue;
+                    game.LoadScene(scene);
+                    await game.Steps(240);
+                    report.Add($"{index:00} all: {game.StepTiming()}");
+                    var names = game.SceneSystem.SceneInstance.RootScene.Entities.Where(e => e.Components.OfType<CollidableComponent>().Any() && e.Get<StaticComponent>() is null).Select(e => e.Name).Distinct().ToList();
+                    foreach (var name in names)
+                    {
+                        game.LoadScene(scene);
+                        await game.Steps(60);
+                        foreach (var entity in game.SceneSystem.SceneInstance.RootScene.Entities.Where(e => e.Name == name).ToList())
+                            game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
+                        await game.Steps(180);
+                        report.Add($"{index:00}   without {name}: {game.StepTiming()}");
+                    }
+                }
+                return;
+            }
+
             // Shaders compile in the background on first use: warm every scene up before the shots
-            foreach (var scene in game.Scenes.Where((_, i) => Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY") is null || Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY")!.Split(',').Contains((i + 1).ToString())))
+            foreach (var (scene, _) in picked)
             {
                 game.LoadScene(scene);
                 await game.Steps(150);
             }
-            int index = 1;
-            var only = Environment.GetEnvironmentVariable("VIDEO_TOUR_ONLY")?.Split(',').Select(int.Parse).ToHashSet();
-            foreach (var scene in game.Scenes)
+            foreach (var (scene, index) in picked)
             {
-                if (only is not null && !only.Contains(index))
-                {
-                    index++;
-                    continue;
-                }
                 string Shot(string name) => Path.Combine(folder, $"{index:00}-{name}");
                 game.LoadScene(scene);
                 await game.Steps(120);
-                await game.CaptureTo(Shot("a"));
-                game.ClearFrameTimes();
+                await game.CaptureTo(Shot("a-start"));
                 switch (scene)
                 {
-                    case VoxelScene:
-                        game.SetCamera(new Vector3(0f, 7f, 9f), new Vector3(0f, 1.5f, 0f));
-                        await game.Frames(2);
-                        await game.Press(Keys.X);
-                        await game.Press(Keys.X);
-                        break;
-                    case OpacityScene:
-                        await game.Steps(240);
-                        await game.CaptureTo(Shot("a2-on"));
+                    case SoftBodiesScene:
                         await game.Press(Keys.O);
                         await game.Frames(2);
-                        await game.CaptureTo(Shot("a3-off"));
+                        await game.CaptureTo(Shot("b-opacity-off"));
                         await game.Press(Keys.O);
+                        game.SetCamera(new Vector3(1.6f, 2.0f, 3.4f), new Vector3(0f, 1.0f, 0f));
+                        await game.Steps(90);
+                        await game.CaptureTo(Shot("b-jellies-close"));
+                        if (((SoftBodiesScene)scene).Rope is { } rope)
+                        {
+                            // Four turns each way, and the block pulled away and up as the gravity gun does, held there
+                            rope.Turns = 4f;
+                            game.SetCamera(new Vector3(3.0f, 2.5f, 6.6f), new Vector3(3.0f, 1.3f, 2.0f));
+                            var pull = rope.Handle.Position + new Vector3(1.3f, 0.8f, 0.4f);
+                            for (int i = 0; i < 240; i++)
+                            {
+                                rope.Handle.LinearVelocity = (pull - rope.Handle.Position) * 12f;
+                                rope.Handle.Awake = true;
+                                await game.Steps(1);
+                                if (i is 90 or 239)
+                                    await game.CaptureTo(Shot(i == 90 ? "b-rope-stretched" : "b-rope-stretched-later"));
+                            }
+                            report.Add(string.Format(CultureInfo.InvariantCulture, "{0:00} rope: block pulled {1:0.00} m from its stand, twister at {2:0.0} turns", index, Vector3.Distance(rope.Handle.Position, pull - new Vector3(1.3f, 0.8f, 0.4f)), rope.Angle / MathUtil.TwoPi));
+                        }
+                        game.SetCamera(scene.Eye, scene.Target);
                         break;
-                    case TargetPoseScene:
-                        await game.Steps(200);
-                        await game.Press(Keys.V);
-                        await game.Press(Keys.V);
-                        await game.Frames(2);
-                        await game.CaptureTo(Shot("a2-faces-arriere"));
-                        await PressViews(game, 4);
+                    case AnimatedHumanScene human:
+                        // A ball thrown at the walking human, then U
+                        await game.Steps(60);
+                        var hips = HumanHips(game) ?? scene.Target;
+                        game.SetCamera(hips + new Vector3(0.5f, 0.9f, 4.5f), hips + new Vector3(0f, 0.2f, 0f));
+                        await game.Press(Keys.F);
+                        await game.Steps(40);
+                        report.Add($"{index:00} after the ball: mode {human.Mode}");
+                        await game.CaptureTo(Shot("b-hit"));
+                        await game.Steps(80);
+                        await game.CaptureTo(Shot("b-ragdoll"));
+                        await game.Press(Keys.U);
+                        await game.Steps(60);
+                        report.Add($"{index:00} after U: mode {human.Mode}");
+                        await game.CaptureTo(Shot("b-restored"));
+                        game.SetCamera(scene.Eye, scene.Target);
                         break;
-                    case StandingScene:
-                        await game.Press(Keys.L);
+                    case StandingNpcScene:
+                        await game.Press(Keys.B);
+                        await game.Steps(70);
+                        await game.CaptureTo(Shot("b-cannon"));
+                        break;
+                    case StandingSoftBodiesScene:
+                        game.SetCamera(new Vector3(1.8f, 2.2f, 5.6f), new Vector3(0f, 0.6f, 0f));
+                        await game.Steps(180);
+                        await game.CaptureTo(Shot("b-beans-close"));
+                        game.SetCamera(scene.Eye, scene.Target);
                         break;
                     case FinaleScene:
                         game.SetOverlay(false);
-                        await game.Steps(240);
-                        await game.CaptureTo(Shot("b-sans-overlay"));
-                        game.SetCamera(new Vector3(-2f, 3f, 6f), new Vector3(-1f, 0.8f, 0f));
-                        await game.Steps(180);
-                        await game.CaptureTo(Shot("c-proche"));
+                        await game.Steps(120);
+                        await game.CaptureTo(Shot("b-clean"));
+                        await game.Press(Keys.B);
+                        game.SetCamera(new Vector3(-1.5f, 3.4f, 7.5f), new Vector3(-1.5f, 0.8f, 0f));
+                        await game.Steps(120);
+                        await game.CaptureTo(Shot("b-close"));
                         game.SetOverlay(true);
-                        await PressViews(game, 3);
-                        await game.Frames(2);
-                        await game.CaptureTo(Shot("c2-particules"));
-                        await game.Press(Keys.V);
-                        await game.Frames(2);
-                        await game.CaptureTo(Shot("c3-particules-modeles"));
-                        await PressViews(game, 2);
-                        // The pose of a P capture where the sky took most of the screen
-                        const float yaw = 0.5204f, pitch = -0.0021f;
-                        var eye = new Vector3(-22.86f, 39.335f, 13.062f);
-                        game.SetCamera(eye, eye + new Vector3(-MathF.Sin(yaw) * MathF.Cos(pitch), MathF.Sin(pitch), -MathF.Cos(yaw) * MathF.Cos(pitch)));
-                        await game.Frames(3);
-                        await game.CaptureTo(Shot("d-ciel"));
-                        break;
-                    default:
-                        await game.Press(Keys.F);
+                        game.SetCamera(scene.Eye, scene.Target);
                         break;
                 }
-                await game.Steps(300);
-                await game.CaptureTo(Shot("b"));
-                report.Add($"{index:00} {scene.Name}: {game.FpsText()}");
-                index++;
+
+                // Long run: frame times without a limit, and the highest and fastest body of each kind
+                var probe = new Probe();
+                game.ClearFrameTimes();
+                for (int done = 0; done < stabilitySteps; done += 30)
+                {
+                    await game.Steps(30);
+                    probe.Sample(game.SceneSystem.SceneInstance.RootScene);
+                }
+                report.Add($"{index:00} {scene.Name}: no limit, {game.FpsText()}");
+                report.Add($"{index:00}   {game.StepTiming()}");
+                report.Add($"{index:00}   after {stabilitySteps} steps: {probe.Summary()}");
+                await game.CaptureTo(Shot($"c-after-{stabilitySteps}"));
             }
 
-            // The tour runs without a limit; K from there goes 30, 60, then 144. Measured on a light scene, where the limit
-            // holds, and on the finale, whose physics steps take longer than a frame at 144 FPS
-            for (int i = 0; i < 3; i++)
-                await game.Press(Keys.K);
-            foreach (var (scene, name) in new[] { (game.Scenes[^2], "11-limite-fps-leger"), (game.Scenes[^1], "11-limite-fps-finale") })
+            // At the default limit of the window
+            game.FpsLimit = DemoSettings.DefaultFpsLimit;
+            foreach (var (scene, index) in picked)
             {
                 game.LoadScene(scene);
-                await game.Steps(60);
+                await game.Steps(120);
                 game.ClearFrameTimes();
-                await game.Steps(240);
-                await game.CaptureTo(Path.Combine(folder, name));
-                report.Add($"{name}: limit {game.FpsLimit}, {game.FpsText()}");
+                await game.Steps(480);
+                report.Add($"{index:00} {scene.Name}: limit {game.FpsLimit}, {game.FpsText()}");
             }
             game.FpsLimit = 0;
         }, g => RunGameTest(g));
         Directory.CreateDirectory(folder);
-        File.WriteAllLines(Path.Combine(folder, "fps.txt"), report);
+        File.WriteAllLines(Path.Combine(folder, "report.txt"), report);
         Console.WriteLine(string.Join(Environment.NewLine, report));
     }
 
-    private static async System.Threading.Tasks.Task PressViews(VideoDemoGame game, int count)
+    private static Vector3? HumanHips(VideoDemoGame game) => game.SceneSystem.SceneInstance.RootScene.Entities
+        .Select(e => e.Get<SkeletonBodyComponent>()).FirstOrDefault(b => b is { BodyCount: > 0 }) is { } body ? body.GetBodyPosition(0) : null;
+
+    /// <summary> The highest point and the largest speed reached by each named kind of physical object </summary>
+    private sealed class Probe
     {
-        for (int i = 0; i < count; i++)
-            await game.Press(Keys.V);
+        private readonly Dictionary<string, (float Height, float Speed)> _max = new();
+        private (string Name, float Speed, Vector3 At) _fastest;
+        private readonly Dictionary<Entity, Vector3> _last = new();
+
+        public void Sample(Scene scene)
+        {
+            foreach (var entity in scene.Entities.SelectMany(Descendants))
+            {
+                foreach (var component in entity.Components)
+                {
+                    switch (component)
+                    {
+                        case BodyComponent { Simulation: not null, Kinematic: false } body:
+                            Record(entity.Name, body.Position, body.LinearVelocity);
+                            _last[entity] = body.Position;
+                            break;
+                        case SkeletonBodyComponent bones:
+                            for (int i = 0; i < bones.BodyCount; i++)
+                                Record(entity.Name + " (bones)", bones.GetBodyPosition(i), bones.GetBodyLinearVelocity(i));
+                            break;
+                        case SoftBodyComponent soft:
+                            for (int i = 0; i < soft.ParticleCount; i += 4)
+                                Record(entity.Name + " (particles)", soft.GetParticlePosition(i), soft.GetParticleVelocity(i));
+                            break;
+                    }
+                }
+            }
+        }
+
+        private void Record(string name, Vector3 position, Vector3 velocity)
+        {
+            var (height, speed) = _max.GetValueOrDefault(name, (float.MinValue, 0f));
+            _max[name] = (MathF.Max(height, position.Y), MathF.Max(speed, velocity.Length()));
+            if (velocity.Length() > _fastest.Speed)
+                _fastest = (name, velocity.Length(), position);
+        }
+
+        public string Summary()
+        {
+            var highest = _max.OrderByDescending(m => m.Value.Height).Take(3).Select(m => string.Format(CultureInfo.InvariantCulture, "{0} {1:0.0} m", m.Key, m.Value.Height));
+            var fastest = _max.OrderByDescending(m => m.Value.Speed).Take(3).Select(m => string.Format(CultureInfo.InvariantCulture, "{0} {1:0.0} m/s", m.Key, m.Value.Speed));
+            var farthest = _last.OrderByDescending(l => new Vector2(l.Value.X, l.Value.Z).Length()).FirstOrDefault();
+            return "highest: " + string.Join(", ", highest) + "  |  fastest: " + string.Join(", ", fastest)
+                + string.Format(CultureInfo.InvariantCulture, "  |  fastest sample at ({0:0.0}, {1:0.0}, {2:0.0})  |  farthest rigid body at the end: {3} ({4:0.0}, {5:0.0}, {6:0.0})",
+                    _fastest.At.X, _fastest.At.Y, _fastest.At.Z, farthest.Key?.Name, farthest.Value.X, farthest.Value.Y, farthest.Value.Z);
+        }
+
+        private static IEnumerable<Entity> Descendants(Entity entity) => new[] { entity }.Concat(entity.Transform.Children.SelectMany(child => Descendants(child.Entity)));
     }
 }
