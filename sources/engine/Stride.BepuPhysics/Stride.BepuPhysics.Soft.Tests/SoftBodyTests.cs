@@ -263,6 +263,67 @@ public class SoftBodyTests : GameTestBase
         });
     }
 
+    [Fact]
+    public static void FleshAndPhysicalBonesPullOnEachOther()
+    {
+        RunScene(async scene =>
+        {
+            // A capsule lying along a ragdoll spine of four bones; flesh and bones on layers which do not touch, so only the joints link them
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.5f, Radius = 0.25f, Tessellation = 16 }, Chain("Bone", 4, new Vector3(0f, -0.75f, 0f), new Vector3(0f, 0.5f, 0f)));
+            var flesh = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, SkeletonStiffness = 8f, CollisionLayer = CollisionLayer.Layer1 };
+            var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Ragdoll, SelfCollision = false, CollisionLayer = CollisionLayer.Layer2 };
+            for (int i = 0; i < 4; i++)
+                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, Shape = new SphereCollider { Radius = 0.1f, Mass = 0.1f } });
+            var entity = new Entity { new ModelComponent(model), flesh, bones };
+            entity.Transform.Position = new Vector3(0f, 0.3f, 0f);
+            entity.Transform.Rotation = Quaternion.RotationZ(MathF.PI / 2f);
+            scene.Add(entity);
+            flesh.Simulation!.CollisionMatrix.Set(CollisionLayer.Layer1, CollisionLayer.Layer2, false);
+            await Seconds(flesh, 1f);
+
+            // Resting inside the flesh, not on the floor; thrown up, the flesh carries the bones along
+            var start = bones.GetBodyPosition(0);
+            Assert.True(start.Y > 0.2f, $"Bone at {start}");
+            flesh.LinearVelocity = new Vector3(0f, 6f, 0f);
+            await Seconds(flesh, 0.3f);
+            Assert.True(bones.GetBodyPosition(0).Y - start.Y > 0.3f, $"Bone from {start} to {bones.GetBodyPosition(0)}");
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public static void StandingSkeletonInsideItsFleshStandsOnTheFloor(bool ghost)
+    {
+        RunScene(async scene =>
+        {
+            // A soft capsule from the floor to 1.2 m around a Standing spine whose hips are at 0.45 m: there is flesh under the hips
+            var skeleton = new Skeleton
+            {
+                Nodes =
+                [
+                    new ModelNodeDefinition { Name = "Root", ParentIndex = -1, Transform = { Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default },
+                    new ModelNodeDefinition { Name = "Hips", ParentIndex = 0, Transform = { Position = new Vector3(0f, 0.45f, 0f), Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default },
+                    new ModelNodeDefinition { Name = "Head", ParentIndex = 1, Transform = { Position = new Vector3(0f, 0.45f, 0f), Scale = Vector3.One, Rotation = Quaternion.Identity }, Flags = ModelNodeFlags.Default },
+                ],
+            };
+            var model = scene.Model(new CapsuleProceduralModel { Length = 0.6f, Radius = 0.3f, Tessellation = 16, LocalOffset = new Vector3(0f, 0.6f, 0f) }, skeleton);
+            var flesh = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, SkeletonStiffness = 10f, Mass = 20f };
+            var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Standing, SelfCollision = false, Ghost = ghost };
+            var collider = (BoneCollider)bones.Collider;
+            collider.Bones.Add(new BoneShape { NodeName = "Hips", Shape = new SphereCollider { Radius = 0.1f, Mass = 5f } });
+            collider.Bones.Add(new BoneShape { NodeName = "Head", Shape = new SphereCollider { Radius = 0.1f, Mass = 3f } });
+            var entity = scene.Add(flesh, model, new Vector3(0f, 0.02f, 0f));
+            entity.Add(bones);
+
+            await Seconds(flesh, 3f);
+            var hips = bones.GetBodyPosition(0);
+            Assert.True(bones.IsGrounded && bones.Ground is StaticComponent, $"Standing on {bones.Ground}");
+            Assert.True(MathF.Abs(hips.Y - 0.45f) < 0.1f, $"Hips at {hips}");
+            Assert.True(bones.GetBodyPosition(1).Y > hips.Y + 0.3f, $"Head at {bones.GetBodyPosition(1)}");
+        });
+    }
+
     /// <summary> How far the free particle farthest from its place on the skeleton is </summary>
     private static float MaximumDistanceToSkeleton(VolumetricSoftBodyComponent body, Entity entity)
     {

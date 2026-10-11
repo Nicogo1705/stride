@@ -26,6 +26,8 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
 {
     private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(VolumetricSoftBodyComponent));
 
+    private const float MinimumCouplingWeight = 0.05f; // A bone weighing less on a particle is not worth a joint
+
     private int _resolution = 6;
     private float _stiffness = 20f;
     private float _shearStiffness = 20f;
@@ -39,6 +41,9 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
 
     private SkeletonBinding? _skeletonBinding;
     private ConstraintHandle[] _skeletonServos = [];
+    private CollidableComponent? _coupledSkeleton; // The bodies following the skeleton the particles are joined to, instead of the servos
+    private uint _coupledVersion;
+    private readonly List<ConstraintHandle> _couplings = new();
     private int[] _servoParticles = [];
     private SkeletonEdge[] _skeletonEdges = [];
     private (Tetrahedron Cells, ConstraintHandle Handle)[] _skeletonVolumes = [];
@@ -167,6 +172,8 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// <remarks>
     /// The entity is then moved by whatever moves it, such as a script or an animation, instead of following the particles.
     /// Each particle is tied to the two bones nearest to it in the bind pose; it needs a model with a skeleton.
+    /// When another collidable of the entity has bodies following the nodes of that skeleton, like a ragdoll, each particle is joined to them instead:
+    /// the flesh and the bones pull on each other, and they do not collide.
     /// </remarks>
     [Display(category: CategorySoftBody)]
     [DefaultValue(false)]
@@ -213,7 +220,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     // Over half the diagonal of a cell face, so no ray or small object slips between four neighboring particles
     internal override float DefaultRadiusFraction => 0.72f;
 
-    internal override bool MovesEntity => _skeletonServos.Length == 0;
+    internal override bool MovesEntity => _skeletonBinding is null;
 
     internal override SoftBodyTopology BuildTopology(SourceMesh mesh) => LatticeBuilder.Build(mesh, _resolution, DefaultRadiusFraction);
 
@@ -257,9 +264,19 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
             AddSkeletonServos(simulation, particles, pinned, edges!, volumes!);
     }
 
+    internal override bool AllowContactWith(BodyHandle body, CollidableComponent other)
+    {
+        return ReferenceEquals(other, _coupledSkeleton) == false && base.AllowContactWith(body, other);
+    }
+
+    internal override bool IsAttachedTo(CollidableComponent other) => ReferenceEquals(other, _coupledSkeleton) || base.IsAttachedTo(other);
+
     internal override void BeforeStep(float deltaTime)
     {
-        if (_skeletonServos.Length == 0 || ModelNodes.Refresh(Entity) is not { } skeleton || Simulation is null)
+        if (_skeletonBinding is null || Simulation is null)
+            return;
+        UpdateSkeletonPull();
+        if (ModelNodes.Refresh(Entity) is not { } skeleton)
             return;
 
         var nodes = skeleton.NodeTransformations;
@@ -304,7 +321,10 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// <summary> Ties the particles to the skeleton when <see cref="FollowSkeleton"/> is set, false otherwise or without a skeleton </summary>
     private bool PrepareSkeletonBinding(SoftBodyTopology topology)
     {
+        // Constraints of an earlier creation went with its particles
         _skeletonServos = [];
+        _coupledSkeleton = null;
+        _couplings.Clear();
         _servoParticles = [];
         _skeletonEdges = [];
         _skeletonVolumes = [];
@@ -322,26 +342,121 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
         return true;
     }
 
-    /// <summary> One servo per free particle pulling it toward its place on the skeleton </summary>
+    /// <summary> Pulls every free particle toward its place on the skeleton, see <see cref="UpdateSkeletonPull"/> </summary>
     private void AddSkeletonServos(global::BepuPhysics.Simulation simulation, ReadOnlySpan<BodyHandle> particles, ReadOnlySpan<bool> pinned, List<SkeletonEdge> edges, List<(Tetrahedron, ConstraintHandle)> volumes)
     {
-        var servos = new List<ConstraintHandle>(particles.Length);
         var servoParticles = new List<int>(particles.Length);
         _skeletonTargets = new Vector3[particles.Length];
-        var pull = Spring(_skeletonStiffness, _skeletonDamping);
         for (int i = 0; i < particles.Length; i++)
         {
-            var position = simulation.Bodies[particles[i]].Pose.Position;
-            _skeletonTargets[i] = position.ToStride();
-            if (pinned[i])
-                continue;
-            servos.Add(simulation.Solver.Add(particles[i], new OneBodyLinearServo { Target = position, SpringSettings = pull, ServoSettings = ServoSettings.Default }));
-            servoParticles.Add(i);
+            _skeletonTargets[i] = simulation.Bodies[particles[i]].Pose.Position.ToStride();
+            if (pinned[i] == false)
+                servoParticles.Add(i);
         }
-        _skeletonServos = servos.ToArray();
         _servoParticles = servoParticles.ToArray();
         _skeletonEdges = edges.ToArray();
         _skeletonVolumes = volumes.ToArray();
+        UpdateSkeletonPull();
+    }
+
+    /// <summary>
+    /// Joins the particles to the bodies following the skeleton when another collidable of the entity has some in this simulation,
+    /// otherwise pulls them toward the skeleton with servos; called again before each step, as those bodies come and go
+    /// </summary>
+    private void UpdateSkeletonPull()
+    {
+        var skeletonBodies = FindSkeletonBodies();
+        if (_coupledSkeleton is not null && (ReferenceEquals(skeletonBodies, _coupledSkeleton) == false || _coupledSkeleton.Versioning != _coupledVersion))
+        {
+            // The joints to a rebuilt or removed collidable went with its bodies
+            if (_coupledSkeleton.Versioning == _coupledVersion)
+            {
+                foreach (var handle in _couplings)
+                    Simulation!.Simulation.Solver.Remove(handle);
+            }
+            _couplings.Clear();
+            _coupledSkeleton = null;
+        }
+
+        if (skeletonBodies is not null && _coupledSkeleton is null)
+        {
+            foreach (var handle in _skeletonServos)
+                Simulation!.Simulation.Solver.Remove(handle);
+            _skeletonServos = [];
+            Couple(skeletonBodies);
+        }
+        else if (skeletonBodies is null && _coupledSkeleton is null && _skeletonServos.Length == 0 && _servoParticles.Length > 0)
+        {
+            var solver = Simulation!.Simulation.Solver;
+            var pull = Spring(_skeletonStiffness, _skeletonDamping);
+            _skeletonServos = new ConstraintHandle[_servoParticles.Length];
+            for (int s = 0; s < _servoParticles.Length; s++)
+                _skeletonServos[s] = solver.Add(GetCollidableReference(_servoParticles[s]).BodyHandle, new OneBodyLinearServo { Target = _skeletonTargets[_servoParticles[s]].ToNumeric(), SpringSettings = pull, ServoSettings = ServoSettings.Default });
+        }
+
+        FiltersContactsWithOthers = _coupledSkeleton is not null || HasPinsOnBodies;
+    }
+
+    /// <summary> Another collidable of the entity, in this simulation, with bodies following nodes of the skeleton </summary>
+    private CollidableComponent? FindSkeletonBodies()
+    {
+        foreach (var component in Entity.Components)
+        {
+            if (component is not CollidableComponent collidable || ReferenceEquals(collidable, this) || ReferenceEquals(collidable.Simulation, Simulation) == false)
+                continue;
+            for (int i = 0; i < collidable.CollidableCount; i++)
+            {
+                if (collidable.GetFollowedNode(i) >= 0)
+                    return collidable;
+            }
+        }
+        return null;
+    }
+
+    /// <summary> Joins each free particle to the bodies of its two bones, at its place on them, with a pull shared by the weights of the bones </summary>
+    private void Couple(CollidableComponent skeletonBodies)
+    {
+        var simulation = Simulation!.Simulation;
+        var skeleton = ModelNodes.Refresh(Entity)!;
+        var nodes = skeleton.NodeTransformations;
+
+        // The first body of each node; a node without one uses the body of its closest ancestor with one
+        var bodyOfNode = new int[nodes.Length];
+        Array.Fill(bodyOfNode, -1);
+        for (int i = 0; i < skeletonBodies.CollidableCount; i++)
+        {
+            int node = skeletonBodies.GetFollowedNode(i);
+            if (node >= 0 && node < nodes.Length && bodyOfNode[node] < 0)
+                bodyOfNode[node] = i;
+        }
+
+        var binding = _skeletonBinding!;
+        foreach (var particle in _servoParticles)
+        {
+            var handle = GetCollidableReference(particle).BodyHandle;
+            for (int b = particle * SkeletonBinding.BonesPerParticle; b < (particle + 1) * SkeletonBinding.BonesPerParticle; b++)
+            {
+                float weight = binding.Weights[b];
+                if (weight < MinimumCouplingWeight)
+                    continue;
+                int node = binding.Nodes[b];
+                while (node >= 0 && bodyOfNode[node] < 0)
+                    node = skeleton.Nodes[node].ParentIndex;
+                if (node < 0)
+                    continue;
+
+                var body = simulation.Bodies[skeletonBodies.GetCollidableReference(bodyOfNode[node]).BodyHandle];
+                var target = Vector3.TransformCoordinate(binding.Offsets[b], nodes[binding.Nodes[b]].WorldMatrix).ToNumeric();
+                var offset = System.Numerics.Vector3.Transform(target - body.Pose.Position, System.Numerics.Quaternion.Conjugate(body.Pose.Orientation));
+                // Springs in parallel add up: with the square root of its weight each, both bones together pull as hard as SkeletonStiffness
+                var spring = Spring(_skeletonStiffness * MathF.Sqrt(weight), _skeletonDamping);
+                _couplings.Add(simulation.Solver.Add(body.Handle, handle, new BallSocketServo { LocalOffsetA = offset, SpringSettings = spring, ServoSettings = ServoSettings.Default }));
+            }
+        }
+
+        _coupledSkeleton = skeletonBodies;
+        _coupledVersion = skeletonBodies.Versioning;
+        Awake = true;
     }
 
     /// <summary> A spring of the lattice whose rest length follows the animated skeleton, with its stretch limit when it has one </summary>

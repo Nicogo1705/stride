@@ -412,6 +412,19 @@ public abstract class SoftBodyComponent : CollidableComponent
         FiltersContactsWithOthers = false;
     }
 
+    internal override bool IsAttachedTo(CollidableComponent other)
+    {
+        foreach (var pin in _bodyPins)
+        {
+            if (pin.Bound && ReferenceEquals(pin.Anchor, other))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary> Whether some pinned particles are joined to the bodies of another collidable, and ignore its contacts </summary>
+    private protected bool HasPinsOnBodies => _anchorOfParticle.Count > 0;
+
     internal override bool AllowContactWith(BodyHandle body, CollidableComponent other)
     {
         return _anchorOfParticle.TryGetValue(body.Value, out var anchor) == false || ReferenceEquals(other.Entity, anchor) == false;
@@ -522,9 +535,9 @@ public abstract class SoftBodyComponent : CollidableComponent
                 continue;
 
             var pin = Pins[p];
-            if (pin.AnchorKind != SoftBodyAnchorKind.World && pin.Anchor is { } anchor && FindAnchorBody(anchor) is { } anchorBody)
+            if (pin.AnchorKind != SoftBodyAnchorKind.World && pin.Anchor is { } anchor && FindAnchorBody(anchor, anchorNodes[p]) is { } anchorBody)
             {
-                var bodyPin = new BodyPin(pin, anchorBody, particles.ToArray());
+                var bodyPin = new BodyPin(pin, anchorBody, particles.ToArray(), anchorNodes[p]);
                 bodyPins.Add(bodyPin);
                 foreach (var particle in particles)
                     _anchorOfParticle[_particles[particle].Value] = anchor;
@@ -549,11 +562,14 @@ public abstract class SoftBodyComponent : CollidableComponent
 
         _worldPins = worldPins.ToArray();
         _bodyPins = bodyPins.ToArray();
-        FiltersContactsWithOthers = _anchorOfParticle.Count > 0;
+        FiltersContactsWithOthers |= _anchorOfParticle.Count > 0;
     }
 
-    /// <summary> The collidable of <paramref name="anchor"/> pinned particles are joined to: a body first, then other collidables with several bodies, then soft bodies </summary>
-    private CollidableComponent? FindAnchorBody(Entity anchor)
+    /// <summary>
+    /// The collidable of <paramref name="anchor"/> pinned particles are joined to: one with a body following <paramref name="node"/> first,
+    /// then a body, other collidables with several bodies, soft bodies
+    /// </summary>
+    private CollidableComponent? FindAnchorBody(Entity anchor, int node)
     {
         CollidableComponent? found = null;
         int foundRank = int.MaxValue;
@@ -562,6 +578,11 @@ public abstract class SoftBodyComponent : CollidableComponent
             if (component is not CollidableComponent collidable || ReferenceEquals(collidable, this) || collidable is StaticComponent)
                 continue;
             int rank = collidable switch { BodyComponent => 0, SoftBodyComponent => 2, _ => 1 };
+            for (int i = 0; node >= 0 && i < collidable.CollidableCount; i++)
+            {
+                if (collidable.GetFollowedNode(i) == node)
+                    rank = -1;
+            }
             if (rank < foundRank)
                 (found, foundRank) = (collidable, rank);
         }
@@ -598,7 +619,7 @@ public abstract class SoftBodyComponent : CollidableComponent
                     pin.Constraints.Add(simulation.Solver.Add(other, handle, new CenterDistanceConstraint(nearest[n].Distance, spring)));
                 }
             }
-            else if (FindNearest(anchor, position, nearest[..1]) > 0)
+            else if (FindNearest(anchor, position, nearest[..1], FollowedAncestor(anchor, pin.Node)) > 0)
             {
                 var body = simulation.Bodies[anchor.GetCollidableReference(nearest[0].Index).BodyHandle];
                 var offset = System.Numerics.Vector3.Transform(position - body.Pose.Position, System.Numerics.Quaternion.Conjugate(body.Pose.Orientation));
@@ -612,14 +633,14 @@ public abstract class SoftBodyComponent : CollidableComponent
     }
 
     /// <summary> The bodies of <paramref name="anchor"/> closest to <paramref name="position"/>, nearest first, as many as <paramref name="nearest"/> holds or fewer </summary>
-    private static int FindNearest(CollidableComponent anchor, System.Numerics.Vector3 position, Span<(float Distance, int Index)> nearest)
+    private static int FindNearest(CollidableComponent anchor, System.Numerics.Vector3 position, Span<(float Distance, int Index)> nearest, int node = -1)
     {
         var bodies = anchor.Simulation!.Simulation.Bodies;
         int found = 0;
         for (int i = 0; i < anchor.CollidableCount; i++)
         {
             var reference = anchor.GetCollidableReference(i);
-            if (reference.Mobility == CollidableMobility.Static)
+            if (reference.Mobility == CollidableMobility.Static || (node >= 0 && anchor.GetFollowedNode(i) != node))
                 continue;
 
             // Insertion into the sorted list, the farthest one drops out when it is full
@@ -634,6 +655,21 @@ public abstract class SoftBodyComponent : CollidableComponent
                 nearest[slot] = (distance, i);
         }
         return found;
+    }
+
+    /// <summary> <paramref name="node"/> or its closest ancestor with a body of <paramref name="anchor"/> following it, -1 for any body </summary>
+    private static int FollowedAncestor(CollidableComponent anchor, int node)
+    {
+        var nodes = anchor.Entity.Get<ModelComponent>()?.Skeleton?.Nodes;
+        for (; node >= 0 && nodes is not null; node = nodes[node].ParentIndex)
+        {
+            for (int i = 0; i < anchor.CollidableCount; i++)
+            {
+                if (anchor.GetFollowedNode(i) == node)
+                    return node;
+            }
+        }
+        return -1;
     }
 
     private static Matrix AnchorWorld(in WorldPin pin)
@@ -734,8 +770,10 @@ public abstract class SoftBodyComponent : CollidableComponent
     }
 
     /// <summary> The particles of a pin joined to the bodies of another collidable, and the constraints doing it while <see cref="Bound"/> </summary>
-    private sealed class BodyPin(SoftBodyPin settings, CollidableComponent anchor, int[] particles)
+    private sealed class BodyPin(SoftBodyPin settings, CollidableComponent anchor, int[] particles, int node)
     {
+        /// <summary> The node of the anchor's model the particles are joined to the bodies of, -1 for any body </summary>
+        public int Node { get; } = node;
         public SoftBodyPin Settings { get; } = settings;
         public CollidableComponent Anchor { get; } = anchor;
         public int[] Particles { get; } = particles;
