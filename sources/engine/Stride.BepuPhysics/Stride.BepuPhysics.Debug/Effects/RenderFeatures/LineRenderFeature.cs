@@ -10,13 +10,18 @@ using Stride.Rendering;
 namespace Stride.BepuPhysics.Debug.Effects.RenderFeatures;
 
 /// <summary>
-/// Draws <see cref="LineRenderObject"/>s as screen-space lines of constant width, on top of the scene.
+/// Draws <see cref="LineRenderObject"/>s as screen-space lines of constant width, on top of the scene or faded where something hides them.
 /// </summary>
 /// <remarks> Lines are only drawn in the render stages picked by <see cref="RootRenderFeature.RenderStageSelectors"/>. </remarks>
 public class LineRenderFeature : RootRenderFeature
 {
+    // Opacity of depth tested segments where something hides them, the default of the wireframes' hidden lines
+    private const float HiddenOpacity = 0.5f;
+
     private DynamicEffectInstance _shader = null!;
-    private MutablePipelineState _pipelineState = null!;
+    private MutablePipelineState _overlayPipelineState = null!;
+    private MutablePipelineState _visiblePipelineState = null!;
+    private MutablePipelineState _hiddenPipelineState = null!;
 
     /// <summary>
     /// The width of the lines, in pixels.
@@ -40,13 +45,23 @@ public class LineRenderFeature : RootRenderFeature
         _shader = new DynamicEffectInstance("StrideDebugLineShader");
         _shader.Initialize(Context.Services);
 
-        _pipelineState = new MutablePipelineState(Context.GraphicsDevice);
-        _pipelineState.State.SetDefaults();
-        _pipelineState.State.InputElements = LineRenderObject.LineVertex.Layout.CreateInputElements();
-        _pipelineState.State.PrimitiveType = PrimitiveType.LineList;
-        _pipelineState.State.RasterizerState.CullMode = CullMode.None;
         // A debug overlay: normals start inside body A and markers sit on surfaces, depth testing would hide them
-        _pipelineState.State.DepthStencilState = DepthStencilStates.None;
+        _overlayPipelineState = CreatePipelineState(DepthStencilStates.None);
+        // Depth tested batches: the two depth tests split every pixel of a segment between them
+        _visiblePipelineState = CreatePipelineState(DepthStencilStates.DepthRead);
+        _hiddenPipelineState = CreatePipelineState(new DepthStencilStateDescription(depthEnable: true, depthWriteEnable: false) { DepthBufferFunction = CompareFunction.Greater });
+    }
+
+    private MutablePipelineState CreatePipelineState(DepthStencilStateDescription depthStencilState)
+    {
+        var pipelineState = new MutablePipelineState(Context.GraphicsDevice);
+        pipelineState.State.SetDefaults();
+        pipelineState.State.InputElements = LineRenderObject.LineVertex.Layout.CreateInputElements();
+        pipelineState.State.PrimitiveType = PrimitiveType.LineList;
+        pipelineState.State.RasterizerState.CullMode = CullMode.None;
+        pipelineState.State.BlendState = BlendStates.AlphaBlend;
+        pipelineState.State.DepthStencilState = depthStencilState;
+        return pipelineState;
     }
 
     public override void Draw(RenderDrawContext context, RenderView renderView, RenderViewStage renderViewStage, int startIndex, int endIndex)
@@ -66,17 +81,31 @@ public class LineRenderFeature : RootRenderFeature
                 continue;
 
             var vertexBuffer = lines.Upload(context.CommandList);
-
-            _pipelineState.State.RootSignature = _shader.RootSignature;
-            _pipelineState.State.EffectBytecode = _shader.Effect.Bytecode;
-            _pipelineState.State.Output.CaptureState(context.CommandList);
-            _pipelineState.Update();
-
             context.CommandList.SetVertexBuffer(0, vertexBuffer, 0, LineRenderObject.LineVertex.Size);
-            context.CommandList.SetPipelineState(_pipelineState.CurrentState);
-            _shader.Apply(context.GraphicsContext);
-            context.CommandList.Draw(lines.VertexCount);
+            if (lines.DepthTested)
+            {
+                // Hidden parts first, so the visible ones stay on top where they cross
+                DrawPass(context, lines, _hiddenPipelineState, HiddenOpacity);
+                DrawPass(context, lines, _visiblePipelineState, 1f);
+            }
+            else
+            {
+                DrawPass(context, lines, _overlayPipelineState, 1f);
+            }
         }
+    }
+
+    private void DrawPass(RenderDrawContext context, LineRenderObject lines, MutablePipelineState pipelineState, float opacity)
+    {
+        pipelineState.State.RootSignature = _shader.RootSignature;
+        pipelineState.State.EffectBytecode = _shader.Effect.Bytecode;
+        pipelineState.State.Output.CaptureState(context.CommandList);
+        pipelineState.Update();
+
+        _shader.Parameters.Set(DebugLineShaderKeys.Opacity, opacity);
+        context.CommandList.SetPipelineState(pipelineState.CurrentState);
+        _shader.Apply(context.GraphicsContext);
+        context.CommandList.Draw(lines.VertexCount);
     }
 
     private LineRenderObject GetLines(RenderViewStage renderViewStage, int index)

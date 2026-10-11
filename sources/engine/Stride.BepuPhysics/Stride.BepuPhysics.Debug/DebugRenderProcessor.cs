@@ -28,7 +28,7 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
     private VisibilityGroup _visibilityGroup = null!;
     private BepuConfiguration? _bepuConfiguration;
     private readonly LineRenderObject _contactLines = new();
-    private readonly LineRenderObject _sphereLines = new();
+    private readonly LineRenderObject _sphereLines = new() { DepthTested = true };
     private readonly Dictionary<BepuSimulation, ContactRecorder> _contactRecorders = new();
     private readonly Dictionary<CollidableComponent, (WireFrameRenderObject[] Wireframes, object? cache)> _wireFrameRenderObject = new();
 

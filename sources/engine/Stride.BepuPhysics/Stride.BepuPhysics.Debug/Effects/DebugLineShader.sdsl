@@ -13,6 +13,8 @@ shader DebugLineShader : ShaderBase, Transformation, PositionStream4, ColorBase
 
     float2 ViewportSize;
     float LineWidth;
+    // 1 for segments drawn over everything or where nothing hides them, lower for the pass that draws them where something does
+    float Opacity;
 
     stage override void VSMain()
     {
@@ -53,6 +55,7 @@ shader DebugLineShader : ShaderBase, Transformation, PositionStream4, ColorBase
 
     stage override void PSMain()
     {
-        streams.ColorTarget = streams.Color;
+        // Premultiplied, for the AlphaBlend state; the alpha of the vertex color is ignored, as with an opaque blend
+        streams.ColorTarget = float4(streams.Color.rgb * Opacity, Opacity);
     }
 };

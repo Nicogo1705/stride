@@ -23,6 +23,9 @@ public sealed class LineRenderObject : RenderObject, IDisposable
     /// </summary>
     public int VertexCount { get; private set; }
 
+    /// <summary> Segments behind scene geometry are drawn faded, as hidden wireframe lines are, rather than over everything </summary>
+    internal bool DepthTested { get; init; }
+
     /// <summary>
     /// Removes all segments.
     /// </summary>
