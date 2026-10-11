@@ -33,17 +33,17 @@ internal sealed class DeformableModel : IDisposable
 
     private static readonly ConditionalWeakTable<Model, Model> SourceOfModel = new();
 
-    private readonly Buffer _vertexBuffer;
     private readonly Buffer _indexBuffer;
     private readonly Vector3[] _particles;
+    private Buffer? _vertexBuffer; // Deformation on the CPU, the GPU deformation has its own
 
     // Deformation on the CPU
-    private readonly Vertex[] _vertices = [];
-    private readonly Vector3[] _positions = [];
-    private readonly Vector3[] _normals = [];
-    private readonly Vector4[] _tangents = [];
+    private Vertex[] _vertices = [];
+    private Vector3[] _positions = [];
+    private Vector3[] _normals = [];
+    private Vector4[] _tangents = [];
 
-    private readonly GpuDeformation? _gpu;
+    private GpuDeformation? _gpu;
 
     public Model Model { get; }
 
@@ -55,15 +55,50 @@ internal sealed class DeformableModel : IDisposable
     {
         Topology = topology;
         var mesh = topology.Mesh;
-        int vertexCount = mesh.Positions.Length;
         _particles = new Vector3[topology.ParticleCount];
+        _indexBuffer = Buffer.Index.New(device, mesh.Indices);
 
+        // The skeleton stays, so an animation of the source model still plays and the soft body can follow it
+        Model = new Model { Skeleton = source.Skeleton };
+        SourceOfModel.AddOrUpdate(Model, source);
+        foreach (var material in source.Materials)
+            Model.Materials.Add(material);
+        foreach (var part in mesh.Parts)
+            Model.Meshes.Add(new Mesh { MaterialIndex = part.MaterialIndex });
+
+        SetMode(device, mode, retired: []);
+    }
+
+    /// <summary>
+    /// Switches the buffers and draws of the meshes to <paramref name="mode"/>, in place: the model and its meshes stay, so does whatever follows them.
+    /// </summary>
+    /// <param name="retired"> Receives the buffers of the previous mode, to dispose of once the renderer no longer uses them </param>
+    public void SetMode(GraphicsDevice device, SoftBodyDeformationMode mode, ICollection<IDisposable> retired)
+    {
+        bool built = _gpu is not null || _vertexBuffer is not null;
+        if (built && mode == Mode)
+            return;
+
+        if (_gpu is not null)
+            retired.Add(_gpu);
+        if (_vertexBuffer is not null)
+            retired.Add(_vertexBuffer);
+        _gpu = null;
+        _vertexBuffer = null;
+
+        var mesh = Topology.Mesh;
+        int vertexCount = mesh.Positions.Length;
+        Buffer vertexBuffer;
         VertexDeclaration layout;
         if (mode == SoftBodyDeformationMode.Gpu)
         {
-            _gpu = new GpuDeformation(device, topology);
-            _vertexBuffer = _gpu.VertexBuffer;
+            _gpu = new GpuDeformation(device, Topology);
+            vertexBuffer = _gpu.VertexBuffer;
             layout = _gpu.Layout;
+            _vertices = [];
+            _positions = [];
+            _normals = [];
+            _tangents = [];
         }
         else
         {
@@ -73,35 +108,28 @@ internal sealed class DeformableModel : IDisposable
             _positions = new Vector3[vertexCount];
             _normals = new Vector3[vertexCount];
             _tangents = new Vector4[vertexCount];
-            _vertexBuffer = Buffer.Vertex.New(device, bufferSize: vertexCount * Vertex.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
+            vertexBuffer = _vertexBuffer = Buffer.Vertex.New(device, bufferSize: vertexCount * Vertex.Layout.VertexStride, usage: GraphicsResourceUsage.Dynamic);
             layout = Vertex.Layout;
         }
-        _indexBuffer = Buffer.Index.New(device, mesh.Indices);
 
-        // The skeleton stays, so an animation of the source model still plays and the soft body can follow it
-        Model = new Model { Skeleton = source.Skeleton };
-        SourceOfModel.AddOrUpdate(Model, source);
-        foreach (var material in source.Materials)
-            Model.Materials.Add(material);
-
-        var vertexBinding = new VertexBufferBinding(_vertexBuffer, layout, vertexCount);
+        var vertexBinding = new VertexBufferBinding(vertexBuffer, layout, vertexCount);
         var indexBinding = new IndexBufferBinding(_indexBuffer, true, mesh.Indices.Length);
-        foreach (var part in mesh.Parts)
+        for (int i = 0; i < mesh.Parts.Length; i++)
         {
-            var renderMesh = new Mesh
+            var part = mesh.Parts[i];
+            var renderMesh = Model.Meshes[i];
+            renderMesh.Draw = new MeshDraw
             {
-                MaterialIndex = part.MaterialIndex,
-                Draw = new MeshDraw
-                {
-                    PrimitiveType = PrimitiveType.TriangleList,
-                    StartLocation = part.FirstIndex,
-                    DrawCount = part.IndexCount,
-                    VertexBuffers = [vertexBinding],
-                    IndexBuffer = indexBinding,
-                },
+                PrimitiveType = PrimitiveType.TriangleList,
+                StartLocation = part.FirstIndex,
+                DrawCount = part.IndexCount,
+                VertexBuffers = [vertexBinding],
+                IndexBuffer = indexBinding,
             };
-            _gpu?.Bind(renderMesh);
-            Model.Meshes.Add(renderMesh);
+            if (_gpu is not null)
+                _gpu.Bind(renderMesh);
+            else
+                GpuDeformation.Unbind(renderMesh);
         }
     }
 
@@ -159,13 +187,10 @@ internal sealed class DeformableModel : IDisposable
     {
         // The shader pushes along normals in world space, the bounds are in local space
         var offset = Topology.LatticeCoordinates is null ? SurfaceOffset(body) : 0f;
-        foreach (var mesh in Model.Meshes)
-            mesh.Parameters.Set(SoftBodySurfaceDeformationKeys.SurfaceOffset, offset);
-
         world.Decompose(out var scale, out Quaternion _, out _);
         var smallestScale = MathF.Min(MathF.Abs(scale.X), MathF.Min(MathF.Abs(scale.Y), MathF.Abs(scale.Z)));
         var localOffset = MathUtil.IsZero(smallestScale) ? 0f : offset / smallestScale;
-        SetBounds(_gpu!.Update(_particles, Matrix.Invert(world), localOffset));
+        SetBounds(_gpu!.Update(_particles, Matrix.Invert(world), offset, localOffset));
     }
 
     /// <summary> How far the vertices of a surface are pushed along their normal, so the two faces of a double sided model do not fight over the same depth </summary>
@@ -189,7 +214,7 @@ internal sealed class DeformableModel : IDisposable
         if (_gpu is not null)
             _gpu.Upload(commandList);
         else
-            _vertexBuffer.SetData<Vertex>(commandList, _vertices.AsSpan());
+            _vertexBuffer!.SetData<Vertex>(commandList, _vertices.AsSpan());
     }
 
     /// <summary> Carries the authored normals and tangents along the deformation of the lattice cell each vertex is in </summary>
@@ -220,10 +245,8 @@ internal sealed class DeformableModel : IDisposable
 
     public void Dispose()
     {
-        if (_gpu is not null)
-            _gpu.Dispose();
-        else
-            _vertexBuffer.Dispose();
+        _gpu?.Dispose();
+        _vertexBuffer?.Dispose();
         _indexBuffer.Dispose();
     }
 }

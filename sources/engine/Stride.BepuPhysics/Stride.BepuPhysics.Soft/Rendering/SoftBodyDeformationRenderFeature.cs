@@ -28,7 +28,6 @@ internal sealed class SoftBodyDeformationRenderFeature : SubRenderFeature
     private StaticObjectPropertyKey<DeformationInfo> _deformationInfoKey;
     private LogicalGroupReference _particlesGroup;
     private LogicalGroupReference _ringGroup;
-    private ConstantBufferOffsetReference _surfaceOffset;
 
     protected override void InitializeCore()
     {
@@ -37,7 +36,6 @@ internal sealed class SoftBodyDeformationRenderFeature : SubRenderFeature
         _deformationInfoKey = RootRenderFeature.RenderData.CreateStaticObjectKey<DeformationInfo>();
         _particlesGroup = root.CreateDrawLogicalGroup("SoftBody");
         _ringGroup = root.CreateDrawLogicalGroup("SoftBodySurface");
-        _surfaceOffset = root.CreateDrawCBufferOffsetSlot(SoftBodySurfaceDeformationKeys.SurfaceOffset.Name);
     }
 
     public override void PrepareEffectPermutations(RenderDrawContext context)
@@ -72,7 +70,7 @@ internal sealed class SoftBodyDeformationRenderFeature : SubRenderFeature
         });
     }
 
-    public override unsafe void Prepare(RenderDrawContext context)
+    public override void Prepare(RenderDrawContext context)
     {
         var renderNodes = ((RootEffectRenderFeature)RootRenderFeature).RenderNodes;
         Dispatcher.ForBatched(renderNodes.Count, (from, toExclusive) =>
@@ -95,10 +93,6 @@ internal sealed class SoftBodyDeformationRenderFeature : SubRenderFeature
                 var ringGroup = perDrawLayout.GetLogicalGroup(_ringGroup);
                 if (ringGroup.DescriptorEntryStart != -1)
                     renderNode.Resources.DescriptorSet.SetShaderResourceView(ringGroup.DescriptorEntryStart, parameters.Get(SoftBodySurfaceDeformationKeys.Ring));
-
-                var offset = perDrawLayout.GetConstantBufferOffset(_surfaceOffset);
-                if (offset != -1)
-                    *(float*)((byte*)renderNode.Resources.ConstantBuffer.Data + offset) = parameters.Get(SoftBodySurfaceDeformationKeys.SurfaceOffset);
             }
         });
     }

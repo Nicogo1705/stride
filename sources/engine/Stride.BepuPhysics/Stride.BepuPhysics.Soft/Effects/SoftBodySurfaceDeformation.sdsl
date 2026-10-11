@@ -21,12 +21,6 @@ shader SoftBodySurfaceDeformation : SoftBodyDeformation
         stage StructuredBuffer<RingTriangle> Ring;
     }
 
-    cbuffer PerDraw
-    {
-        // How far along its normal each vertex is pushed, so the two faces of a double sided cloth do not fight over the same depth
-        stage float SurfaceOffset;
-    }
-
     stage stream uint SurfaceParticle : SOFTBODYPARTICLE;
 
     // The first triangle of the vertex in Ring and the amount of them
@@ -37,7 +31,8 @@ shader SoftBodySurfaceDeformation : SoftBodyDeformation
 
     override void Deform()
     {
-        float3 position = Particle(streams.SurfaceParticle);
+        float4 particle = Particles[streams.SurfaceParticle];
+        float3 position = particle.xyz;
         float3 normal = 0;
         float3 tangent = 0;
         for (uint i = 0; i < streams.SurfaceRing.y; i++)
@@ -54,6 +49,7 @@ shader SoftBodySurfaceDeformation : SoftBodyDeformation
         float3 across = cross(normal, abs(normal.x) < 0.9 ? float3(1, 0, 0) : float3(0, 1, 0));
         tangent = dot(tangent, tangent) < ZeroTangentSquared ? across : tangent;
 
-        SetMeshVertex(position + normal * SurfaceOffset, normal, tangent, 1);
+        // Pushed along its normal, so the two faces of a double sided cloth do not fight over the same depth
+        SetMeshVertex(position + normal * particle.w, normal, tangent, 1);
     }
 };

@@ -12,7 +12,7 @@ shader SoftBodyDeformation : ShaderBase, Transformation, PositionStream4, Normal
 {
     rgroup PerDraw.SoftBody
     {
-        // World space position of each particle, w is unused
+        // World space position of each particle; in w, how far the vertices of a surface on it are pushed along their normal
         stage StructuredBuffer<float4> Particles;
     }
 

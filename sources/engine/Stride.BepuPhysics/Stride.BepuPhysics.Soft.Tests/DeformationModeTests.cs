@@ -54,7 +54,10 @@ public class DeformationModeTests : GameTestBase
                 using (var cpu = await game.Capture(bodies, SoftBodyDeformationMode.Cpu))
                 using (var stream = File.Create(cpuPath))
                     cpu.Save(stream, ImageFileType.Png);
+                var models = bodies.Select(b => b.Entity.Get<ModelComponent>()!.Model).ToArray();
                 using var gpu = await game.Capture(bodies, SoftBodyDeformationMode.Gpu);
+                // The mode switches in place: what follows the model (node links, skeleton bodies) is left alone
+                Assert.Equal(models, bodies.Select(b => b.Entity.Get<ModelComponent>()!.Model));
                 using (var stream = File.Create(gpuPath))
                     gpu.Save(stream, ImageFileType.Png);
 

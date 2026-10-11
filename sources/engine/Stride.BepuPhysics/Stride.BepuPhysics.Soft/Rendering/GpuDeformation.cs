@@ -142,19 +142,29 @@ internal sealed class GpuDeformation : IDisposable
             mesh.Parameters.Set(SoftBodySurfaceDeformationKeys.Ring, _ringBuffer);
     }
 
+    /// <summary> Makes <paramref name="mesh"/> drawn from its vertex buffer again </summary>
+    public static void Unbind(Mesh mesh)
+    {
+        // Setting rather than removing, so the permutation counter of the parameters moves
+        mesh.Parameters.Set(StrideEffectBaseKeys.ExtensionPostVertexStageShader, null);
+        mesh.Parameters.Set(SoftBodyDeformationKeys.Particles, null);
+        mesh.Parameters.Set(SoftBodySurfaceDeformationKeys.Ring, null);
+    }
+
     /// <summary> Takes the particles for the next upload and returns their bounds in the space of <paramref name="worldToLocal"/>, grown to contain the vertices </summary>
-    /// <param name="surfaceOffset"> How far along their normal the vertices of a surface are pushed, in local space </param>
-    public BoundingBox Update(ReadOnlySpan<Vector3> particles, in Matrix worldToLocal, float surfaceOffset)
+    /// <param name="surfaceOffset"> How far along their normal the vertices of a surface are pushed, in world space </param>
+    /// <param name="localSurfaceOffset"> The same distance in the space of <paramref name="worldToLocal"/>, at most </param>
+    public BoundingBox Update(ReadOnlySpan<Vector3> particles, in Matrix worldToLocal, float surfaceOffset, float localSurfaceOffset)
     {
         var bounds = new BoundingBox(new Vector3(float.MaxValue), new Vector3(float.MinValue));
         for (int i = 0; i < particles.Length; i++)
         {
-            _particles[i] = new Vector4(particles[i], 0f);
+            _particles[i] = new Vector4(particles[i], surfaceOffset);
             var local = Vector3.TransformCoordinate(particles[i], worldToLocal);
             BoundingBox.Merge(ref bounds, ref local, out bounds);
         }
 
-        var margin = _latticeMargin + MathF.Abs(surfaceOffset);
+        var margin = _latticeMargin + MathF.Abs(localSurfaceOffset);
         return new BoundingBox(bounds.Minimum - new Vector3(margin), bounds.Maximum + new Vector3(margin));
     }
 
