@@ -14,14 +14,11 @@ namespace Stride.BepuPhysics.Debug.Effects.RenderFeatures;
 /// Draws <see cref="WireFrameRenderObject"/>s as wireframes, in the render stages picked by <see cref="RootRenderFeature.RenderStageSelectors"/>.
 /// </summary>
 /// <remarks>
-/// Lines are drawn at full opacity where nothing hides them, and at half opacity where something does, such as the
-/// collider's own visual model: a collider inside its model stays visible, and the parts sticking out of it stand out.
+/// Lines are drawn at full opacity where nothing hides them, and at <see cref="HiddenLineOpacity"/> where something does, such as
+/// the collider's own visual model: a collider inside its model stays visible, and the parts sticking out of it stand out.
 /// </remarks>
 public class SinglePassWireframeRenderFeature : RootRenderFeature
 {
-    // Opacity of the lines something hides; only their front faces are drawn there, so a hidden collider reads as a surface
-    private const float HiddenOpacity = 0.5f;
-
     private DynamicEffectInstance _shader = null!;
     private MutablePipelineState _visiblePipelineState = null!;
     private MutablePipelineState _hiddenPipelineState = null!;
@@ -32,6 +29,14 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     [DataMember(10)]
     [DataMemberRange(0.0f, 10.0f, 0.001f, 0.002f, 4)]
     public float LineWidth = 3f;
+
+    /// <summary>
+    /// Opacity of the lines something hides, such as the collider's own visual model; 0 draws only the lines nothing hides.
+    /// </summary>
+    /// <remarks> Only the front faces of the colliders are drawn where hidden, so a collider seen through its model reads as a surface. </remarks>
+    [DataMember(20)]
+    [DataMemberRange(0.0f, 1.0f, 0.05f, 0.1f, 2)]
+    public float HiddenLineOpacity = 0.5f;
 
     public override Type SupportedRenderObjectType => typeof(WireFrameRenderObject);
 
@@ -86,7 +91,9 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
         _shader.Parameters.Set(SinglePassWireframeShaderKeys.LineWidth, LineWidth);
 
         // Hidden lines first, so the visible ones stay on top where they cross
-        DrawPass(context, renderView, renderViewStage, startIndex, endIndex, _hiddenPipelineState, HiddenOpacity);
+        var hiddenOpacity = MathUtil.Clamp(HiddenLineOpacity, 0f, 1f);
+        if (!MathUtil.IsZero(hiddenOpacity))
+            DrawPass(context, renderView, renderViewStage, startIndex, endIndex, _hiddenPipelineState, hiddenOpacity);
         DrawPass(context, renderView, renderViewStage, startIndex, endIndex, _visiblePipelineState, 1f);
     }
 

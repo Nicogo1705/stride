@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Stride.BepuPhysics.Debug;
+using Stride.BepuPhysics.Debug.Effects.RenderFeatures;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.Core.Mathematics;
 using Stride.Engine;
@@ -59,6 +60,19 @@ namespace Stride.BepuPhysics.Tests
             Assert.True(halfBlended > changed * 9 / 10, $"{halfBlended} of the {changed} line pixels blend half and half with the model");
         }
 
+        [Fact]
+        public static void HiddenLinesCanBeTurnedOff()
+        {
+            var (inside, insideWithout) = Render(colliderRadius: 0.4f, modelRadius: 0.5f, hiddenLineOpacity: 0f);
+            var changed = 0;
+            ForEachSpherePixel(inside, (x, y, color) =>
+            {
+                if (Differs(color, insideWithout[x, y]))
+                    changed++;
+            });
+            Assert.True(changed == 0, $"{changed} pixels show a line of a 0.4 collider in a 0.5 model with hidden lines off");
+        }
+
         private static bool Differs(Color a, Color b) => Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B) > 30;
 
         /// <summary> The color of the lines: the most frequent one among the sphere pixels that differ between both frames </summary>
@@ -89,15 +103,7 @@ namespace Stride.BepuPhysics.Tests
 
         /// <summary> A sphere model and a sphere collider at the origin, rendered with and without the collider's wireframe </summary>
         // 0.5 m sphere seen from 1.5 m: it spans about half the image height
-        private static (Frame WithLines, Frame WithoutLines) Render(float colliderRadius, float modelRadius)
-            => Render(game => new Entity
-            {
-                new ModelComponent(new SphereProceduralModel { Radius = modelRadius }.Generate(game.Services)),
-                new StaticComponent { Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = colliderRadius } } } },
-            }, cameraDistance: 1.5f);
-
-        /// <summary> The collidable <paramref name="create"/> makes, at the origin, rendered with and without its wireframe </summary>
-        private static (Frame WithLines, Frame WithoutLines) Render(Func<Game, Entity> create, float cameraDistance)
+        private static (Frame WithLines, Frame WithoutLines) Render(float colliderRadius, float modelRadius, float hiddenLineOpacity = 0.5f)
         {
             Frame? withLines = null, withoutLines = null;
             var game = new GameTest();
@@ -107,13 +113,19 @@ namespace Stride.BepuPhysics.Tests
             {
                 game.ScreenShotAutomationEnabled = false;
                 var compositor = GraphicsCompositorHelper.CreateDefault(false, clearColor: Color.Gray, graphicsProfile: GraphicsProfile.Level_11_0);
+                // The debug view uses the wireframe feature the compositor already has
+                compositor.RenderFeatures.Add(new SinglePassWireframeRenderFeature { HiddenLineOpacity = hiddenLineOpacity });
                 game.SceneSystem.GraphicsCompositor = compositor;
 
                 var debug = new DebugRenderComponent { Visible = true };
-                var collidable = create(game);
-                collidable.Add(debug);
+                var collidable = new Entity
+                {
+                    new ModelComponent(new SphereProceduralModel { Radius = modelRadius }.Generate(game.Services)),
+                    new StaticComponent { Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = colliderRadius } } } },
+                    debug,
+                };
                 var camera = new Entity { new CameraComponent { Slot = compositor.Cameras[0].ToSlotId() } };
-                camera.Transform.Position = new Vector3(0, 0, cameraDistance);
+                camera.Transform.Position = new Vector3(0, 0, 1.5f);
 
                 var scene = game.SceneSystem.SceneInstance.RootScene;
                 scene.Entities.Add(camera);
