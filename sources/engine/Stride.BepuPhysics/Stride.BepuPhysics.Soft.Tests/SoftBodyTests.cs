@@ -94,6 +94,27 @@ public class SoftBodyTests : GameTestBase
     }
 
     [Fact]
+    public static void OnlyTheFirstSoftBodyOfAnEntityDeformsItsModel()
+    {
+        RunScene(async scene =>
+        {
+            var first = new VolumetricSoftBodyComponent { Resolution = 2 };
+            var second = new ClothComponent();
+            var entity = scene.Add(first, new CubeProceduralModel(), new Vector3(0f, 2f, 0f));
+            await Seconds(first, 0.1f);
+            var renderModel = entity.Get<ModelComponent>().Model;
+
+            entity.Add(second);
+            await Seconds(first, 0.1f);
+
+            Assert.Equal(3 * 3 * 3, first.ParticleCount);
+            Assert.Null(second.Simulation);
+            Assert.Equal(0, second.ParticleCount);
+            Assert.Same(renderModel, entity.Get<ModelComponent>().Model);
+        });
+    }
+
+    [Fact]
     public static void EachParticleHasADebugShape()
     {
         RunScene(async scene =>

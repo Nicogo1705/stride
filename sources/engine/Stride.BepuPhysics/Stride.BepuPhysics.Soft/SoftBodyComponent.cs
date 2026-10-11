@@ -417,11 +417,25 @@ public abstract class SoftBodyComponent : CollidableComponent
 
     internal override bool CanAttach(ICollider collider)
     {
-        if (collider is ParticleCollider)
-            return true;
+        if (collider is not ParticleCollider)
+        {
+            Logger.Error($"{GetType().Name} on '{Entity?.Name}' needs a {nameof(ParticleCollider)}, its particles cannot take the shape of a {collider.GetType().Name}; it is left out of the simulation");
+            return false;
+        }
 
-        Logger.Error($"{GetType().Name} on '{Entity?.Name}' needs a {nameof(ParticleCollider)}, its particles cannot take the shape of a {collider.GetType().Name}; it is left out of the simulation");
-        return false;
+        // Every soft body of an entity would deform the same model: the first one owns it
+        foreach (var component in Entity.Components)
+        {
+            if (component is SoftBodyComponent first)
+            {
+                if (ReferenceEquals(first, this))
+                    return true;
+
+                Logger.Error($"{GetType().Name} on '{Entity.Name}' is left out of the simulation: the {first.GetType().Name} before it already deforms the model of the entity");
+                return false;
+            }
+        }
+        return true;
     }
 
     internal override int DebugSphereCount => Simulation is null ? 0 : _particles.Length;
@@ -633,7 +647,7 @@ public abstract class SoftBodyComponent : CollidableComponent
             }
 
             var spring = Spring(pin.SpringFrequency, pin.SpringDampingRatio);
-            var servo = new ServoSettings(float.MaxValue, 0f, pin.ServoMaximumForce);
+            var servo = new ServoSettings(float.MaxValue, 0f, pin.SolverMaximumForce);
             foreach (var particle in particles)
             {
                 var position = Particle(particle).Pose.Position;
@@ -658,7 +672,7 @@ public abstract class SoftBodyComponent : CollidableComponent
 
         var simulation = Simulation!.Simulation;
         var spring = Spring(pin.Settings.SpringFrequency, pin.Settings.SpringDampingRatio);
-        var servo = new ServoSettings(float.MaxValue, 0f, pin.Settings.ServoMaximumForce);
+        var servo = new ServoSettings(float.MaxValue, 0f, pin.Settings.SolverMaximumForce);
         Span<(float Distance, int Index)> nearest = stackalloc (float, int)[SoftAnchorParticles];
         foreach (var particle in pin.Particles)
         {
