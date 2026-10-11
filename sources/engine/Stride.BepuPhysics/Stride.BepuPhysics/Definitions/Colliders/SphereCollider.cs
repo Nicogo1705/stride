@@ -19,14 +19,14 @@ public sealed class SphereCollider : ColliderBase
     /// <remarks>
     /// Changing this value will reset some of the internal physics state of this body
     /// </remarks>
-    [DataMemberRange(0.001, 3)]
+    [DataMemberRange(BepuAndStrideExtensions.MinimumPositive, 3)]
     public float Radius
     {
         get => _radius;
         set
         {
             if (value.IsGreaterThanZeroFinite() == false)
-                return; // Set as typed by the property grid, which an exception would take down
+                return;
             _radius = value;
             TryUpdateFeatures();
         }

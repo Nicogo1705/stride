@@ -49,14 +49,11 @@ internal static class BepuAndStrideExtensions
             throw new ArgumentOutOfRangeException($"{owner}'s {fieldName} must be normalized");
     }
 
+    /// <summary> The smallest size or mass the property grid accepts </summary>
+    internal const double MinimumPositive = 0.001;
+
     /// <summary> Whether <paramref name="fp"/> can be a size or a mass: finite and greater than zero </summary>
+    /// <remarks> Setters ignore other values rather than throw: the property grid sets values as they are typed, and an exception would take it down </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool IsGreaterThanZeroFinite(this float fp) => fp > 0 && float.IsFinite(fp);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void ValidateGreaterThanZeroFinite<T>(this float fp, T owner, [CallerMemberName] string? fieldName = null)
-    {
-        if (fp <= 0 || float.IsFinite(fp) == false)
-            throw new ArgumentOutOfRangeException($"{owner}'s {fieldName} must be finite and greater than zero");
-    }
 }
