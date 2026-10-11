@@ -1,0 +1,22 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+/// <summary>
+/// The parameters and the pixel stage shared by the debug shaders that draw lines of constant screen width.
+/// </summary>
+shader DebugLineShaderBase : ShaderBase, Transformation, PositionStream4, ColorBase
+{
+    // Clip-space w under which a vertex is considered behind the camera
+    static const float NearW = 1e-4;
+
+    float2 ViewportSize;
+    float LineWidth;
+    // 1 for lines drawn over everything or where nothing hides them, lower for the pass that draws them where something does
+    float Opacity;
+
+    stage override void PSMain()
+    {
+        // Premultiplied, for the AlphaBlend state; the alpha of the vertex color is ignored, as with an opaque blend
+        streams.ColorTarget = float4(streams.Color.rgb * Opacity, Opacity);
+    }
+};
