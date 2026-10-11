@@ -18,8 +18,8 @@ namespace Stride.BepuPhysics.Systems;
 
 internal class ShapeCacheSystem : IDisposable, IService
 {
-    /// <summary> Tessellation of the debug meshes of spheres, cylinders and capsules, read when the system and the capsule meshes are built </summary>
-    internal static int CurvedTessellation { get; set; } = 8;
+    /// <summary> Tessellation of the debug meshes of spheres, cylinders and capsules </summary>
+    private const int CurvedTessellation = 8;
 
     internal readonly BasicMeshBuffers _boxShapeData;
     internal readonly BasicMeshBuffers _cylinderShapeData;

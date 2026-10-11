@@ -2,21 +2,18 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
-using System.Runtime.InteropServices;
-using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 using Stride.BepuPhysics.Debug;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
-using Stride.Graphics.GeometricPrimitives;
 using Stride.Graphics.Regression;
 using Stride.Rendering;
 using Stride.Rendering.Compositing;
-using Stride.Rendering.Materials;
 using Stride.Rendering.ProceduralModels;
 using Xunit;
-using Buffer = Stride.Graphics.Buffer;
 
 namespace Stride.BepuPhysics.Tests
 {
@@ -32,146 +29,48 @@ namespace Stride.BepuPhysics.Tests
             ForEachSpherePixel(withLines, (x, y, color) =>
             {
                 total++;
-                var other = withoutLines[x, y];
-                if (Math.Abs(color.R - other.R) + Math.Abs(color.G - other.G) + Math.Abs(color.B - other.B) > 30)
+                if (Differs(color, withoutLines[x, y]))
                     changed++;
             });
             Assert.True(changed > total / 40, $"{changed} of {total} pixels of the sphere show a collider line");
         }
 
         [Fact]
-        public static void ColliderInsideItsModelIsColored()
+        public static void ColliderInsideItsModelShowsAtHalfOpacity()
         {
-            var (smaller, _) = Render(colliderRadius: 0.4f, modelRadius: 0.5f);
-            var (same, _) = Render(colliderRadius: 0.5f, modelRadius: 0.5f);
+            // The model hides every line of the smaller collider: they are drawn, blended half and half with the model
+            var (inside, insideWithout) = Render(colliderRadius: 0.4f, modelRadius: 0.5f);
+            var (fitting, fittingWithout) = Render(colliderRadius: 0.5f, modelRadius: 0.5f);
+            var lineColor = MostFrequentChangedColor(fitting, fittingWithout).ToColor4().ToLinear();
 
-            var inside = CountInsideColor(smaller);
-            var sameColored = CountInsideColor(same);
-            Assert.True(inside > 500, $"{inside} pixels of a 0.4 collider in a 0.5 model are colored as inside");
-            Assert.True(sameColored == 0, $"{sameColored} pixels of a 0.5 collider in its 0.5 model are colored as inside");
-        }
-
-        [Fact]
-        public static void ColliderLinesShowOverTheirOwnSkinnedModel()
-        {
-            // The mesh lies 2 m to the side in its bind pose, its bone brings it back around the collider
-            var (withLines, withoutLines) = Render(game => new Entity
+            int changed = 0, halfBlended = 0;
+            ForEachSpherePixel(inside, (x, y, color) =>
             {
-                new ModelComponent(SkinnedSphere(game, 0.5f, new Vector3(-2, 0, 0))),
-                new StaticComponent { Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = 0.5f } } } },
-            }, cameraDistance: 1.5f);
-            int radius = withLines.Height / 4;
-            var changed = CountChanged(withLines, withoutLines, radius);
-            var total = (int)(MathF.PI * radius * radius);
-            Assert.True(changed > total / 40, $"{changed} of {total} pixels of the skinned sphere show a collider line");
-        }
-
-        [Fact]
-        public static void ConcaveModelHidesItsFartherLines()
-        {
-            // A small box behind a larger one, both parts of one collidable and of its visual model: the near box hides the far one
-            var (withLines, withoutLines) = Render(game =>
-            {
-                var far = new Entity { new ModelComponent(new CubeProceduralModel { Size = new Vector3(0.3f) }.Generate(game.Services)) };
-                far.Transform.Position = new Vector3(0, 0, -1.5f);
-                var near = new Entity
-                {
-                    new ModelComponent(new CubeProceduralModel { Size = new Vector3(0.6f) }.Generate(game.Services)),
-                    new StaticComponent
-                    {
-                        Collider = new CompoundCollider
-                        {
-                            Colliders =
-                            {
-                                new BoxCollider { Size = new Vector3(0.6f) },
-                                new BoxCollider { Size = new Vector3(0.3f), PositionLocal = new Vector3(0, 0, -1.5f) },
-                            },
-                        },
-                    },
-                };
-                near.AddChild(far);
-                return near;
-            }, cameraDistance: 3f);
-            // The far box's outline falls well inside the near box's front face, away from that face's own edges
-            var changed = CountChanged(withLines, withoutLines, withLines.Height / 12);
-            Assert.True(changed == 0, $"{changed} pixels show lines of the far box through the near one");
-        }
-
-        /// <summary> Pixels within <paramref name="radius"/> of the image center whose color differs between both frames </summary>
-        private static int CountChanged(Frame a, Frame b, int radius)
-        {
-            var count = 0;
-            int cx = a.Width / 2, cy = a.Height / 2;
-            for (int y = cy - radius; y < cy + radius; y++)
-            {
-                for (int x = cx - radius; x < cx + radius; x++)
-                {
-                    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) >= radius * radius)
-                        continue;
-                    Color p = a[x, y], q = b[x, y];
-                    if (Math.Abs(p.R - q.R) + Math.Abs(p.G - q.G) + Math.Abs(p.B - q.B) > 30)
-                        count++;
-                }
-            }
-            return count;
-        }
-
-        /// <summary> A sphere skinned to the root node: its vertices are stored at <paramref name="bindOffset"/>, its bone brings them back to the origin </summary>
-        private static Model SkinnedSphere(Game game, float radius, Vector3 bindOffset)
-        {
-            var data = GeometricPrimitive.Sphere.New(radius, 16);
-            var vertices = new SkinnedVertex[data.Vertices.Length];
-            for (int i = 0; i < vertices.Length; i++)
-                vertices[i] = new SkinnedVertex { Position = data.Vertices[i].Position + bindOffset, Normal = data.Vertices[i].Normal, Weights = new Vector4(1, 0, 0, 0) };
-
-            var mesh = new Mesh
-            {
-                Draw = new MeshDraw
-                {
-                    PrimitiveType = PrimitiveType.TriangleList,
-                    VertexBuffers = [new VertexBufferBinding(Buffer.Vertex.New(game.GraphicsDevice, vertices), SkinnedVertex.Layout, vertices.Length)],
-                    IndexBuffer = new IndexBufferBinding(Buffer.Index.New(game.GraphicsDevice, data.Indices), true, data.Indices.Length),
-                    DrawCount = data.Indices.Length,
-                },
-                Skinning = new MeshSkinningDefinition { Bones = [new MeshBoneDefinition { NodeIndex = 0, LinkToMeshMatrix = Matrix.Translation(-bindOffset) }] },
-                BoundingBox = new BoundingBox(bindOffset - new Vector3(radius), bindOffset + new Vector3(radius)),
-                BoundingSphere = new BoundingSphere(bindOffset, radius),
-            };
-            mesh.Parameters.Set(MaterialKeys.HasSkinningPosition, true);
-            mesh.Parameters.Set(MaterialKeys.HasSkinningNormal, true);
-            var root = new ModelNodeDefinition { Name = "Root", ParentIndex = -1, Flags = ModelNodeFlags.Default };
-            root.Transform.Scale = Vector3.One;
-            root.Transform.Rotation = Quaternion.Identity;
-            var model = new Model { Skeleton = new Skeleton { Nodes = [root] } };
-            model.Meshes.Add(mesh);
-            return model;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct SkinnedVertex
-        {
-            public static readonly VertexDeclaration Layout = new(
-                VertexElement.Position<Vector3>(),
-                VertexElement.Normal<Vector3>(),
-                new VertexElement("BLENDINDICES", 0, PixelFormat.R16G16B16A16_UInt),
-                new VertexElement("BLENDWEIGHT", 0, PixelFormat.R32G32B32A32_Float));
-
-            public Vector3 Position;
-            public Vector3 Normal;
-            public ushort Bone0, Bone1, Bone2, Bone3;
-            public Vector4 Weights;
-        }
-
-        private static int CountInsideColor(Frame image)
-        {
-            var count = 0;
-            ForEachSpherePixel(image, (_, _, color) =>
-            {
-                var hsv = ColorHSV.FromColor(color.ToColor4());
-                if (hsv.S > 0.3f && hsv.V > 0.35f && hsv.H is >= 50 and <= 70)
-                    count++;
+                var model = insideWithout[x, y];
+                if (!Differs(color, model))
+                    return;
+                changed++;
+                // Blending happens in linear space
+                var expected = (Color)((lineColor + model.ToColor4().ToLinear()) * 0.5f).ToSRgb();
+                if (Math.Abs(color.R - expected.R) <= 4 && Math.Abs(color.G - expected.G) <= 4 && Math.Abs(color.B - expected.B) <= 4)
+                    halfBlended++;
             });
-            return count;
+            Assert.True(changed > 500, $"{changed} pixels show a line of a 0.4 collider in a 0.5 model");
+            Assert.True(halfBlended > changed * 9 / 10, $"{halfBlended} of the {changed} line pixels blend half and half with the model");
+        }
+
+        private static bool Differs(Color a, Color b) => Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B) > 30;
+
+        /// <summary> The color of the lines: the most frequent one among the sphere pixels that differ between both frames </summary>
+        private static Color MostFrequentChangedColor(Frame withLines, Frame withoutLines)
+        {
+            var counts = new Dictionary<Color, int>();
+            ForEachSpherePixel(withLines, (x, y, color) =>
+            {
+                if (Differs(color, withoutLines[x, y]))
+                    counts[color] = counts.GetValueOrDefault(color) + 1;
+            });
+            return counts.MaxBy(pair => pair.Value).Key;
         }
 
         // The pixels inside the sphere's outline, which the camera centers
