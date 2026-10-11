@@ -179,6 +179,13 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
 
         foreach (var (collidable, (wireframes, cache)) in _wireFrameRenderObject)
         {
+            // Hidden rather than removed: what a collidable is, like asleep or kinematic, changes without notice
+            bool shown = IsShown(collidable);
+            foreach (var wireframe in wireframes)
+                wireframe.Enabled = shown;
+            if (shown == false)
+                continue;
+
             // Shapes on bodies of their own follow those bodies, whatever the mode
             if (collidable.TryGetShapePose(0, out _))
             {
@@ -381,6 +388,21 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
             }
         }
         _wireFrameRenderObject.Clear();
+    }
+
+    /// <summary> Whether the filters of the component let <paramref name="collidable"/> be drawn </summary>
+    private bool IsShown(CollidableComponent collidable)
+    {
+        if (_component is not { } options)
+            return true;
+
+        return collidable switch
+        {
+            StaticComponent => options.ShowStatics,
+            BodyComponent body => (body is CharacterComponentAbstract ? options.ShowCharacters : body.Kinematic ? options.ShowKinematicBodies : options.ShowDynamicBodies)
+                                  && (options.ShowSleepingBodies || body.Awake),
+            _ => true,
+        };
     }
 
     private Color GetCurrentColor(CollidableComponent collidable)

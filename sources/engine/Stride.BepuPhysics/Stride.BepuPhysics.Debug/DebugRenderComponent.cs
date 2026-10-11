@@ -17,6 +17,9 @@ namespace Stride.BepuPhysics.Debug;
 [ComponentCategory("Bepu - Debug")]
 public class DebugRenderComponent : SyncScript
 {
+    /// <summary> The category of the properties choosing which collidables are drawn </summary>
+    public const string CategoryFilters = "Filters";
+
     internal DebugRenderProcessor? _processor;
     bool _state = true;
 
@@ -39,6 +42,41 @@ public class DebugRenderComponent : SyncScript
     /// </summary>
     [DataMember]
     public bool ShowShapes { get; set; } = true;
+
+    /// <summary>
+    /// Whether to draw the colliders of <see cref="StaticComponent"/>s.
+    /// </summary>
+    [DataMember]
+    [Display(category: CategoryFilters)]
+    public bool ShowStatics { get; set; } = true;
+
+    /// <summary>
+    /// Whether to draw the colliders of the bodies moved by the simulation.
+    /// </summary>
+    [DataMember]
+    [Display(category: CategoryFilters)]
+    public bool ShowDynamicBodies { get; set; } = true;
+
+    /// <summary>
+    /// Whether to draw the colliders of the bodies whose <see cref="BodyComponent.Kinematic"/> is set.
+    /// </summary>
+    [DataMember]
+    [Display(category: CategoryFilters)]
+    public bool ShowKinematicBodies { get; set; } = true;
+
+    /// <summary>
+    /// Whether to draw the colliders of characters.
+    /// </summary>
+    [DataMember]
+    [Display(category: CategoryFilters)]
+    public bool ShowCharacters { get; set; } = true;
+
+    /// <summary>
+    /// Whether to draw the colliders of the bodies the simulation put to sleep, on top of the filters above.
+    /// </summary>
+    [DataMember]
+    [Display(category: CategoryFilters)]
+    public bool ShowSleepingBodies { get; set; } = true;
 
     /// <summary>
     /// Whether to draw a marker at each contact point the solver is currently resolving.

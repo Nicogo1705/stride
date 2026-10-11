@@ -4,7 +4,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Stride.BepuPhysics.Debug;
+using Stride.BepuPhysics.Debug.Effects;
 using Stride.BepuPhysics.Debug.Effects.RenderFeatures;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.Core.Mathematics;
@@ -99,6 +101,72 @@ namespace Stride.BepuPhysics.Tests
                         action(x, y, image[x, y]);
                 }
             }
+        }
+
+        [Fact]
+        public static void FiltersHideTheirKindOfCollidable()
+        {
+            var game = new GameTest();
+            game.GraphicsDeviceManager.PreferredGraphicsProfile = [GraphicsProfile.Level_11_0];
+            game.GraphicsDeviceManager.ShaderProfile = GraphicsProfile.Level_11_0;
+            game.Script.AddTask(async () =>
+            {
+                game.ScreenShotAutomationEnabled = false;
+                var compositor = GraphicsCompositorHelper.CreateDefault(false, graphicsProfile: GraphicsProfile.Level_11_0);
+                game.SceneSystem.GraphicsCompositor = compositor;
+                var scene = game.SceneSystem.SceneInstance.RootScene;
+                var debug = new DebugRenderComponent { Visible = true };
+                scene.Entities.Add(new Entity { debug, new CameraComponent { Slot = compositor.Cameras[0].ToSlotId() } });
+                var statics = Add(scene, new StaticComponent { Collider = Sphere() }, -4f);
+                var dynamic = Add(scene, new BodyComponent { Collider = Sphere() }, -1.5f);
+                var kinematic = Add(scene, new BodyComponent { Collider = Sphere(), Kinematic = true }, 1.5f);
+                var character = Add(scene, new CharacterComponent { Collider = Sphere() }, 4f);
+                dynamic.Simulation!.PoseGravity = Vector3.Zero;
+                for (int i = 0; i < 3; i++) await game.Script.NextFrame();
+
+                var visibility = game.SceneSystem.SceneInstance.VisibilityGroups.First();
+                async Task<CollidableComponent[]> Shown()
+                {
+                    await game.Script.NextFrame();
+                    var wireframes = visibility.RenderObjects.OfType<WireFrameRenderObject>().Where(w => w.Enabled).ToList();
+                    return new CollidableComponent[] { statics, dynamic, kinematic, character }
+                        .Where(c => wireframes.Any(w => Vector3.Distance(w.WorldMatrix.TranslationVector, c.Entity.Transform.Position) < 0.5f)).ToArray();
+                }
+
+                Assert.Equal([statics, dynamic, kinematic, character], await Shown());
+                debug.ShowStatics = false;
+                Assert.Equal([dynamic, kinematic, character], await Shown());
+                debug.ShowStatics = true;
+                debug.ShowDynamicBodies = false;
+                Assert.Equal([statics, kinematic, character], await Shown());
+                debug.ShowDynamicBodies = true;
+                debug.ShowKinematicBodies = false;
+                Assert.Equal([statics, dynamic, character], await Shown());
+                debug.ShowKinematicBodies = true;
+                debug.ShowCharacters = false;
+                Assert.Equal([statics, dynamic, kinematic], await Shown());
+                debug.ShowCharacters = true;
+
+                // Sleep is read every frame: a body falling asleep or woken up follows the filter
+                debug.ShowSleepingBodies = false;
+                Assert.Equal([statics, dynamic, kinematic, character], await Shown());
+                dynamic.Awake = false;
+                Assert.Equal([statics, kinematic, character], await Shown());
+                dynamic.Awake = true;
+                Assert.Equal([statics, dynamic, kinematic, character], await Shown());
+                game.Exit();
+            });
+            RunGameTest(game);
+        }
+
+        private static CompoundCollider Sphere() => new() { Colliders = { new SphereCollider { Radius = 0.5f } } };
+
+        private static T Add<T>(Scene scene, T collidable, float x) where T : CollidableComponent
+        {
+            var entity = new Entity { collidable };
+            entity.Transform.Position = new Vector3(x, 0, 0);
+            scene.Entities.Add(entity);
+            return collidable;
         }
 
         /// <summary> A sphere model and a sphere collider at the origin, rendered with and without the collider's wireframe </summary>
