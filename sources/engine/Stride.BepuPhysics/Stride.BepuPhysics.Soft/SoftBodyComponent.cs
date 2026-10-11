@@ -593,7 +593,11 @@ public abstract class SoftBodyComponent : CollidableComponent
         for (int p = 0; p < Pins.Count; p++)
         {
             if (pinned[p] is null)
-                Logger.Warning($"Pin {p} of {GetType().Name} on '{Entity?.Name}' holds no particle: its region is outside of the model, or taken by an earlier pin");
+            {
+                // Particles sit inside the surface of a volumetric body: a region hugging the surface may miss them
+                var span = BoundingBox.FromPoints(rests);
+                Logger.Warning($"Pin {p} of {GetType().Name} on '{Entity?.Name}' holds no particle: its region holds no particle rest position, which span {span.Minimum} to {span.Maximum} in the space of the model, or an earlier pin took them");
+            }
         }
         return pinned;
 
