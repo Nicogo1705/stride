@@ -1,0 +1,66 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+/// <summary>
+/// Draws spheres as camera-facing circles of constant line width, or as dots once they are too small on screen to show a hole.
+/// </summary>
+/// <remarks> Each sphere is a segment from its center to a point of its surface. </remarks>
+shader DebugSphereShader : ShaderBase, Transformation, PositionStream4, ColorBase
+{
+    static const int Segments = 16;
+    // Clip-space w under which a sphere is considered behind the camera
+    static const float NearW = 1e-4;
+    // Spheres come by the hundred, overlapping: thinner outlines keep them readable
+    static const float WidthScale = 0.5;
+    static const float MinWidth = 1;
+
+    float2 ViewportSize;
+    float LineWidth;
+    // 1 for spheres drawn where nothing hides them, lower for the pass that draws them where something does
+    float Opacity;
+
+    stage override void VSMain()
+    {
+        streams.ShadingPosition = mul(streams.Position, ViewProjection);
+    }
+
+    [maxvertexcount(34)]
+    void GSMain(line Input input[2], inout TriangleStream<Output> triangleStream)
+    {
+        float4 clip = input[0].ShadingPosition;
+        if (clip.w < NearW)
+            return;
+
+        float radius = distance(input[0].Position.xyz, input[1].Position.xyz);
+        // Depth tested at the point nearest to the camera, so a sphere resting on a surface is not half hidden by it
+        float4 viewCenter = mul(float4(input[0].Position.xyz, 1), View);
+        float4 front = mul(float4(viewCenter.xyz + float3(0, 0, radius), 1), Projection);
+        if (front.w >= NearW)
+            clip.z = front.z / front.w * clip.w;
+
+        float width = max(LineWidth * WidthScale, MinWidth);
+        float pixelRadius = radius * Projection[1][1] * ViewportSize.y * 0.5 / clip.w;
+        float outer = pixelRadius + width * 0.5;
+        // Filled once the hole would be narrower than the line, down to a dot as wide as the line
+        float inner = pixelRadius >= width ? pixelRadius - width * 0.5 : 0;
+        float2 toClip = 2 * clip.w / ViewportSize;
+
+        streams = input[0];
+        for (int i = 0; i <= Segments; i++)
+        {
+            float angle = i * (6.2831853 / Segments);
+            float2 direction = float2(cos(angle), sin(angle)) * toClip;
+            streams.ShadingPosition = clip + float4(direction * outer, 0, 0);
+            triangleStream.Append(streams);
+            streams.ShadingPosition = clip + float4(direction * inner, 0, 0);
+            triangleStream.Append(streams);
+        }
+        triangleStream.RestartStrip();
+    }
+
+    stage override void PSMain()
+    {
+        // Premultiplied, for the AlphaBlend state; the alpha of the vertex color is ignored, as with an opaque blend
+        streams.ColorTarget = float4(streams.Color.rgb * Opacity, Opacity);
+    }
+};

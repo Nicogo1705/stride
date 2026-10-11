@@ -10,7 +10,7 @@ using Stride.Rendering;
 namespace Stride.BepuPhysics.Debug.Effects.RenderFeatures;
 
 /// <summary>
-/// Draws <see cref="LineRenderObject"/>s as screen-space lines of constant width, on top of the scene or faded where something hides them.
+/// Draws <see cref="LineRenderObject"/>s as screen-space lines, or sphere outlines, of constant width, on top of the scene or faded where something hides them.
 /// </summary>
 /// <remarks> Lines are only drawn in the render stages picked by <see cref="RootRenderFeature.RenderStageSelectors"/>. </remarks>
 public class LineRenderFeature : RootRenderFeature
@@ -19,6 +19,7 @@ public class LineRenderFeature : RootRenderFeature
     private const float HiddenOpacity = 0.5f;
 
     private DynamicEffectInstance _shader = null!;
+    private DynamicEffectInstance _sphereShader = null!;
     private MutablePipelineState _overlayPipelineState = null!;
     private MutablePipelineState _visiblePipelineState = null!;
     private MutablePipelineState _hiddenPipelineState = null!;
@@ -44,6 +45,8 @@ public class LineRenderFeature : RootRenderFeature
 
         _shader = new DynamicEffectInstance("StrideDebugLineShader");
         _shader.Initialize(Context.Services);
+        _sphereShader = new DynamicEffectInstance("StrideDebugSphereShader");
+        _sphereShader.Initialize(Context.Services);
 
         // A debug overlay: normals start inside body A and markers sit on surfaces, depth testing would hide them
         _overlayPipelineState = CreatePipelineState(DepthStencilStates.None);
@@ -73,6 +76,12 @@ public class LineRenderFeature : RootRenderFeature
         _shader.Parameters.Set(TransformationKeys.WorldViewProjection, renderView.ViewProjection);
         _shader.Parameters.Set(DebugLineShaderKeys.ViewportSize, renderView.ViewSize);
         _shader.Parameters.Set(DebugLineShaderKeys.LineWidth, LineWidth);
+        _sphereShader.UpdateEffect(context.GraphicsDevice);
+        _sphereShader.Parameters.Set(TransformationKeys.View, renderView.View);
+        _sphereShader.Parameters.Set(TransformationKeys.Projection, renderView.Projection);
+        _sphereShader.Parameters.Set(TransformationKeys.ViewProjection, renderView.ViewProjection);
+        _sphereShader.Parameters.Set(DebugSphereShaderKeys.ViewportSize, renderView.ViewSize);
+        _sphereShader.Parameters.Set(DebugSphereShaderKeys.LineWidth, LineWidth);
 
         for (int index = startIndex; index < endIndex; index++)
         {
@@ -97,14 +106,15 @@ public class LineRenderFeature : RootRenderFeature
 
     private void DrawPass(RenderDrawContext context, LineRenderObject lines, MutablePipelineState pipelineState, float opacity)
     {
-        pipelineState.State.RootSignature = _shader.RootSignature;
-        pipelineState.State.EffectBytecode = _shader.Effect.Bytecode;
+        var shader = lines.Spheres ? _sphereShader : _shader;
+        pipelineState.State.RootSignature = shader.RootSignature;
+        pipelineState.State.EffectBytecode = shader.Effect.Bytecode;
         pipelineState.State.Output.CaptureState(context.CommandList);
         pipelineState.Update();
 
-        _shader.Parameters.Set(DebugLineShaderKeys.Opacity, opacity);
+        shader.Parameters.Set(lines.Spheres ? DebugSphereShaderKeys.Opacity : DebugLineShaderKeys.Opacity, opacity);
         context.CommandList.SetPipelineState(pipelineState.CurrentState);
-        _shader.Apply(context.GraphicsContext);
+        shader.Apply(context.GraphicsContext);
         context.CommandList.Draw(lines.VertexCount);
     }
 

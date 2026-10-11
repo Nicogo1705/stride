@@ -26,6 +26,9 @@ public sealed class LineRenderObject : RenderObject, IDisposable
     /// <summary> Segments behind scene geometry are drawn faded, as hidden wireframe lines are, rather than over everything </summary>
     internal bool DepthTested { get; init; }
 
+    /// <summary> Each segment is a sphere, from its center to its surface, drawn as a camera-facing circle </summary>
+    internal bool Spheres { get; init; }
+
     /// <summary>
     /// Removes all segments.
     /// </summary>
@@ -50,6 +53,9 @@ public sealed class LineRenderObject : RenderObject, IDisposable
         _vertices[VertexCount++] = new LineVertex(end, color);
         _uploaded = false;
     }
+
+    /// <summary> Adds a sphere to a batch of <see cref="Spheres"/> </summary>
+    internal void AddSphere(Vector3 center, float radius, Color color) => AddLine(center, center + new Vector3(radius, 0f, 0f), color);
 
     internal Buffer Upload(CommandList commandList)
     {

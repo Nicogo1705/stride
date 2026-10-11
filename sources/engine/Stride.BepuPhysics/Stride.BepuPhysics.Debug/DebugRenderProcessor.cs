@@ -28,7 +28,7 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
     private VisibilityGroup _visibilityGroup = null!;
     private BepuConfiguration? _bepuConfiguration;
     private readonly LineRenderObject _contactLines = new();
-    private readonly LineRenderObject _sphereLines = new() { DepthTested = true };
+    private readonly LineRenderObject _sphereLines = new() { DepthTested = true, Spheres = true };
     private readonly Dictionary<BepuSimulation, ContactRecorder> _contactRecorders = new();
     private readonly Dictionary<CollidableComponent, (WireFrameRenderObject[] Wireframes, object? cache)> _wireFrameRenderObject = new();
 
@@ -262,25 +262,14 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
         }
     }
 
-    /// <summary> Draws each debug sphere of <paramref name="collidable"/> as three circles </summary>
+    /// <summary> Each debug sphere of <paramref name="collidable"/>, drawn as a circle facing the camera, or a dot when far </summary>
     private void AddSpheres(CollidableComponent collidable)
     {
-        const int segments = 8;
         var color = GetCurrentColor(collidable);
-        Span<Vector2> circle = stackalloc Vector2[segments + 1];
-        for (int s = 0; s <= segments; s++)
-            circle[s] = new Vector2(MathF.Cos(s * MathF.Tau / segments), MathF.Sin(s * MathF.Tau / segments));
-
         for (int i = 0; i < collidable.DebugSphereCount; i++)
         {
             var (center, radius) = collidable.GetDebugSphere(i);
-            for (int s = 0; s < segments; s++)
-            {
-                var (a, b) = (circle[s] * radius, circle[s + 1] * radius);
-                _sphereLines.AddLine(center + new Vector3(a.X, a.Y, 0f), center + new Vector3(b.X, b.Y, 0f), color);
-                _sphereLines.AddLine(center + new Vector3(a.X, 0f, a.Y), center + new Vector3(b.X, 0f, b.Y), color);
-                _sphereLines.AddLine(center + new Vector3(0f, a.X, a.Y), center + new Vector3(0f, b.X, b.Y), color);
-            }
+            _sphereLines.AddSphere(center, radius, color);
         }
     }
 
