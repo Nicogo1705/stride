@@ -22,7 +22,8 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 internal static class FallGuy
 {
     /// <summary> The skeleton, its animation and its bone frames are the bean's </summary>
-    public static (Entity Entity, SkeletonBodyComponent Body, VolumetricSoftBodyComponent Flesh, Bean.Animator Animator) Add(DemoGame game, Color color, Vector3 position, float yaw, float time = 0f)
+    /// <param name="stiffness"> Scales every spring of the flesh: a finer lattice is softer at the same frequency, its springs being more in a row </param>
+    public static (Entity Entity, SkeletonBodyComponent Body, VolumetricSoftBodyComponent Flesh, Bean.Animator Animator) Add(DemoGame game, Color color, Vector3 position, float yaw, float time = 0f, int resolution = 7, float stiffness = 1f)
     {
         var device = game.GraphicsDevice;
         var model = Look.Model(game, new FallGuyProceduralModel(), color, 0.8f);
@@ -36,9 +37,9 @@ internal static class FallGuy
         ((BoneCollider)body.Collider).Bones.AddRange(bones);
         var flesh = new VolumetricSoftBodyComponent
         {
-            // Seven cells over the height, about a hundred particles: the Fall Guy is the costliest body of its scenes
-            Resolution = 7, Mass = 20f, Stiffness = 22f, ShearStiffness = 18f, VolumeStiffness = 16f, Damping = 0.6f,
-            FollowSkeleton = true, SkeletonStiffness = 12f, SkeletonDamping = 0.5f,
+            // Seven cells over the height by default, about a hundred particles: the Fall Guy is the costliest body of its scenes
+            Resolution = resolution, Mass = 20f, Stiffness = 22f * stiffness, ShearStiffness = 18f * stiffness, VolumeStiffness = 16f * stiffness, Damping = 0.6f,
+            FollowSkeleton = true, SkeletonStiffness = 12f * stiffness, SkeletonDamping = 0.5f,
         };
         var animator = new Bean.Animator { Time = time };
         var modelComponent = new ModelComponent(model);

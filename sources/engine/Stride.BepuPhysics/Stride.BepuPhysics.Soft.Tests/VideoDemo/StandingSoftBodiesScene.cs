@@ -21,6 +21,9 @@ internal sealed class StandingSoftBodiesScene : VideoScene
 {
     public static readonly Color[] FleshColors = { new(255, 120, 170), new(160, 120, 255), new(150, 220, 80), new(90, 190, 255), new(255, 160, 110) };
     private static readonly Vector3 Arena = new(0f, 0.15f, 0f), Worm = new(5.8f, 0f, -4.4f);
+    // Finer lattices than elsewhere (128 and 160 particles), stiffer to stand as firmly; finer still, crowded bones pass Bepu's 64 batches
+    private const int BeanResolution = 7, FallGuyResolution = 8;
+    private const float FallGuyStiffness = 1.3f;
     private readonly List<Walker> _beans = new();
     private readonly List<Walker> _fallGuys = new();
     private Entity? _worm;
@@ -65,7 +68,7 @@ internal sealed class StandingSoftBodiesScene : VideoScene
         {
             float angle = i * MathUtil.TwoPi / FleshColors.Length + 0.3f;
             var at = Arena + new Vector3(3.0f * MathF.Sin(angle), 0f, 3.0f * MathF.Cos(angle));
-            var (entity, body, animator) = Bean.Add(game, FleshColors[i], at, angle + MathUtil.Pi * 0.6f, SkeletonBodyMode.Standing, i * 0.31f);
+            var (entity, body, animator) = Bean.Add(game, FleshColors[i], at, angle + MathUtil.Pi * 0.6f, SkeletonBodyMode.Standing, i * 0.31f, BeanResolution);
             var walker = new Walker(entity, body, animator.StanceSpeed, Bean.TrunkBody, angle + MathUtil.Pi * 0.6f, Arena, 3.6f);
             entity.Add(walker);
             _beans.Add(walker);
@@ -76,7 +79,7 @@ internal sealed class StandingSoftBodiesScene : VideoScene
         {
             float angle = i * MathUtil.Pi + 1.2f;
             var at = Arena + new Vector3(1.3f * MathF.Sin(angle), 0f, 1.3f * MathF.Cos(angle));
-            _fallGuys.Add(AddFallGuy(game, at, angle + MathUtil.PiOverTwo, Arena, 3.4f, i * 0.45f));
+            _fallGuys.Add(AddFallGuy(game, at, angle + MathUtil.PiOverTwo, Arena, 3.4f, i * 0.45f, FallGuyResolution, FallGuyStiffness));
         }
 
         // A worm with a physical spine crawling behind the arena
@@ -84,9 +87,9 @@ internal sealed class StandingSoftBodiesScene : VideoScene
     }
 
     /// <summary> A Fall Guy in the Standing color wandering within <paramref name="radius"/> of <paramref name="center"/> </summary>
-    public static Walker AddFallGuy(VideoDemoGame game, Vector3 at, float yaw, Vector3 center, float radius, float time)
+    public static Walker AddFallGuy(VideoDemoGame game, Vector3 at, float yaw, Vector3 center, float radius, float time, int resolution = 7, float stiffness = 1f)
     {
-        var (entity, body, flesh, animator) = FallGuy.Add(game, Modes.Of(SkeletonBodyMode.Standing), at, yaw, time);
+        var (entity, body, flesh, animator) = FallGuy.Add(game, Modes.Of(SkeletonBodyMode.Standing), at, yaw, time, resolution, stiffness);
         var walker = new Walker(entity, body, animator.StanceSpeed, Bean.TrunkBody, yaw, center, radius, flesh);
         entity.Add(walker);
         return walker;
