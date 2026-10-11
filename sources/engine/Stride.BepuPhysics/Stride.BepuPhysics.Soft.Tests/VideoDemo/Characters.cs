@@ -72,6 +72,9 @@ internal sealed class CircleWalk : ScriptComponent, ISimulationUpdate
     private readonly float _radius, _speed;
     private float _time;
 
+    /// <summary> The simulation of the zone the entity is in, set before it joins the scene </summary>
+    public ISimulationSelector SimulationSelector { get; set; } = SceneBasedSimulationSelector.Shared;
+
     public CircleWalk(Entity human, SkeletonBodyComponent body, Vector3 center, float radius, float speed)
     {
         (_human, _body, _center, _radius, _speed) = (human, body, center, radius, speed);
@@ -130,6 +133,9 @@ internal sealed class Walker(Entity character, SkeletonBodyComponent body, Func<
     private float _heading = heading;
     private float _time;
     private bool[]? _upper;
+
+    /// <summary> The simulation of the zone the entity is in, set before it joins the scene </summary>
+    public ISimulationSelector SimulationSelector { get; set; } = SceneBasedSimulationSelector.Shared;
 
     public SkeletonBodyComponent Body => body;
 
@@ -223,7 +229,8 @@ internal sealed class Cannon(DemoGame game, IReadOnlyList<Walker> targets, Vecto
 
     public int Shots => _shot;
 
-    public void FireNow() => _time = period;
+    /// <summary> Whether the cannon fires: off while its zone does not simulate </summary>
+    public Func<bool> Active { get; set; } = () => true;
 
     /// <summary> A wooden carriage on two wheels, and the barrel on top (this script) turning toward its target </summary>
     public static Cannon Build(DemoGame game, IReadOnlyList<Walker> targets, Vector3 muzzle, float period)
@@ -265,6 +272,8 @@ internal sealed class Cannon(DemoGame game, IReadOnlyList<Walker> targets, Vecto
         }
 
         Entity.Transform.Position = muzzle;
+        if (!Active())
+            return;
         _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;
         var target = targets.Count > 0 ? targets[_shot % targets.Count] : null;
         if (target is not null)

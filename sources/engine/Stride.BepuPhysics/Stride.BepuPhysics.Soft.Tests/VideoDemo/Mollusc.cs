@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using Stride.BepuPhysics.Components;
+using Stride.BepuPhysics.Definitions;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Harness.Demo;
@@ -93,6 +94,9 @@ internal static class Mollusc
 internal sealed class MolluscDriver : ScriptComponent, ISimulationUpdate
 {
     private readonly List<(Entity Entity, Func<float, (Vector3 Position, float Yaw)> Path)> _molluscs = new();
+
+    /// <summary> The simulation of the zone the entity is in, set before it joins the scene </summary>
+    public ISimulationSelector SimulationSelector { get; set; } = SceneBasedSimulationSelector.Shared;
 
     public int Count => _molluscs.Count;
 

@@ -34,18 +34,20 @@ internal static class Modes
     public static void DrawLegend(VideoDemoGame game, IReadOnlyList<SkeletonBodyMode> modes, string caption)
     {
         const int size = 16;
-        const float row = 24f;
+        var s = game.UiScale;
+        var row = 24f * s;
         float width = game.Measure(caption, size, true).X;
         foreach (var mode in modes)
-            width = MathF.Max(width, game.Measure(Describe(mode), size).X + 30f);
-        float x = game.Screen.X - width - 36f, y = 20f;
-        game.Panel(new RectangleF(x - 14f, y - 10f, width + 28f, 32f + modes.Count * row), new Color(18, 20, 32, 190));
-        game.Write(caption, new Vector2(x, y - 2f), Color.White, size, true);
-        y += 26f;
+            width = MathF.Max(width, game.Measure(Describe(mode), size).X + 30f * s);
+        // Below the build label when it is drawn
+        float x = game.Screen.X - width - 36f * s, y = MathF.Max(20f * s, game.TopRightTaken + 14f * s);
+        game.Panel(new RectangleF(x - 14f * s, y - 10f * s, width + 28f * s, 32f * s + modes.Count * row), new Color(12, 14, 22, 200));
+        game.Write(caption, new Vector2(x, y - 2f * s), Color.White, size, true);
+        y += 26f * s;
         foreach (var mode in modes)
         {
-            game.Panel(new RectangleF(x, y + 2f, 18f, 16f), Of(mode));
-            game.Write(Describe(mode), new Vector2(x + 28f, y), Color.White, size);
+            game.Panel(new RectangleF(x, y + 2f * s, 18f * s, 16f * s), Of(mode));
+            game.Write(Describe(mode), new Vector2(x + 28f * s, y), Color.White, size);
             y += row;
         }
     }

@@ -7,7 +7,6 @@ using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics.GeometricPrimitives;
-using Stride.Input;
 using Stride.Rendering;
 using Stride.Rendering.Materials;
 using Stride.Rendering.ProceduralModels;
@@ -16,54 +15,47 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
 /// A soft body garden: see-through jellies on a glass table under a chrome press, flags in gusts, a tent lifted by a kinematic sphere
-/// with soft balls bouncing on it, molluscs crawling on an animated skeleton, one with a sail pinned to its head bone
+/// with soft balls bouncing on it, a striped piece twisted by a motor. Every 10 s the jellies switch OpacityThickness on or off
 /// </summary>
-internal sealed class SoftBodiesScene : VideoScene
+internal sealed class GardenZone : Zone
 {
+    private const float SwapPeriod = 10f;
     private readonly List<(ModelComponent Model, Material On, Material Off)> _swappable = new();
     private readonly List<ClothComponent> _flags = new();
     private bool _on = true;
+    private SoftPiece? _piece;
 
-    /// <summary> The striped rope between the twister and the block </summary>
-    public SoftPiece? Rope { get; private set; }
+    public override string Name => "Soft garden";
+    public override string Description => "jellies whose opacity grows with the thickness crossed, cloth in the wind, a tent, a twisted soft piece";
+    public override Vector3 Eye => Origin + new Vector3(0.3f, 3.6f, 9.5f);
+    public override Vector3 Target => Origin + new Vector3(0f, 1f, -0.7f);
 
-    /// <summary> The jib on its mast, the soft rope and the load hanging from it </summary>
-    public SwingingCrane? Crane { get; private set; }
-
-    public override string Title => "Soft bodies";
-    public override string Pr => "PR #3528, #3530, #3564, FollowSkeleton (upcoming)";
-    public override string Description => "jellies whose opacity grows with the thickness crossed, a rope twisted by a motor (pull its block to stretch it), cloth in the wind, molluscs with flesh on a skeleton";
-    public override Vector3 Eye => new(0.3f, 2.7f, 6.6f);
-    public override Vector3 Target => new(0f, 0.9f, -0.7f);
-    public override string SceneKeys => "O: OpacityThickness on / off  |  left click: grab a jelly, a flag, the rope's block (stretch it), the crane's load (swing it)";
-
-
-    protected override void BuildScene(VideoDemoGame game)
+    public override void Build(VideoDemoGame game, WorldTerrain terrain)
     {
         _swappable.Clear();
         _flags.Clear();
         _on = true;
         var device = game.GraphicsDevice;
+        var o = Origin;
 
         // The glass table: two chrome legs, a thick top of tinted glass
         var chrome = Look.Paint(device, new Color(222, 226, 234), 0.93f);
         foreach (var x in new[] { -1.15f, 1.15f })
         {
             var leg = new Entity("table leg") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.07f, Height = 0.76f, Tessellation = 32 }, chrome)) };
-            leg.Transform.Position = new Vector3(x, 0.38f, 0f);
+            leg.Transform.Position = o + new Vector3(x, 0.38f, 0f);
             game.AddToScene(leg);
         }
         var top = new Vector3(3.2f, 0.1f, 1.5f);
-        var glass = AddSwappable(game, Look.Volume(device, new Color(120, 200, 225), 0.45f, 0.15f, MaterialVolumeMedium.Absorbing), Look.Volume(device, new Color(120, 200, 225), 0.45f, 0f, MaterialVolumeMedium.Absorbing),
+        var glass = Swappable(game, Look.Volume(device, new Color(120, 200, 225), 0.45f, 0.15f, MaterialVolumeMedium.Absorbing), Look.Volume(device, new Color(120, 200, 225), 0.45f, 0f, MaterialVolumeMedium.Absorbing),
             new CubeProceduralModel { Size = top });
         glass.Add(new StaticComponent { Collider = new CompoundCollider { Colliders = { new BoxCollider { Size = top } } } });
-        glass.Transform.Position = new Vector3(0f, 0.81f, 0f);
+        glass.Transform.Position = o + new Vector3(0f, 0.81f, 0f);
         glass.Get<ModelComponent>()!.IsShadowCaster = false;
         glass.Name = "glass table";
         game.AddToScene(glass);
 
-        // Five see-through jellies dropped onto the glass, each with its medium
-        var colors = new[] { new Color(255, 90, 140), new Color(130, 230, 100), new Color(255, 185, 40), new Color(150, 110, 255), new Color(70, 200, 240) };
+        // Five see-through jellies on the glass, each with its medium
         PrimitiveProceduralModelBase[] shapes =
         {
             new CubeProceduralModel { Size = new Vector3(0.5f), Subdivisions = 8 },
@@ -75,23 +67,24 @@ internal sealed class SoftBodiesScene : VideoScene
         for (int i = 0; i < shapes.Length; i++)
         {
             var medium = i % 2 == 0 ? MaterialVolumeMedium.Scattering : MaterialVolumeMedium.Absorbing;
-            var jelly = AddSwappable(game, Look.Volume(device, colors[i], 0.85f, 0.3f, medium), Look.Volume(device, colors[i], 0.85f, 0f, medium), shapes[i]);
+            var color = Kit.JellyColors[i];
+            var jelly = Swappable(game, Look.Volume(device, color, 0.85f, 0.3f, medium), Look.Volume(device, color, 0.85f, 0f, medium), shapes[i]);
             jelly.Name = "jelly";
             jelly.Add(new VolumetricSoftBodyComponent { Resolution = 5, Stiffness = 8f, ShearStiffness = 8f, Damping = 0.3f });
-            jelly.Transform.Position = new Vector3(-1.2f + i * 0.6f, 1.35f + (i % 2) * 0.5f, (i % 2 == 0 ? 0.2f : -0.25f));
+            jelly.Transform.Position = o + new Vector3(-1.2f + i * 0.6f, 1.35f + (i % 2) * 0.5f, i % 2 == 0 ? 0.2f : -0.25f);
             jelly.Transform.Rotation = Quaternion.RotationYawPitchRoll(i * 0.8f, i * 0.3f, 0f);
             game.AddToScene(jelly);
         }
         var press = new BodyComponent { Kinematic = true, Collider = new CompoundCollider { Colliders = { new SphereCollider { Radius = 0.2f } } } };
         var pressEntity = new Entity("chrome press") { new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.2f, Tessellation = 40 }, chrome)), press };
-        pressEntity.Transform.Position = new Vector3(0f, 2.3f, 0.2f);
+        pressEntity.Transform.Position = o + new Vector3(0f, 2.0f, 0.2f);
         game.AddToScene(pressEntity);
 
         // Three flags at the back left
         var flagColors = new[] { Look.Coral, Look.Sun, Look.Teal };
         for (int i = 0; i < 3; i++)
         {
-            var foot = new Vector3(-5.6f + i * 1.8f, 0f, -3.8f + i * 0.3f);
+            var foot = o + new Vector3(-5.6f + i * 1.8f, 0f, -3.8f + i * 0.3f);
             Props.Pillar(game, foot, 0.05f, 3.4f, Look.Navy, 0.7f);
             var flag = new ClothComponent { Pins = { new SoftBodyPin { Region = new BoundingBox(new Vector3(-0.82f, -1f, -1f), new Vector3(-0.78f, 1f, 1f)) } } };
             var entity = new Entity("flag") { new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(1.6f, 1f), Tessellation = new Int2(24, 16), Normal = NormalDirection.UpZ, GenerateBackFace = true }, flagColors[i], 0.3f)), flag };
@@ -102,7 +95,7 @@ internal sealed class SoftBodiesScene : VideoScene
 
         // A tent at the back right, lifted from below by a kinematic sphere, two soft balls bouncing on it
         var navy = Look.Paint(device, Look.Navy, 0.5f);
-        var tentCenter = new Vector3(3.5f, 0f, -2.6f);
+        var tentCenter = o + new Vector3(3.5f, 0f, -2.6f);
         foreach (var (x, z) in new[] { (-1.4f, -1.4f), (1.4f, -1.4f), (-1.4f, 1.4f), (1.4f, 1.4f) })
             Look.StaticBox(game, new Vector3(0.12f, 1.1f, 0.12f), tentCenter + new Vector3(x, 0.55f, z), navy, "tent post");
         var tent = new ClothComponent();
@@ -118,43 +111,22 @@ internal sealed class SoftBodiesScene : VideoScene
         var lifterEntity = new Entity("kinematic sphere") { new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.45f, Tessellation = 40 }, Look.Pink, 0.85f)), lifter };
         lifterEntity.Transform.Position = tentCenter + new Vector3(0f, 0.45f, 0f);
         game.AddToScene(lifterEntity);
-        foreach (var (offset, color) in new[] { (new Vector3(-0.5f, 2.2f, 0.3f), Look.Coral), (new Vector3(0.55f, 2.8f, -0.3f), Look.Blue) })
-        {
-            var ball = new Entity("soft ball")
-            {
-                new ModelComponent(Look.Model(game, new SphereProceduralModel { Radius = 0.26f, Tessellation = 32 }, color, 0.85f)),
-                new VolumetricSoftBodyComponent { Resolution = 5, Stiffness = 14f, ShearStiffness = 14f, VolumeStiffness = 12f, Damping = 0.15f, Mass = 0.6f },
-            };
-            ball.Transform.Position = tentCenter + offset;
-            game.AddToScene(ball);
-        }
+        Kit.AddSoftBall(game, tentCenter + new Vector3(-0.5f, 2.2f, 0.3f), 0.26f, Look.Coral);
+        Kit.AddSoftBall(game, tentCenter + new Vector3(0.55f, 2.8f, -0.3f), 0.26f, Look.Blue);
 
-        // Two molluscs crawling around a rock at the front left, the violet one under a sail pinned to its head bone
-        var rock = new Vector3(-2.3f, 0f, 1.3f);
-        Props.Pillar(game, rock, 0.35f, 0.6f, Look.Stone, 0.3f);
-        var driver = new MolluscDriver();
-        Mollusc.Add(game, Look.Coral, driver, Mollusc.Circle(rock, 1.05f, 0.5f, MathF.PI));
-        var path = Mollusc.Circle(rock, 1.05f, 0.5f, 0f);
-        var sailed = Mollusc.Add(game, Look.Violet, driver, path);
-        Mollusc.AddSail(game, sailed, path(0f).Yaw, Look.Sun);
-        game.AddToScene(new Entity("mollusc driver") { driver });
-
-        // A striped rope pinned at both ends: a motor twists it from the left, the block on the right stretches it when pulled
-        Rope = new SoftPiece(game, new Vector3(1.2f, 1.0f, 2.0f), new Vector3(3.4f, 1.0f, 2.0f), Look.Coral, Look.Ivory);
-        var rope = Rope;
-
-        // A crane on the right: a load on a soft rope from a jib turning freely, both ends body anchors
-        Crane = new SwingingCrane(game, new Vector3(5.2f, 0f, 0.4f), Look.Sun, Look.Navy);
+        // A striped piece pinned at both ends: a motor twists it from the left, the block on the right can be pulled to stretch it
+        _piece = new SoftPiece(game, o + new Vector3(1.2f, 1.0f, 2.2f), o + new Vector3(3.4f, 1.0f, 2.2f), Look.Coral, Look.Ivory);
+        var piece = _piece;
 
         game.AddToScene(new Entity("press, wind and lifter")
         {
             new StepDriver((time, _) =>
             {
-                rope.Drive(time);
-                // The press comes down on the middle jelly every 3.5 s
-                float phase = time % 3.5f;
-                float down = phase < 1.4f ? MathF.Sin(phase / 1.4f * MathF.PI) : 0f;
-                press.SetTargetPose(new Vector3(0f, 2.0f - down * 0.85f, 0.2f));
+                piece.Drive(time);
+                // The press comes down slowly on the middle jelly every 8 s
+                float phase = time % 8f;
+                float down = phase < 3f ? MathF.Sin(phase / 3f * MathF.PI) : 0f;
+                press.SetTargetPose(o + new Vector3(0f, 2.0f - down * 0.85f, 0.2f));
                 // Gusts with a phase per flag, so they wave out of step
                 for (int i = 0; i < _flags.Count; i++)
                 {
@@ -168,36 +140,34 @@ internal sealed class SoftBodiesScene : VideoScene
         });
     }
 
-    /// <summary> An entity whose material O switches between <paramref name="on"/> and <paramref name="off"/>, not yet in the scene </summary>
-    private Entity AddSwappable(VideoDemoGame game, Material on, Material off, PrimitiveProceduralModelBase shape)
+    /// <summary> An entity whose material switches between <paramref name="on"/> and <paramref name="off"/>, not yet in the scene </summary>
+    private Entity Swappable(VideoDemoGame game, Material on, Material off, PrimitiveProceduralModelBase shape)
     {
         var model = new ModelComponent(Look.Model(game, shape, on));
-        var entity = new Entity("volume") { model };
         _swappable.Add((model, on, off));
-        return entity;
+        return new Entity("volume") { model };
     }
 
-    public override void UpdateInput(VideoDemoGame game)
+    protected override void Tick(VideoDemoGame game, float time, float seconds)
     {
-        if (!game.Input.IsKeyPressed(Keys.O))
+        if (!Every(time, seconds, SwapPeriod, SwapPeriod))
             return;
         _on = !_on;
         foreach (var (model, on, off) in _swappable)
             model.Materials[0] = _on ? on : off;
     }
 
-    public override IEnumerable<(Vector3 World, string Text)> Labels()
+    public override IEnumerable<SceneLabel> Labels()
     {
-        yield return (new Vector3(0f, 2.75f, 0f), _on ? "OpacityThickness jellies on glass" : "constant opacity (OpacityThickness off)");
-        yield return (new Vector3(-2.7f, 3.55f, -3.5f), "ClothComponent.Wind");
-        yield return (new Vector3(3.5f, 3.2f, -2.6f), "cloth + kinematic sphere");
-        yield return (new Vector3(-2.3f, 1.4f, 1.3f), "FollowSkeleton flesh, a sail on the head bone");
-        yield return (new Vector3(2.3f, 1.65f, 2.0f), "two pins, each anchored to a rigid handle");
-        yield return (new Vector3(6.0f, 3.1f, 0.4f), "BodyAnchor both ways: swing the load, the jib turns");
+        var o = Origin;
+        yield return new(o + new Vector3(0f, 2.75f, 0f), _on ? "OpacityThickness on" : "OpacityThickness off");
+        yield return new(o + new Vector3(-3.8f, 3.55f, -3.5f), "ClothComponent.Wind");
+        yield return new(o + new Vector3(3.5f, 3.2f, -2.6f), "cloth + kinematic sphere");
+        yield return new(o + new Vector3(2.3f, 1.65f, 2.2f), "two pins, each anchored to a rigid handle");
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return $"OpacityThickness: {(_on ? "on" : "off")} (O)  |  5 jellies, 3 flags, 1 tent, 2 soft balls, 2 molluscs + sail, 1 rope (twister at {Rope?.Angle / MathUtil.TwoPi ?? 0f:0.0} turns), crane jib at {Crane?.JibAngle ?? 0f:0} deg";
+        yield return $"OpacityThickness: {(_on ? "on" : "off")} (switches every {SwapPeriod:0} s)  |  5 jellies, 3 flags, 1 tent, 2 soft balls, twisted piece at {(_piece?.Angle ?? 0f) / MathUtil.TwoPi:0.0} turns";
     }
 }

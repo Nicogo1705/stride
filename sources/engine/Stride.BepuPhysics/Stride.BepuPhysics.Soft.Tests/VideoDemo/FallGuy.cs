@@ -21,15 +21,15 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 /// </summary>
 internal static class FallGuy
 {
-    /// <summary> The skeleton, its animation and its bone frames are the bean's </summary>
+    /// <summary> The skeleton, its animation and its bone frames are the bean's; the whole body wears the color of <paramref name="mode"/> </summary>
     /// <param name="stiffness"> Scales every spring of the flesh: a finer lattice is softer at the same frequency, its springs being more in a row </param>
-    public static (Entity Entity, SkeletonBodyComponent Body, VolumetricSoftBodyComponent Flesh, Bean.Animator Animator) Add(DemoGame game, Color color, Vector3 position, float yaw, float time = 0f, int resolution = 7, float stiffness = 1f)
+    public static (Entity Entity, SkeletonBodyComponent Body, VolumetricSoftBodyComponent Flesh, Bean.Animator Animator) Add(DemoGame game, SkeletonBodyMode mode, Vector3 position, float yaw, float time = 0f, int resolution = 7, float stiffness = 1f)
     {
         var device = game.GraphicsDevice;
-        var model = Look.Model(game, new FallGuyProceduralModel(), color, 0.8f);
+        var model = Look.Model(game, new FallGuyProceduralModel(), Modes.Of(mode), 0.8f);
         model.Skeleton = new Skeleton { Nodes = Bean.Nodes() };
 
-        var body = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Standing, Ghost = true, SelfCollision = false, StandingStrength = 2.5f };
+        var body = new SkeletonBodyComponent { Mode = mode, Ghost = true, SelfCollision = false, StandingStrength = 2.5f };
         // The flesh carries the mass: the ghost bones weigh a third of the bean's, the least that still holds the flesh up
         var bones = Bean.Hitboxes();
         foreach (var bone in bones)
@@ -43,7 +43,7 @@ internal static class FallGuy
         };
         var animator = new Bean.Animator { Time = time };
         var modelComponent = new ModelComponent(model);
-        var entity = new Entity("fall guy") { modelComponent, flesh, body, animator };
+        var entity = new Entity("fall guy") { modelComponent, flesh, body, animator, new ModeTint(body, new[] { modelComponent }, 0.8f) };
         entity.Transform.Position = position;
         entity.Transform.Rotation = Quaternion.RotationY(yaw);
 

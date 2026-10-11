@@ -48,6 +48,9 @@ internal static class PhysicalWorm
     {
         private float _time, _stepTime;
 
+        /// <summary> The simulation of the zone the entity is in, set before it joins the scene </summary>
+        public ISimulationSelector SimulationSelector { get; set; } = SceneBasedSimulationSelector.Shared;
+
         public override void Update()
         {
             _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;

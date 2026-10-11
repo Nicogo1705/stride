@@ -28,16 +28,13 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
 /// The Bepu demo dressed for a video: sky, soft shadows, a palette, labels anchored in the scene, an overlay that hides,
-/// an orbiting camera, and a gravity gun that also takes soft bodies and the bones of ragdolls.
+/// and a gravity gun that also takes soft bodies and the bones of ragdolls.
 /// </summary>
 internal sealed class VideoDemoGame : BepuDemoGame
 {
     private static readonly FieldInfo SkeletonBodies = typeof(SkeletonBodyComponent).GetField("_bodies", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private ParticleView? _particles;
-    private int _overlayState;
-    private bool _orbit;
-    private float _orbitAngle, _orbitRadius, _orbitHeight;
     private readonly List<double> _frameTimes = new();
     private long _lastFrame;
     private SoftBodyDeformationMode _deformation = SoftBodyDeformationMode.Gpu;
@@ -53,7 +50,20 @@ internal sealed class VideoDemoGame : BepuDemoGame
 
     public VideoDemoGame(IEnumerable<DemoScene> scenes, string buildLabel, string captureFolder) : base(scenes, buildLabel, captureFolder)
     {
-        KeyHelpVisible = false;
+    }
+
+    /// <summary> The single world while it is the current scene: it gives each new entity the simulation of its zone </summary>
+    public WorldScene? World { get; set; }
+
+    // Every key belongs to the harness: the scenes only add options and places
+    protected override bool ReloadKey => false;
+
+    protected override bool PhysicsKeys => false;
+
+    protected override void OnAddingToScene(Entity entity)
+    {
+        if (World is { } world && CurrentScene == world)
+            world.Assign(entity);
     }
 
     /// <summary> Frame times in milliseconds since the scene was loaded </summary>
@@ -66,7 +76,7 @@ internal sealed class VideoDemoGame : BepuDemoGame
         _deformationTimes.Clear();
     }
 
-    /// <summary> Where the soft bodies of every scene are deformed, F4 switches it </summary>
+    /// <summary> Where the soft bodies of every scene are deformed, the "Soft body deformation" option switches it </summary>
     public SoftBodyDeformationMode Deformation
     {
         get => _deformation;
@@ -90,13 +100,8 @@ internal sealed class VideoDemoGame : BepuDemoGame
         OnDebugViewChanged(view);
     }
 
-    /// <summary> Hides the whole overlay, as the third press of H does, or shows it back in its compact form </summary>
-    public void SetOverlay(bool visible)
-    {
-        _overlayState = visible ? 0 : 2;
-        OverlayVisible = visible;
-        KeyHelpVisible = false;
-    }
+    /// <summary> Hides the whole overlay, as H does on its last step, or shows it back in its compact form </summary>
+    public void SetOverlay(bool visible) => Overlay = visible ? OverlayMode.Compact : OverlayMode.Hidden;
 
     /// <summary> The handle of one body of a skeleton, read by reflection: the component has no API to push a single bone </summary>
     public static BodyReference BoneBody(SkeletonBodyComponent bones, int index) => bones.Simulation!.Simulation.Bodies[((BodyHandle[])SkeletonBodies.GetValue(bones)!)[index]];
@@ -138,6 +143,10 @@ internal sealed class VideoDemoGame : BepuDemoGame
     {
         base.OnViewReady();
         Look.Reset(GraphicsDevice);
+        AddOption("Soft body deformation", () => DeformationText, () => Deformation = _deformation == SoftBodyDeformationMode.Gpu ? SoftBodyDeformationMode.Cpu : SoftBodyDeformationMode.Gpu);
+        // The world spans 200 m and its horizon goes further
+        if (CameraEntity.Get<CameraComponent>() is { } camera)
+            camera.FarClipPlane = 1600f;
         var root = SceneSystem.SceneInstance.RootScene.Entities;
 
         // Sun: a warm key light with soft, stable cascades close to the camera; a cool fill from the other side, no shadow
@@ -208,55 +217,14 @@ internal sealed class VideoDemoGame : BepuDemoGame
         if (scene is VideoScene video)
             DebugView = video.DefaultDebugView;
         ClearFrameTimes();
-        _orbit = false;
-    }
-
-    private void StartOrbit()
-    {
-        var target = CurrentScene!.Target;
-        var offset = CameraEntity.Transform.Position - target;
-        _orbitAngle = MathF.Atan2(offset.X, offset.Z);
-        _orbitRadius = new Vector2(offset.X, offset.Z).Length();
-        _orbitHeight = offset.Y;
     }
 
     protected override void UpdateSubject(float seconds)
     {
-        if (Input.IsKeyPressed(Keys.H))
-        {
-            // Compact overlay (scene and pull request), then everything with the keys, then nothing at all for clean shots
-            _overlayState = (_overlayState + 1) % 3;
-            OverlayVisible = _overlayState != 2;
-            KeyHelpVisible = _overlayState == 1;
-        }
-        if (Input.IsKeyPressed(Keys.R) && CurrentScene is { } current)
-        {
-            LoadScene(current);
-            Flash("Scene reset");
-            return;
-        }
-        if (Input.IsKeyPressed(Keys.F4))
-        {
-            Deformation = _deformation == SoftBodyDeformationMode.Gpu ? SoftBodyDeformationMode.Cpu : SoftBodyDeformationMode.Gpu;
-            Flash("Soft body deformation: " + DeformationText);
-        }
-        if (Input.IsKeyPressed(Keys.C))
-        {
-            _orbit = !_orbit;
-            if (_orbit)
-                StartOrbit();
-            Flash("Orbit camera: " + (_orbit ? "on" : "off"));
-        }
-        if (_orbit && CurrentScene is { } scene)
-        {
-            _orbitAngle += seconds * 0.12f;
-            var eye = scene.Target + new Vector3(MathF.Sin(_orbitAngle) * _orbitRadius, _orbitHeight, MathF.Cos(_orbitAngle) * _orbitRadius);
-            SetCamera(eye, scene.Target);
-        }
-
+        // Before the physics steps: the zones near the camera are enabled, their timers run
+        if (World is { } world && CurrentScene == world)
+            world.UpdateZones(this, seconds);
         base.UpdateSubject(seconds);
-        if (CurrentScene is VideoScene video && Simulation is not null)
-            video.UpdateInput(this);
     }
 
     protected override void BeforeDraw()
@@ -272,57 +240,20 @@ internal sealed class VideoDemoGame : BepuDemoGame
         _lastFrame = now;
     }
 
-    // One help for the whole demo: every key once, R is the scene reset (it also puts the camera back)
-    protected override IEnumerable<(string Theme, string Keys)> SharedKeys()
+    protected override IEnumerable<OverlayRow> SubjectRows()
     {
-        yield return ("Camera", "Z Q S D: move  |  A / E: down / up  |  right click: look  |  wheel, Shift: speed  |  C: orbit camera");
-        yield return ("Demo", "Esc: scenes  |  R: reset the scene  |  H: overlay full / none / compact  |  P: capture  |  " + FpsLimitKeyHelp);
-        yield return ("View", "V: next debug view (" + string.Join(" / ", DebugViews) + ")  |  F4: soft body deformation GPU / CPU");
+        foreach (var row in base.SubjectRows())
+            yield return row;
+        yield return OverlayRow.Section("Soft bodies");
+        yield return new("Deformation", DeformationText);
+        yield return new("CPU deform time", Stats(_deformationTimes, OverlayWindow));
+        yield return new("GPU frame time", Stats(_gpuFrameTimes, OverlayWindow));
     }
 
-    protected override IEnumerable<(string Theme, string Keys)> SubjectKeys()
-    {
-        yield return ("Physics", "left click: grab (rigid bodies, soft bodies, bones)  |  wheel: distance  |  F: throw / ball  |  G: object rain  |  Space: pause  |  N: one step");
-        if (CurrentScene is VideoScene { SceneKeys: { } keys })
-            yield return ("Scene", keys);
-    }
+    protected override bool ShowBuildLabel => Overlay == OverlayMode.Full;
 
-    protected override (string Theme, string Keys)? CollapsedKeyHint => null;
-
-    protected override bool ShowBuildLabel => _overlayState == 1;
-
-    // Compact: the feature and its pull request only; full: what to look at, the scene's state, timings and the aim
-    protected override IEnumerable<string> OverlayLines()
-    {
-        if (_overlayState == 0)
-        {
-            if (CurrentScene is VideoScene scene)
-                yield return scene.Name;
-            yield break;
-        }
-        foreach (var line in base.OverlayLines())
-            yield return line;
-    }
-
-    protected override IEnumerable<string> SubjectStatus()
-    {
-        if (Simulation is { Enabled: false })
-            yield return "PAUSED (Space)";
-        yield return "Soft body deformation: " + DeformationText + " (F4)  |  " + DeformationTiming(OverlayWindow);
-        if (CurrentScene is VideoScene scene)
-        {
-            foreach (var line in scene.Status())
-                yield return line;
-        }
-    }
-
-    /// <summary> The rolling mean and 95th percentile of the physics step, as the full overlay shows them </summary>
-    public string StepTiming() => base.SubjectStatus().FirstOrDefault() ?? string.Empty;
-
-    protected override IEnumerable<string> SubjectReport()
-    {
-        yield return StepTiming();
-    }
+    /// <summary> Bottom of the build label, panels at the top right go below it </summary>
+    public float TopRightTaken => TopRightReserved;
 
     private const float LabelTop = 44f;
     private readonly List<RectangleF> _labelAreas = new();
@@ -336,21 +267,25 @@ internal sealed class VideoDemoGame : BepuDemoGame
             return;
         var size = ScreenSize;
         _labelAreas.Clear();
-        foreach (var (world, text) in scene.Labels())
+        foreach (var (world, text, background) in scene.Labels())
         {
             var screen = Vector3.Project(world, 0, 0, size.X, size.Y, 0, 1, camera.ViewProjectionMatrix);
             if (screen.Z is < 0f or > 1f || screen.X < 0 || screen.Y < 0 || screen.X > size.X || screen.Y > size.Y)
                 continue;
             var measure = MeasureText(text, 18, true);
+            var s = UiScale;
             // Whole on screen, below the title line of the compact overlay
-            var corner = new Vector2(Math.Clamp(screen.X - measure.X / 2f, 8f, MathF.Max(8f, size.X - measure.X - 8f)), MathF.Max(screen.Y - measure.Y / 2f, LabelTop));
-            var area = new RectangleF(corner.X - 8, corner.Y - 4, measure.X + 16, measure.Y + 8);
+            var corner = new Vector2(Math.Clamp(screen.X - measure.X / 2f, 8f * s, MathF.Max(8f * s, size.X - measure.X - 8f * s)), MathF.Max(screen.Y - measure.Y / 2f, LabelTop * s));
+            var area = new RectangleF(corner.X - 8 * s, corner.Y - 4 * s, measure.X + 16 * s, measure.Y + 8 * s);
             // The first of two overlapping labels, such as two characters of the same kind side by side
             if (Overlaps(area))
                 continue;
             _labelAreas.Add(area);
-            FillRect(area, new Color(20, 22, 34, 170));
-            DrawText(text, corner, Color.White, 18, true);
+            // A colored panel takes dark text when it is bright
+            var panel = background ?? new Color(20, 22, 34, 170);
+            bool bright = background is { } b && 0.299f * b.R + 0.587f * b.G + 0.114f * b.B > 150f;
+            FillRect(area, panel);
+            DrawText(text, corner, bright ? new Color(20, 22, 34) : Color.White, 18, true);
         }
         scene.DrawOverlay(this);
         if (scene.LegendModes.Count > 0)

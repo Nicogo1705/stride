@@ -14,8 +14,8 @@ using Stride.Rendering.ProceduralModels;
 
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
-/// <summary> A scene of the video showcase: a feature and its pull requests, a checkered ground, labels anchored in the scene </summary>
-/// <remarks> Nothing is ever put back automatically: what is thrown away stays away until R or Backspace reloads the scene </remarks>
+/// <summary> A scene of the video showcase: a feature and its pull requests, labels anchored in the scene </summary>
+/// <remarks> Nothing is ever put back automatically: what is thrown away stays away </remarks>
 internal abstract class VideoScene : BepuDemoScene
 {
     public override string Group => "Video";
@@ -31,8 +31,6 @@ internal abstract class VideoScene : BepuDemoScene
     /// <summary> The debug view the scene opens with, an index into <see cref="VideoDemoGame.Views"/> </summary>
     public virtual int DefaultDebugView => VideoDemoGame.NoDebugView;
 
-    /// <summary> Keys of this scene only, one line </summary>
-    public virtual string? SceneKeys => null;
 
     /// <summary> The modes listed in the color legend, none for a scene without skeletons </summary>
     public virtual IReadOnlyList<SkeletonBodyMode> LegendModes => Array.Empty<SkeletonBodyMode>();
@@ -41,10 +39,7 @@ internal abstract class VideoScene : BepuDemoScene
     public virtual string LegendCaption => "SkeletonBodyComponent.Mode (body color)";
 
     /// <summary> Texts drawn at points of the scene </summary>
-    public virtual IEnumerable<(Vector3 World, string Text)> Labels() => Enumerable.Empty<(Vector3, string)>();
-
-    /// <summary> The scene's own keys, read while the menu is closed </summary>
-    public virtual void UpdateInput(VideoDemoGame game) { }
+    public virtual IEnumerable<SceneLabel> Labels() => Enumerable.Empty<SceneLabel>();
 
     /// <summary> Panels of the scene over the image, only while the overlay is visible </summary>
     public virtual void DrawOverlay(VideoDemoGame game) { }
@@ -60,22 +55,10 @@ internal abstract class VideoScene : BepuDemoScene
     public sealed override void Build(DemoGame game)
     {
         Look.Reset(game.GraphicsDevice);
-        Look.Ground(game);
         BuildScene((VideoDemoGame)game);
     }
 
     protected abstract void BuildScene(VideoDemoGame game);
-
-    /// <summary> G: a handful of colored shapes falling on the middle of the scene </summary>
-    public override void Drop(DemoGame game)
-    {
-        var random = new Random();
-        for (int i = 0; i < 10; i++)
-        {
-            var position = Target + new Vector3((float)random.NextDouble() * 2f - 1f, 5f + i * 0.6f, (float)random.NextDouble() * 2f - 1f);
-            game.AddToScene(Props.Rigid(game, i, position, Quaternion.RotationYawPitchRoll(i, i * 0.7f, 0f)));
-        }
-    }
 }
 
 /// <summary> Small builders shared by the scenes </summary>
@@ -141,6 +124,9 @@ internal sealed class StepDriver(Action<float, float> step) : ScriptComponent, I
 {
     private float _time;
 
+    /// <summary> The simulation of the zone the entity is in, set before it joins the scene </summary>
+    public ISimulationSelector SimulationSelector { get; set; } = SceneBasedSimulationSelector.Shared;
+
     public void SimulationUpdate(BepuSimulation simulation, float simTimeStep)
     {
         _time += simTimeStep;
@@ -158,9 +144,12 @@ internal sealed class Dropper(DemoGame game, Func<int, Entity> create, Func<int,
 
     public int Dropped => _dropped;
 
+    /// <summary> Whether objects drop: off while their zone does not simulate </summary>
+    public Func<bool> Active { get; set; } = () => true;
+
     public override void Update()
     {
-        if (_dropped >= count)
+        if (_dropped >= count || !Active())
             return;
         _time += (float)Game.UpdateTime.Elapsed.TotalSeconds;
         if (_time < interval)
