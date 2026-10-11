@@ -27,6 +27,8 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
     private ShapeCacheSystem _shapeCacheSystem = null!;
     private VisibilityGroup _visibilityGroup = null!;
     private BepuConfiguration? _bepuConfiguration;
+    private SinglePassWireframeRenderFeature? _wireframeFeature;
+    private LineRenderFeature? _lineFeature;
     private readonly LineRenderObject _contactLines = new();
     private readonly LineRenderObject _sphereLines = new() { DepthTested = true, Spheres = true };
     private readonly Dictionary<BepuSimulation, ContactRecorder> _contactRecorders = new();
@@ -163,7 +165,11 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
                 _sceneSystem.GraphicsCompositor.RenderFeatures.Add(lineFeature);
             }
             AddOverlayStageSelector(lineFeature, "StrideDebugLineShader");
+            (_wireframeFeature, _lineFeature) = (wireframeFeature, lineFeature);
         }
+
+        if (_component is { } widthSource && _wireframeFeature is not null && _lineFeature is not null)
+            _wireframeFeature.LineWidth = _lineFeature.LineWidth = widthSource.LineWidth;
 
         if (_latent)
         {

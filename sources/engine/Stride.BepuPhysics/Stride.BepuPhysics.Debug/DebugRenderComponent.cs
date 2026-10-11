@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Engine;
 using Stride.Engine.Design;
 using Stride.Input;
@@ -57,6 +58,14 @@ public class DebugRenderComponent : SyncScript
     /// </summary>
     [DataMember]
     public float ContactSize { get; set; } = 0.25f;
+
+    /// <summary>
+    /// The width of the wireframes and contact lines, in pixels.
+    /// </summary>
+    /// <remarks> Applied to the graphics compositor's line and wireframe render features, replacing their own <c>LineWidth</c>. </remarks>
+    [DataMember]
+    [DataMemberRange(0.5, 10, 0.5, 1, 1)]
+    public float LineWidth { get; set; } = 3f;
 
     public override void Update()
     {
