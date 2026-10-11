@@ -9,6 +9,7 @@ using BepuUtilities.Memory;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
 using Stride.Core.Annotations;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Rendering;
 using NRigidPose = BepuPhysics.RigidPose;
@@ -18,9 +19,13 @@ namespace Stride.BepuPhysics.Definitions.Colliders;
 /// <summary>
 /// The shapes of a <see cref="SkeletonBodyComponent"/>, each one following a node of the skeleton of the <see cref="Engine.ModelComponent"/> on the same entity.
 /// </summary>
+/// <remarks> Created by the <see cref="SkeletonBodyComponent"/>, it cannot be used by other collidables. </remarks>
 [DataContract]
+[NonInstantiable]
 public sealed class BoneCollider : ICollider
 {
+    private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(BoneCollider));
+
     private readonly List<(BoneShape Bone, float Scale, TypedIndex Index, BodyInertia Inertia)> _created = new();
     private CollidableComponent? _component;
 
@@ -119,7 +124,12 @@ public sealed class BoneCollider : ICollider
         index = default;
         _created.Clear();
 
-        if (_component is not SkeletonBodyComponent owner || owner.TryResolveBones(out var resolved) == false)
+        if (_component is not SkeletonBodyComponent owner)
+        {
+            Logger.Error($"{nameof(BoneCollider)} only works on a {nameof(SkeletonBodyComponent)}, the {_component?.GetType().Name} on '{_component?.Entity?.Name}' is left out of the simulation");
+            return false;
+        }
+        if (owner.TryResolveBones(out var resolved) == false)
             return false;
 
         foreach (var (bone, scale) in resolved)

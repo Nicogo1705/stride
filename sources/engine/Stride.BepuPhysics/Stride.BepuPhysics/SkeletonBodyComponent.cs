@@ -338,6 +338,15 @@ public class SkeletonBodyComponent : CollidableComponent
         return true;
     }
 
+    internal override bool CanAttach(ICollider collider)
+    {
+        if (collider is BoneCollider)
+            return true;
+
+        Logger.Error($"{nameof(SkeletonBodyComponent)} on '{Entity?.Name}' needs a {nameof(BoneCollider)}, not a {collider.GetType().Name}; it is left out of the simulation");
+        return false;
+    }
+
     internal override bool AllowContactBetween(BodyHandle a, BodyHandle b)
     {
         if (SelfCollision == false)
@@ -386,8 +395,7 @@ public class SkeletonBodyComponent : CollidableComponent
     {
         Debug.Assert(Simulation is not null);
 
-        if (Collider is not BoneCollider collider)
-            throw new InvalidOperationException($"{nameof(SkeletonBodyComponent)} on '{Entity.Name}' needs a {nameof(BoneCollider)}, not a {Collider.GetType().Name}");
+        var collider = (BoneCollider)Collider;
         var skeleton = Entity.Get<ModelComponent>()!.Skeleton;
         var bodies = Simulation.Simulation.Bodies;
 
