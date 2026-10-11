@@ -22,7 +22,7 @@ namespace Stride.Rendering
         public override bool IsVisible(RenderObject renderObject, RenderView renderView, RenderViewStage renderViewStage)
         {
             if (renderObject is not RenderMesh { MaterialPass: { PassIndex: MaterialTransparencyBlendFeature.VolumeBackFacePass } materialPass }
-                || materialPass.Parameters.Get(MaterialVolumeKeys.Absorption) <= 0)
+                || !MaterialVolumeKeys.IsVolume(materialPass))
                 return true;
 
             Matrix.Invert(ref renderView.View, out var viewInverse);

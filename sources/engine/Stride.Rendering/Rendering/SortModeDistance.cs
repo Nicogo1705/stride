@@ -80,7 +80,7 @@ namespace Stride.Rendering
             var volumeCount = 0;
             for (int i = 0; i < renderNodes.Count; ++i)
             {
-                if (renderNodes[i].RenderObject is RenderMesh { MaterialPass: { } materialPass } && materialPass.Parameters.Get(MaterialVolumeKeys.Absorption) > 0)
+                if (renderNodes[i].RenderObject is RenderMesh { MaterialPass: { } materialPass } && MaterialVolumeKeys.IsVolume(materialPass))
                     volumes[volumeCount++] = i;
             }
 

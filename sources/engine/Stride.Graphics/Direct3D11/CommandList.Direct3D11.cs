@@ -39,7 +39,8 @@ namespace Stride.Graphics
 
         private readonly ComPtr<ID3D11UnorderedAccessView>[] currentUARenderTargetViews = new ComPtr<ID3D11UnorderedAccessView>[SimultaneousRenderTargetCount];
         private readonly ComPtr<ID3D11UnorderedAccessView>[] unorderedAccessViews = new ComPtr<ID3D11UnorderedAccessView>[UnorderedAcccesViewCount]; // Only CS
-        // The resource behind each bound CS UAV: a view of the same resource bound as SRV is a hazard too.
+        // The resource behind each bound UAV, so binding any view of it as an SRV unbinds the UAV
+        private readonly nint[] currentUARenderTargetResources = new nint[SimultaneousRenderTargetCount];
         private readonly nint[] unorderedAccessResources = new nint[UnorderedAcccesViewCount];
 
         private const int StageCount = 6;
@@ -152,6 +153,7 @@ namespace Stride.Graphics
             Array.Clear(unorderedAccessResources);
             Array.Clear(currentRenderTargetViews);
             Array.Clear(currentUARenderTargetViews);
+            Array.Clear(currentUARenderTargetResources);
 
             // Since nothing can be drawn in default state, no need to set anything (another SetPipelineState should happen before)
             currentPipelineState = GraphicsDevice.DefaultPipelineState;
@@ -164,6 +166,7 @@ namespace Stride.Graphics
         {
             Array.Clear(currentRenderTargetViews);
             Array.Clear(currentUARenderTargetViews);
+            Array.Clear(currentUARenderTargetResources);
 
             // Reset all targets
             nativeDeviceContext->OMSetRenderTargets(NumViews: 0, ppRenderTargetViews: null, pDepthStencilView: null);
@@ -489,13 +492,14 @@ namespace Stride.Graphics
                 throw new ArgumentException("Invalid shader stage", nameof(stage));
 
             var nativeUnorderedAccessView = unorderedAccessView is not null ? unorderedAccessView.NativeUnorderedAccessView : default;
+            var nativeResource = unorderedAccessView is not null ? (nint) unorderedAccessView.NativeResource.Handle : 0;
 
             if (stage == ShaderStage.Compute)
             {
                 if (unorderedAccessViews[slot].Handle != nativeUnorderedAccessView.Handle)
                 {
                     unorderedAccessViews[slot] = nativeUnorderedAccessView;
-                    unorderedAccessResources[slot] = unorderedAccessView is not null ? (nint) unorderedAccessView.NativeResource.Handle : 0;
+                    unorderedAccessResources[slot] = nativeResource;
 
                     nativeDeviceContext->CSSetUnorderedAccessViews((uint) slot, NumUAVs: 1, ref nativeUnorderedAccessView, (uint*) &uavInitialOffset);
                 }
@@ -504,6 +508,7 @@ namespace Stride.Graphics
             {
                 if (currentUARenderTargetViews[slot].Handle != nativeUnorderedAccessView.Handle)
                 {
+                    currentUARenderTargetResources[slot] = nativeResource;
                     OMSetSingleUnorderedAccessView(slot, nativeUnorderedAccessView, uavInitialOffset);
                 }
             }
@@ -519,15 +524,11 @@ namespace Stride.Graphics
                 return;
             var nativeUav = unorderedAccessView.NativeUnorderedAccessView;
             var nativeResource = (nint) unorderedAccessView.NativeResource.Handle;
-            if (nativeUav.IsNull() && nativeResource == 0)
-                return;
 
+            // Direct3D nulls an SRV whose resource is still bound as a UAV, through any view of it
             for (int slot = 0; slot < UnorderedAcccesViewCount; slot++)
             {
-                if (unorderedAccessViews[slot].IsNull())
-                    continue;
-                // Direct3D nulls an SRV whose resource is still bound as a UAV, through any view of it.
-                if (unorderedAccessViews[slot].Handle == nativeUav.Handle || (nativeResource != 0 && unorderedAccessResources[slot] == nativeResource))
+                if (unorderedAccessViews[slot].IsNotNull() && (unorderedAccessViews[slot].Handle == nativeUav.Handle || unorderedAccessResources[slot] == nativeResource))
                 {
                     var nullUav = NullComPtr<ID3D11UnorderedAccessView>();
                     unorderedAccessViews[slot] = nullUav;
@@ -535,12 +536,11 @@ namespace Stride.Graphics
                     NativeDeviceContext.CSSetUnorderedAccessViews((uint) slot, NumUAVs: 1, ppUnorderedAccessViews: ref nullUav, pUAVInitialCounts: null);
                 }
             }
-            if (nativeUav.IsNull())
-                return;
             for (int slot = 0; slot < SimultaneousRenderTargetCount; slot++)
             {
-                if (currentUARenderTargetViews[slot].Handle == nativeUav.Handle)
+                if (currentUARenderTargetViews[slot].IsNotNull() && (currentUARenderTargetViews[slot].Handle == nativeUav.Handle || currentUARenderTargetResources[slot] == nativeResource))
                 {
+                    currentUARenderTargetResources[slot] = 0;
                     OMSetSingleUnorderedAccessView(slot, NullComPtr<ID3D11UnorderedAccessView>(), uavInitialOffset: -1);
                 }
             }

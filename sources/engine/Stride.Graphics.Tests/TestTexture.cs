@@ -25,7 +25,7 @@ namespace Stride.Graphics.Tests
 
         public TestTexture()
         {
-            GraphicsDeviceManager.PreferredGraphicsProfile = [ GraphicsProfile.Level_10_0 ];
+            GraphicsDeviceManager.PreferredGraphicsProfile = [ GraphicsProfile.Level_11_0 ];
         }
 
 
@@ -183,8 +183,7 @@ namespace Stride.Graphics.Tests
 
                     // Release the Texture
                     texture.Dispose();
-                },
-                GraphicsProfile.Level_9_1);
+                });
         }
 
         [Fact]
@@ -386,9 +385,8 @@ namespace Stride.Graphics.Tests
                     var device = game.GraphicsDevice;
                     var commandList = game.GraphicsContext.CommandList;
 
-                    // Check that read-only is not supported for Depth-Stencil Buffer (unless on Direct3D11)
-                    var supported = GraphicsDevice.Platform != GraphicsPlatform.Direct3D11;
-                    Assert.Equal(supported, device.Features.HasDepthAsReadOnlyRT);
+                    // Read-only Depth-Stencil Buffers are available from feature level 11_0 on every platform
+                    Assert.True(device.Features.HasDepthAsReadOnlyRT);
 
                     // Check Texture creation with an array of data, with usage default to later allow SetData
                     var texture = Texture.New2D(device, width: 256, height: 256, PixelFormat.D32_Float, TextureFlags.DepthStencil);
@@ -411,8 +409,7 @@ namespace Stride.Graphics.Tests
 
                     // Dispose the Depth-Stencil Buffer
                     textureCopy.Dispose();
-                },
-                GraphicsProfile.Level_10_0);
+                });
         }
 
         [SkippableFact(Skip = "Clear on a Read-Only Depth-Stencil Buffer should be undefined or throw exception; we should rewrite this test to do actual rendering with ReadOnly depth stencil bound?")]
@@ -497,8 +494,7 @@ namespace Stride.Graphics.Tests
                     var testMemoryAfter = GC.GetTotalMemory(forceFullCollection: true);
 
                     Log.Info($"Test loading {fileName} GPU texture / saving to {intermediateFormat} and compare with original Memory {testMemoryAfter - testMemoryBefore} delta bytes, in {time}ms");
-                },
-                GraphicsProfile.Level_9_1);
+                });
         }
 
         [SkippableTheory, MemberData(nameof(ImageFileTypes))]
@@ -529,25 +525,21 @@ namespace Stride.Graphics.Tests
 
                     // Texture.Load returns straight alpha; pair it with the matching blend.
                     game.GraphicsContext.DrawTexture(texture, BlendStates.NonPremultiplied);
-                },
-                GraphicsProfile.Level_9_1);
+                });
         }
 
         [SkippableTheory]
-        [InlineData(GraphicsProfile.Level_9_1, GraphicsResourceUsage.Staging)]
-        [InlineData(GraphicsProfile.Level_9_1, GraphicsResourceUsage.Default)]
-        [InlineData(GraphicsProfile.Level_10_0, GraphicsResourceUsage.Staging)]
-        [InlineData(GraphicsProfile.Level_10_0, GraphicsResourceUsage.Default)]
-        public void TestGetData(GraphicsProfile profile, GraphicsResourceUsage usage)
+        [InlineData(1, GraphicsResourceUsage.Staging)]
+        [InlineData(1, GraphicsResourceUsage.Default)]
+        [InlineData(2, GraphicsResourceUsage.Staging)]
+        [InlineData(2, GraphicsResourceUsage.Default)]
+        public void TestGetData(int arraySize, GraphicsResourceUsage usage)
         {
-            var testArray = profile >= GraphicsProfile.Level_10_0;
-
             PerformTest(
                 game =>
                 {
                     const int width = 16;
                     const int height = width;
-                    var arraySize = testArray ? 2 : 1;
 
                     TextureFlags[] flags = usage is GraphicsResourceUsage.Default
                         ? [ TextureFlags.ShaderResource, TextureFlags.RenderTarget, TextureFlags.RenderTarget | TextureFlags.ShaderResource ]
@@ -561,25 +553,21 @@ namespace Stride.Graphics.Tests
                         using var texture = CreateDebugTexture(game.GraphicsDevice, data, width, height, 3, arraySize, pixelFormat, flag, usage);
                         CheckDebugTextureData(game.GraphicsContext, texture, width, height, 3, arraySize, pixelFormat, flag, usage, DefaultColorComputer);
                     }
-                },
-                profile);
+                });
         }
 
         [SkippableTheory]
-        [InlineData(GraphicsProfile.Level_9_1, GraphicsResourceUsage.Staging)]
-        [InlineData(GraphicsProfile.Level_10_0, GraphicsResourceUsage.Staging)]
-        [InlineData(GraphicsProfile.Level_9_1, GraphicsResourceUsage.Default)]
-        [InlineData(GraphicsProfile.Level_10_0, GraphicsResourceUsage.Default)]
-        public void TestCopy(GraphicsProfile profile, GraphicsResourceUsage usageSource)
+        [InlineData(1, GraphicsResourceUsage.Staging)]
+        [InlineData(2, GraphicsResourceUsage.Staging)]
+        [InlineData(1, GraphicsResourceUsage.Default)]
+        [InlineData(2, GraphicsResourceUsage.Default)]
+        public void TestCopy(int arraySize, GraphicsResourceUsage usageSource)
         {
-            var testArray = profile >= GraphicsProfile.Level_10_0;
-
             PerformTest(
                 game =>
                 {
                     const int width = 16;
                     const int height = width;
-                    var arraySize = testArray ? 2 : 1;
 
                     PixelFormat[] pixelFormats = [ PixelFormat.R8G8B8A8_UNorm, PixelFormat.R8G8B8A8_UNorm_SRgb, PixelFormat.R8_UNorm ];
 
@@ -609,8 +597,7 @@ namespace Stride.Graphics.Tests
                             }
                         }
                     }
-                },
-                profile);
+                });
         }
 
         /// <summary>

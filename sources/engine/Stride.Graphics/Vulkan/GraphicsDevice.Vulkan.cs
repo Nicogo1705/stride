@@ -27,6 +27,8 @@ namespace Stride.Graphics
 
         internal readonly ConcurrentPool<List<VkDescriptorPool>> DescriptorPoolLists = new ConcurrentPool<List<VkDescriptorPool>>(() => new List<VkDescriptorPool>());
         internal readonly ConcurrentPool<List<GraphicsResource>> StagingResourceLists = new ConcurrentPool<List<GraphicsResource>>(() => new List<GraphicsResource>());
+        internal readonly ConcurrentPool<Dictionary<Texture, CommandBufferImageLayouts>> ImageLayoutMaps = new(() => new());
+        internal readonly ConcurrentPool<CommandBufferImageLayouts> ImageLayoutEntries = new(() => new());
 
         private const GraphicsPlatform GraphicPlatform = GraphicsPlatform.Vulkan;
         internal GraphicsProfile RequestedProfile;
@@ -918,7 +920,7 @@ namespace Stride.Graphics
                 if (texture.NativeImage == VkImage.Null)
                     continue;
 
-                var count = layouts.Current.Length;
+                var count = layouts.Count;
                 if (texture.SubmittedLayouts?.Length != count)
                     texture.SubmittedLayouts = new BarrierLayout?[count];
                 var submitted = texture.SubmittedLayouts;
@@ -974,6 +976,15 @@ namespace Stride.Graphics
             }
             DescriptorPoolLists.Release(commandList.DescriptorPools);
             commandList.DescriptorPools.Clear();
+
+            // Read at submission only, so they can be reused right away
+            if (commandList.ImageLayouts != null)
+            {
+                foreach (var layouts in commandList.ImageLayouts.Values)
+                    ImageLayoutEntries.Release(layouts);
+                commandList.ImageLayouts.Clear();
+                ImageLayoutMaps.Release(commandList.ImageLayouts);
+            }
 
             commandList.Builder.CommandBufferPool.RecycleObject(commandListFenceValue, commandList.NativeCommandBuffer);
         }

@@ -167,7 +167,7 @@ namespace Stride.Graphics.Tests
                 var b = mesh.Vertices[mesh.Indices[i + 1]];
                 var c = mesh.Vertices[mesh.Indices[i + 2]];
                 var faceNormal = Vector3.Cross(b.Position - a.Position, c.Position - a.Position);
-                if (faceNormal.Length() < 1e-6f)
+                if (MathUtil.IsZero(faceNormal.Length()))
                     continue;
                 signs.Add(MathF.Sign(Vector3.Dot(faceNormal, a.Normal + b.Normal + c.Normal)));
             }
