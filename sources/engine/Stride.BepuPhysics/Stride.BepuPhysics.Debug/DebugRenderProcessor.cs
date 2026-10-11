@@ -29,6 +29,8 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
     private BepuConfiguration? _bepuConfiguration;
     private SinglePassWireframeRenderFeature? _wireframeFeature;
     private LineRenderFeature? _lineFeature;
+    // Last width given to the features, so a width set on them directly holds until the component's changes
+    private float? _appliedLineWidth;
     private readonly LineRenderObject _contactLines = new();
     private readonly LineRenderObject _sphereLines = new() { DepthTested = true, Spheres = true };
     private readonly Dictionary<BepuSimulation, ContactRecorder> _contactRecorders = new();
@@ -166,10 +168,14 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
             }
             AddOverlayStageSelector(lineFeature, "StrideDebugLineShader");
             (_wireframeFeature, _lineFeature) = (wireframeFeature, lineFeature);
+            _appliedLineWidth = null;
         }
 
-        if (_component is { } widthSource && _wireframeFeature is not null && _lineFeature is not null)
+        if (_component is { } widthSource && _wireframeFeature is not null && _lineFeature is not null && _appliedLineWidth != widthSource.LineWidth)
+        {
             _wireframeFeature.LineWidth = _lineFeature.LineWidth = widthSource.LineWidth;
+            _appliedLineWidth = widthSource.LineWidth;
+        }
 
         if (_latent)
         {
