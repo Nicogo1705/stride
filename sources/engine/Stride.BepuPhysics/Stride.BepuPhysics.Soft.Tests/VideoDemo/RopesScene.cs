@@ -27,7 +27,7 @@ internal sealed class RopesScene : VideoScene
     private (Entity Entity, SkeletonBodyComponent Body, VolumetricSoftBodyComponent Flesh)? _jumper;
 
     public override string Title => "Ropes and cables";
-    public override string Pr => "soft body pins as body anchors, AnchorNode on bones, PR #3528 and upcoming";
+    public override string Pr => "pins on a BodyAnchor or a WorldAnchor, NodeName on bones, PR #3528 and upcoming";
     public override string Description => "every rope pulls on what it is tied to: a crane, a ragdoll hung by the ankle, a cable car, a swing, a trampoline";
     public override Vector3 Eye => new(0.0f, 4.4f, 10.4f);
     public override Vector3 Target => new(0f, 1.2f, 0f);
@@ -100,7 +100,7 @@ internal sealed class RopesScene : VideoScene
 
     }
 
-    /// <summary> A ragdoll hanging head down from a gallows at <paramref name="foot"/> by a rope tied to its left foot bone (AnchorNode) </summary>
+    /// <summary> A ragdoll hanging head down from a gallows at <paramref name="foot"/> by a rope tied to its left foot bone (BodyAnchor with a NodeName) </summary>
     public static SkeletonBodyComponent AddHangingRagdoll(VideoDemoGame game, Vector3 foot)
     {
         var navy = Look.Paint(game.GraphicsDevice, Look.Navy, 0.5f);
@@ -109,7 +109,7 @@ internal sealed class RopesScene : VideoScene
         var beam = Look.StaticBox(game, new Vector3(1.94f, 0.16f, 0.16f), foot + new Vector3(0f, 3.66f, 0f), navy, "gallows beam");
         // Head down: the feet, 0.06 m above the origin of the entity and 0.11 m to its side, are now below it and on the other side
         var (human, body, _) = Humans.Add(game, SkeletonBodyMode.Ragdoll, foot + new Vector3(0.11f, 2.6f, 0f), 0f, new ProceduralCharacter.Animator { Paused = true }, "hanging ragdoll", Quaternion.RotationZ(MathUtil.Pi));
-        Ropes.Add(game, foot + new Vector3(0f, 3.58f, 0f), foot + new Vector3(0f, 2.54f, 0f), 0.045f, Look.Ivory, beam, human, toNode: "Foot.L", mass: 12f, stiffness: 40f, name: "ankle rope");
+        Ropes.Add(game, foot + new Vector3(0f, 3.58f, 0f), foot + new Vector3(0f, 2.54f, 0f), 0.045f, Look.Ivory, beam, human, toNode: "Foot.L", mass: 30f, stiffness: 90f, name: "ankle rope");
         return body;
     }
 
@@ -138,7 +138,7 @@ internal sealed class RopesScene : VideoScene
     public override IEnumerable<(Vector3 World, string Text)> Labels()
     {
         yield return (CraneFoot + new Vector3(0.8f, 3.1f, 0f), "crane: load and jib pull on each other");
-        yield return (Hanging + new Vector3(0f, 4.1f, 0f), "rope on a bone (AnchorNode Foot.L)");
+        yield return (Hanging + new Vector3(0f, 4.1f, 0f), "rope on a bone (BodyAnchor, NodeName Foot.L)");
         yield return (Cable + new Vector3(0f, 3.9f, 0f), "cable car (M)");
         yield return (Swing + new Vector3(0f, 3.3f, 0f), "swing (I)");
         yield return (Trampoline + new Vector3(0f, 3.4f, 0f), "trampoline (J: up again)");

@@ -90,12 +90,12 @@ internal sealed class VideoDemoGame : BepuDemoGame
         OnDebugViewChanged(view);
     }
 
-    /// <summary> Hides or shows the whole overlay, as the third press of H does </summary>
+    /// <summary> Hides the whole overlay, as the third press of H does, or shows it back in its compact form </summary>
     public void SetOverlay(bool visible)
     {
-        _overlayState = visible ? 1 : 2;
+        _overlayState = visible ? 0 : 2;
         OverlayVisible = visible;
-        KeyHelpVisible = visible;
+        KeyHelpVisible = false;
     }
 
     /// <summary> The handle of one body of a skeleton, read by reflection: the component has no API to push a single bone </summary>
@@ -324,6 +324,9 @@ internal sealed class VideoDemoGame : BepuDemoGame
         yield return StepTiming();
     }
 
+    private const float LabelTop = 44f;
+    private readonly List<RectangleF> _labelAreas = new();
+
     protected override void DrawCustomOverlay()
     {
         if (!OverlayVisible || CurrentScene is not VideoScene scene)
@@ -332,19 +335,36 @@ internal sealed class VideoDemoGame : BepuDemoGame
         if (camera is null)
             return;
         var size = ScreenSize;
+        _labelAreas.Clear();
         foreach (var (world, text) in scene.Labels())
         {
             var screen = Vector3.Project(world, 0, 0, size.X, size.Y, 0, 1, camera.ViewProjectionMatrix);
             if (screen.Z is < 0f or > 1f || screen.X < 0 || screen.Y < 0 || screen.X > size.X || screen.Y > size.Y)
                 continue;
             var measure = MeasureText(text, 18, true);
-            var corner = new Vector2(screen.X - measure.X / 2f, screen.Y - measure.Y / 2f);
-            FillRect(new RectangleF(corner.X - 8, corner.Y - 4, measure.X + 16, measure.Y + 8), new Color(20, 22, 34, 170));
+            // Whole on screen, below the title line of the compact overlay
+            var corner = new Vector2(Math.Clamp(screen.X - measure.X / 2f, 8f, MathF.Max(8f, size.X - measure.X - 8f)), MathF.Max(screen.Y - measure.Y / 2f, LabelTop));
+            var area = new RectangleF(corner.X - 8, corner.Y - 4, measure.X + 16, measure.Y + 8);
+            // The first of two overlapping labels, such as two characters of the same kind side by side
+            if (Overlaps(area))
+                continue;
+            _labelAreas.Add(area);
+            FillRect(area, new Color(20, 22, 34, 170));
             DrawText(text, corner, Color.White, 18, true);
         }
         scene.DrawOverlay(this);
         if (scene.LegendModes.Count > 0)
             Modes.DrawLegend(this, scene.LegendModes, scene.LegendCaption);
+    }
+
+    private bool Overlaps(RectangleF area)
+    {
+        foreach (var other in _labelAreas)
+        {
+            if (other.Intersects(area))
+                return true;
+        }
+        return false;
     }
 
     public Vector3 CameraPosition => CameraEntity.Transform.Position;

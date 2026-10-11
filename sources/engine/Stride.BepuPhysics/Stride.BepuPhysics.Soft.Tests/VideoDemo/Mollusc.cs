@@ -60,11 +60,11 @@ internal static class Mollusc
         return (start + new Vector3(x - Length / 2f - Radius, Radius + 0.02f, 0f), 0f);
     };
 
-    /// <summary> A sail of cloth whose front edge is joined to the flesh of <paramref name="mollusc"/> near its head, heading <paramref name="yaw"/> </summary>
+    /// <summary> A sail of cloth whose front edge follows the head bone of <paramref name="mollusc"/> (WorldAnchor with a NodeName), heading <paramref name="yaw"/> </summary>
     public static Entity AddSail(DemoGame game, Entity mollusc, float yaw, Color color)
     {
         var head = mollusc.Transform.Position + Forward(yaw) * (Length / 2f + Radius * 0.6f);
-        var edge = new SoftBodyPin { Region = new BoundingBox(new Vector3(0.39f, -1f, -1f), new Vector3(0.41f, 1f, 1f)), Anchor = new BodyAnchor { Body = mollusc.Get<VolumetricSoftBodyComponent>() } };
+        var edge = new SoftBodyPin { Region = new BoundingBox(new Vector3(0.39f, -1f, -1f), new Vector3(0.41f, 1f, 1f)), Anchor = new WorldAnchor { Entity = mollusc, NodeName = Head } };
         var sail = new Entity("sail")
         {
             new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(0.8f, 0.55f), Tessellation = new Int2(16, 10), Normal = NormalDirection.UpZ, GenerateBackFace = true }, color, 0.3f)),

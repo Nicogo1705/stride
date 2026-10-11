@@ -31,7 +31,7 @@ internal sealed class SoftBodiesScene : VideoScene
     public SwingingCrane? Crane { get; private set; }
 
     public override string Title => "Soft bodies";
-    public override string Pr => "PR #3528, #3530, #3564, FollowSkeleton / AnchorNode (upcoming)";
+    public override string Pr => "PR #3528, #3530, #3564, FollowSkeleton (upcoming)";
     public override string Description => "jellies whose opacity grows with the thickness crossed, a rope twisted by a motor (pull its block to stretch it), cloth in the wind, molluscs with flesh on a skeleton";
     public override Vector3 Eye => new(0.3f, 2.7f, 6.6f);
     public override Vector3 Target => new(0f, 0.9f, -0.7f);
@@ -191,7 +191,7 @@ internal sealed class SoftBodiesScene : VideoScene
         yield return (new Vector3(0f, 2.75f, 0f), _on ? "OpacityThickness jellies on glass" : "constant opacity (OpacityThickness off)");
         yield return (new Vector3(-2.7f, 3.55f, -3.5f), "ClothComponent.Wind");
         yield return (new Vector3(3.5f, 3.2f, -2.6f), "cloth + kinematic sphere");
-        yield return (new Vector3(-2.3f, 1.4f, 1.3f), "FollowSkeleton flesh, AnchorNode sail");
+        yield return (new Vector3(-2.3f, 1.4f, 1.3f), "FollowSkeleton flesh, a sail on the head bone");
         yield return (new Vector3(2.3f, 1.65f, 2.0f), "two pins, each anchored to a rigid handle");
         yield return (new Vector3(6.0f, 3.1f, 0.4f), "BodyAnchor both ways: swing the load, the jib turns");
     }

@@ -65,6 +65,11 @@ public class VideoShowcaseDemo : GameTestBase
         var picked = game.Scenes.Select((scene, i) => (Scene: scene, Index: i + 1)).Where(s => only is null || only.Contains(s.Index)).ToList();
         DemoSettings.RunTour(game, async () =>
         {
+            // VIDEO_TOUR_DEFORMATION=Cpu or Gpu, the demo's default otherwise
+            if (Enum.TryParse<SoftBodyDeformationMode>(Environment.GetEnvironmentVariable("VIDEO_TOUR_DEFORMATION"), true, out var deformation))
+                game.Deformation = deformation;
+            report.Add($"Soft body deformation: {game.Deformation}");
+
             if (Environment.GetEnvironmentVariable("VIDEO_TOUR_PROFILE") == "1")
             {
                 // The cost of each kind of physical object: the step time once all of them are removed
@@ -137,8 +142,8 @@ public class VideoShowcaseDemo : GameTestBase
                         await game.CaptureTo(Shot("b-jellies-close"));
                         if (((SoftBodiesScene)scene).Crane is { } crane)
                         {
-                            // The load thrown sideways: the jib follows it around
-                            game.SetCamera(new Vector3(4.2f, 2.6f, 4.4f), new Vector3(5.6f, 1.6f, 0.4f));
+                            // The load thrown sideways, seen from the side it swings to: the jib follows it around
+                            game.SetCamera(new Vector3(8.8f, 2.6f, 2.2f), new Vector3(5.4f, 1.6f, -0.2f));
                             crane.Load.LinearVelocity = new Vector3(0f, 0f, -4f);
                             crane.Load.Awake = true;
                             await game.Steps(50);
@@ -166,9 +171,16 @@ public class VideoShowcaseDemo : GameTestBase
                     case AnimatedHumanScene human:
                         // A ball thrown at the walking human, then U
                         await game.Steps(60);
+                        // Launched against his walk: he runs into it and the hitboxes overlap the ball, as contact events need,
+                        // where a ball caught up from behind is stopped by the speculative contacts just short of touching
                         var hips = HumanHips(game) ?? scene.Target;
+                        var walk = HumanVelocity(game) * new Vector3(1f, 0f, 1f);
+                        var ahead = walk.LengthSquared() > 1e-4f ? Vector3.Normalize(walk) : Vector3.UnitZ;
                         game.SetCamera(hips + new Vector3(0.5f, 0.9f, 4.5f), hips + new Vector3(0f, 0.2f, 0f));
-                        await game.Press(Keys.F);
+                        var shot = Props.Ball(game, 0.15f, 6f, Look.Navy, hips + ahead * 1.2f + new Vector3(0f, 0.1f, 0f));
+                        game.AddToScene(shot);
+                        await game.Steps(1);
+                        shot.Get<BodyComponent>()!.LinearVelocity = -ahead * 8f;
                         await game.Steps(40);
                         report.Add($"{index:00} after the ball: mode {human.Mode}");
                         await game.CaptureTo(Shot("b-hit"));
@@ -215,18 +227,35 @@ public class VideoShowcaseDemo : GameTestBase
                         lab.SetTwisting(true);
                         lab.SetPulling(true);
                         await game.Steps(660);
-                        foreach (var (name, eye, target) in new[]
+                        var plate = game.SceneSystem.SceneInstance.RootScene.Entities.First(e => e.Name == "press plate").Get<BodyComponent>()!;
+                        var hammer = game.SceneSystem.SceneInstance.RootScene.Entities.First(e => e.Name == "pile driver").Get<BodyComponent>()!;
+                        foreach (var (name, eye, target, ready) in new (string, Vector3, Vector3, Func<Task>)[]
                         {
-                            ("press", new Vector3(-3.0f, 2.2f, 2.2f), new Vector3(-4.6f, 0.8f, -1.2f)),
-                            ("rollers", new Vector3(-0.4f, 2.4f, 2.0f), new Vector3(-1.6f, 1.0f, -1.2f)),
-                            ("quartering", new Vector3(2.8f, 2.8f, 2.4f), new Vector3(1.6f, 1.2f, -1.2f)),
-                            ("fan", new Vector3(6.6f, 2.4f, 2.4f), new Vector3(4.8f, 1.4f, -1.4f)),
-                            ("sausage", new Vector3(-2.2f, 1.8f, 4.6f), new Vector3(-2.6f, 1.1f, 2.0f)),
-                            ("pile-driver", new Vector3(4.8f, 1.6f, 4.6f), new Vector3(3.4f, 0.6f, 2.2f)),
+                            // At eye level while the plate holds the jelly flat
+                            ("press", new Vector3(-3.8f, 0.85f, 1.6f), new Vector3(-4.6f, 0.6f, -1.2f), async () =>
+                            {
+                                for (int i = 0; i < 300 && plate.Position.Y > 0.7f; i++)
+                                    await game.Steps(1);
+                            }),
+                            // Down the gap, a fresh jelly between the rollers
+                            ("rollers", new Vector3(-1.1f, 2.6f, 1.3f), new Vector3(-1.6f, 1.3f, -1.2f), async () =>
+                            {
+                                await game.Press(Keys.J);
+                                await game.Steps(40);
+                            }),
+                            ("quartering", new Vector3(2.8f, 2.8f, 2.4f), new Vector3(1.6f, 1.2f, -1.2f), () => game.Steps(2)),
+                            ("fan", new Vector3(6.6f, 2.4f, 2.4f), new Vector3(4.8f, 1.4f, -1.4f), () => game.Steps(2)),
+                            ("sausage", new Vector3(-2.2f, 1.8f, 4.6f), new Vector3(-2.6f, 1.1f, 2.0f), () => game.Steps(2)),
+                            // The hammer on the ball
+                            ("pile-driver", new Vector3(4.6f, 1.5f, 4.8f), new Vector3(3.4f, 0.8f, 2.2f), async () =>
+                            {
+                                for (int i = 0; i < 300 && hammer.Position.Y > 0.8f; i++)
+                                    await game.Steps(1);
+                            }),
                         })
                         {
                             game.SetCamera(eye, target);
-                            await game.Steps(2);
+                            await ready();
                             await game.CaptureTo(Shot("b-" + name));
                         }
                         report.Add(string.Format(CultureInfo.InvariantCulture, "{0:00} torture lab: sausage at {1:0.0} turns each way, quartering ropes {2:0.00} m out", index, lab.Turns, lab.Pull));
@@ -241,12 +270,13 @@ public class VideoShowcaseDemo : GameTestBase
                             ropeCrane.Load.Awake = true;
                         }
                         await game.Steps(40);
+                        // Each machine whole, from where the posts hide nothing: the crane's load swings toward +Z, the swing seat along X
                         foreach (var (name, eye, target) in new[]
                         {
-                            ("crane", new Vector3(-3.6f, 2.8f, 2.4f), new Vector3(-5.0f, 1.8f, -1.6f)),
-                            ("hanging", new Vector3(-1.4f, 2.4f, 1.6f), new Vector3(-2.4f, 1.8f, -1.6f)),
-                            ("cable-car", new Vector3(2.0f, 3.0f, 1.6f), new Vector3(1.2f, 2.6f, -1.8f)),
-                            ("swing", new Vector3(6.4f, 2.0f, 1.6f), new Vector3(5.0f, 1.2f, -1.4f)),
+                            ("crane", new Vector3(-7.8f, 2.8f, 1.8f), new Vector3(-5.0f, 1.6f, -0.8f)),
+                            ("hanging", new Vector3(-1.5f, 2.6f, 3.0f), new Vector3(-2.4f, 1.8f, -1.6f)),
+                            ("cable-car", new Vector3(1.7f, 2.3f, 2.9f), new Vector3(1.2f, 1.9f, -1.8f)),
+                            ("swing", new Vector3(8.6f, 2.0f, 2.2f), new Vector3(5.0f, 1.2f, -1.4f)),
                             ("trampoline", new Vector3(5.2f, 2.4f, 5.6f), new Vector3(3.6f, 1.2f, 2.4f)),
                         })
                         {
@@ -409,6 +439,9 @@ public class VideoShowcaseDemo : GameTestBase
 
     private static Vector3? HumanHips(VideoDemoGame game) => game.SceneSystem.SceneInstance.RootScene.Entities
         .Select(e => e.Get<SkeletonBodyComponent>()).FirstOrDefault(b => b is { BodyCount: > 0 }) is { } body ? body.GetBodyPosition(0) : null;
+
+    private static Vector3 HumanVelocity(VideoDemoGame game) => game.SceneSystem.SceneInstance.RootScene.Entities
+        .Select(e => e.Get<SkeletonBodyComponent>()).FirstOrDefault(b => b is { BodyCount: > 0 }) is { } body ? body.GetBodyLinearVelocity(0) : Vector3.Zero;
 
     /// <summary> The highest point and the largest speed reached by each named kind of physical object </summary>
     private sealed class Probe

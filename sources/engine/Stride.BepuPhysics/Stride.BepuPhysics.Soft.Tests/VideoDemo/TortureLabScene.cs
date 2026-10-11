@@ -228,14 +228,14 @@ internal sealed class TortureLabScene : VideoScene
         yield return (Press + new Vector3(0f, 3.2f, 0f), "hydraulic press");
         yield return (Rollers + new Vector3(0f, 2.9f, 0f), "rollers (J: another jelly)");
         yield return (Quarter + new Vector3(0f, 2.4f, 0f), "4 ropes, body anchors (Y)");
-        yield return (Fan + new Vector3(0f, 3.0f, 0f), "fan (W)");
+        yield return (Fan + new Vector3(0f, 3.4f, 0f), "fan (W)");
         yield return (Sausage + new Vector3(0f, 0.7f, 0f), "two motors, opposite ways (T)");
-        yield return (Driver + new Vector3(0f, 3.2f, 0f), "pile driver");
+        yield return (Driver + new Vector3(0f, 3.0f, 0f), "pile driver");
     }
 
     public override IEnumerable<string> Status()
     {
-        yield return string.Format(System.Globalization.CultureInfo.InvariantCulture, "sausage: {0:0.0} / {1} turns each way ({2})  |  quartering ropes: {3:0.00} m out ({4})  |  fan {5}  |  {6} jellies dropped",
-            _turns, MaximumTurns, _twisting ? "twisting" : "untwisting", _pull, _pulling ? "pulling" : "releasing", _fanOn ? "on" : "off", _dropped);
+        yield return string.Format(System.Globalization.CultureInfo.InvariantCulture, "sausage: {0:0.0} / {1} turns each way ({2})  |  quartering ropes: {3:0.00} m out ({4})  |  fan {5}  |  {6} {7} dropped",
+            _turns, MaximumTurns, _twisting ? "twisting" : "untwisting", _pull, _pulling ? "pulling" : "releasing", _fanOn ? "on" : "off", _dropped, _dropped == 1 ? "jelly" : "jellies");
     }
 }
