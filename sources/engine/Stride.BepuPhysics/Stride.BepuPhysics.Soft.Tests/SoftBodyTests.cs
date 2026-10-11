@@ -41,6 +41,23 @@ public class SoftBodyTests : GameTestBase
     }
 
     [Fact]
+    public static void LatticeKeepsTheSolverBatchesBelowTheFallbackThreshold()
+    {
+        RunScene(async scene =>
+        {
+            // Every particle of a body is constrained to its neighbors, each constraint of a particle needs a batch of its own
+            var body = new VolumetricSoftBodyComponent { Resolution = 6 };
+            scene.Add(body, new CubeProceduralModel(), new Vector3(0f, 0.6f, 0f));
+            await Seconds(body, 0.3f);
+
+            var solver = body.Simulation!.Simulation.Solver;
+            int most = Enumerable.Range(0, body.ParticleCount).Max(i => body.Particle(i).Constraints.Count);
+            Assert.True(most <= 40, $"A particle is in {most} constraints");
+            Assert.True(solver.ActiveSet.Batches.Count <= solver.FallbackBatchThreshold, $"{solver.ActiveSet.Batches.Count} batches");
+        });
+    }
+
+    [Fact]
     public static void ClothHangsFromItsPins()
     {
         RunScene(async scene =>
