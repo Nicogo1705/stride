@@ -4,6 +4,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
 using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
@@ -304,6 +305,37 @@ public class SoftBodyTests : GameTestBase
             flesh.LinearVelocity = new Vector3(0f, 6f, 0f);
             await Seconds(flesh, 0.3f);
             Assert.True(bones.GetBodyPosition(0).Y - start.Y > 0.3f, $"Bone from {start} to {bones.GetBodyPosition(0)}");
+        });
+    }
+
+    [Fact]
+    public static void BoneBodiesAreJoinedToABoundedNumberOfParticles()
+    {
+        RunScene(async scene =>
+        {
+            // A fine lattice around two bones: hundreds of particles for each
+            var model = scene.Model(new CapsuleProceduralModel { Length = 1.2f, Radius = 0.3f, Tessellation = 16 }, Chain("Bone", 2, new Vector3(0f, -0.6f, 0f), new Vector3(0f, 0.6f, 0f)));
+            var flesh = new VolumetricSoftBodyComponent { Resolution = 10, FollowSkeleton = true, Gravity = false };
+            var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Ragdoll, SelfCollision = false };
+            for (int i = 0; i < 2; i++)
+                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, Shape = new SphereCollider { Radius = 0.1f, Mass = 1f } });
+            var entity = new Entity { new ModelComponent(model), flesh, bones };
+            entity.Transform.Position = new Vector3(0f, 2f, 0f);
+            scene.Add(entity);
+            await Seconds(flesh, 0.1f);
+
+            var simulation = flesh.Simulation!.Simulation;
+            var active = simulation.Bodies.ActiveSet;
+            int boneBodies = 0;
+            for (int i = 0; i < active.Count; i++)
+            {
+                if (flesh.Simulation.GetComponent(new CollidableReference(CollidableMobility.Dynamic, active.IndexToHandle[i])) != bones)
+                    continue;
+                boneBodies++;
+                Assert.True(active.Constraints[i].Count <= 24, $"A bone is in {active.Constraints[i].Count} constraints");
+            }
+            Assert.Equal(2, boneBodies);
+            Assert.True(simulation.Solver.ActiveSet.Batches.Count <= simulation.Solver.FallbackBatchThreshold, $"{simulation.Solver.ActiveSet.Batches.Count} batches");
         });
     }
 

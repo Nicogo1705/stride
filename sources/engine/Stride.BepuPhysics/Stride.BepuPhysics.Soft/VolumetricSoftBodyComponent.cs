@@ -27,6 +27,9 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     private static readonly Logger Logger = GlobalLogger.GetLogger(nameof(VolumetricSoftBodyComponent));
 
     private const float MinimumCouplingWeight = 0.05f; // A bone weighing less on a particle is not worth a joint
+    // The solver puts the constraints of a body in as many batches, synchronized one after the other: a bone joined to every particle around it
+    // would need more batches than any particle does, and past Bepu's fallback threshold the bone's joints would be solved more loosely
+    private const int CouplingsPerBone = 16;
 
     private int _resolution = 6;
     private float _stiffness = 20f;
@@ -172,8 +175,8 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// <remarks>
     /// The entity is then moved by whatever moves it, such as a script or an animation, instead of following the particles.
     /// Each particle is tied to the two bones nearest to it in the bind pose; it needs a model with a skeleton.
-    /// When another collidable of the entity has bodies following the nodes of that skeleton, like a ragdoll, each particle is joined to them instead:
-    /// the flesh and the bones pull on each other, and they do not collide.
+    /// When another collidable of the entity has bodies following the nodes of that skeleton, like a ragdoll, the particles nearest to each of its bodies
+    /// are joined to it instead and the others hang from them: the flesh and the bones pull on each other, and they do not collide.
     /// </remarks>
     [Display(category: CategorySoftBody)]
     [DefaultValue(false)]
@@ -413,7 +416,10 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
         return null;
     }
 
-    /// <summary> Joins each free particle to the bodies of its two bones, at its place on them, with a pull shared by the weights of the bones </summary>
+    /// <summary>
+    /// Joins the free particles nearest to each bone body to it, at their place on the bone, with a pull shared by the weights of their two bones;
+    /// the other particles hang from them through the lattice
+    /// </summary>
     private void Couple(CollidableComponent skeletonBodies)
     {
         var simulation = Simulation!.Simulation;
@@ -431,27 +437,40 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
         }
 
         var binding = _skeletonBinding!;
+        var candidates = new List<(int Body, float Distance, int Particle, int Slot)>();
         foreach (var particle in _servoParticles)
         {
-            var handle = GetCollidableReference(particle).BodyHandle;
+            var position = simulation.Bodies[GetCollidableReference(particle).BodyHandle].Pose.Position;
             for (int b = particle * SkeletonBinding.BonesPerParticle; b < (particle + 1) * SkeletonBinding.BonesPerParticle; b++)
             {
-                float weight = binding.Weights[b];
-                if (weight < MinimumCouplingWeight)
+                if (binding.Weights[b] < MinimumCouplingWeight)
                     continue;
                 int node = binding.Nodes[b];
                 while (node >= 0 && bodyOfNode[node] < 0)
                     node = skeleton.Nodes[node].ParentIndex;
                 if (node < 0)
                     continue;
-
-                var body = simulation.Bodies[skeletonBodies.GetCollidableReference(bodyOfNode[node]).BodyHandle];
-                var target = Vector3.TransformCoordinate(binding.Offsets[b], nodes[binding.Nodes[b]].WorldMatrix).ToNumeric();
-                var offset = System.Numerics.Vector3.Transform(target - body.Pose.Position, System.Numerics.Quaternion.Conjugate(body.Pose.Orientation));
-                // Springs in parallel add up: with the square root of its weight each, both bones together pull as hard as SkeletonStiffness
-                var spring = Spring(_skeletonStiffness * MathF.Sqrt(weight), _skeletonDamping);
-                _couplings.Add(simulation.Solver.Add(body.Handle, handle, new BallSocketServo { LocalOffsetA = offset, SpringSettings = spring, ServoSettings = ServoSettings.Default }));
+                var bone = skeletonBodies.GetCollidableReference(bodyOfNode[node]).BodyHandle;
+                candidates.Add((bodyOfNode[node], System.Numerics.Vector3.Distance(position, simulation.Bodies[bone].Pose.Position), particle, b));
             }
+        }
+
+        // By bone body, nearest particles first
+        candidates.Sort();
+        int previous = -1, taken = 0;
+        foreach (var (bodyIndex, _, particle, b) in candidates)
+        {
+            taken = bodyIndex == previous ? taken + 1 : 0;
+            previous = bodyIndex;
+            if (taken >= CouplingsPerBone)
+                continue;
+
+            var body = simulation.Bodies[skeletonBodies.GetCollidableReference(bodyIndex).BodyHandle];
+            var target = Vector3.TransformCoordinate(binding.Offsets[b], nodes[binding.Nodes[b]].WorldMatrix).ToNumeric();
+            var offset = System.Numerics.Vector3.Transform(target - body.Pose.Position, System.Numerics.Quaternion.Conjugate(body.Pose.Orientation));
+            // Springs in parallel add up: with the square root of its weight each, both bones together pull as hard as SkeletonStiffness
+            var spring = Spring(_skeletonStiffness * MathF.Sqrt(binding.Weights[b]), _skeletonDamping);
+            _couplings.Add(simulation.Solver.Add(body.Handle, GetCollidableReference(particle).BodyHandle, new BallSocketServo { LocalOffsetA = offset, SpringSettings = spring, ServoSettings = ServoSettings.Default }));
         }
 
         _coupledSkeleton = skeletonBodies;
