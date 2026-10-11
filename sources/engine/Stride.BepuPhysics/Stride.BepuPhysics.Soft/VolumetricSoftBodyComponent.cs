@@ -79,6 +79,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// </summary>
     /// <remarks> Values above half the rate of the solver's substeps cannot be honored </remarks>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(20f)]
     public float Stiffness
     {
@@ -94,6 +95,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// How fast the diagonals of the cells return to their rest length, in hertz, lower values let the body shear and twist more easily.
     /// </summary>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(20f)]
     public float ShearStiffness
     {
@@ -109,6 +111,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// How fast squashed or stretched cells recover their volume, in hertz, zero lets the volume change freely.
     /// </summary>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(20f)]
     public float VolumeStiffness
     {
@@ -124,6 +127,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// The damping ratio of every spring, one stops oscillations the fastest without overshooting.
     /// </summary>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float Damping
     {
@@ -142,6 +146,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// The springs alone give in to any force strong enough, this keeps the cells from being torn apart; zero removes the limit.
     /// </remarks>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1.5f)]
     public float MaximumStretch
     {

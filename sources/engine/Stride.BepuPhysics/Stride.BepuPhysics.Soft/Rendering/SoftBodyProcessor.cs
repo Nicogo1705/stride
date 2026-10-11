@@ -25,12 +25,14 @@ internal sealed class SoftBodyProcessor : EntityProcessor<SoftBodyComponent, Sof
 
     private readonly List<DeformableModel> _retired = new();
     private readonly List<SoftBodyComponent> _drawn = new();
+    private readonly Action<int> _deform;
     private GraphicsDevice? _device;
     private GraphicsContext? _context;
 
     public SoftBodyProcessor()
     {
         Order = -100; // Draws after the transforms are updated and before the models are collected for rendering
+        _deform = i => _drawn[i].RenderModel!.Deform(_drawn[i], _drawn[i].Entity.Transform.WorldMatrix);
     }
 
     protected override void OnSystemAdd()
@@ -109,7 +111,7 @@ internal sealed class SoftBodyProcessor : EntityProcessor<SoftBodyComponent, Sof
         }
 
         // Bodies deform independently, only the uploads go through the command list
-        Dispatcher.For(0, _drawn.Count, i => _drawn[i].RenderModel!.Deform(_drawn[i], _drawn[i].Entity.Transform.WorldMatrix));
+        Dispatcher.For(0, _drawn.Count, _deform);
         foreach (var component in _drawn)
             component.RenderModel!.Upload(_context.CommandList);
     }

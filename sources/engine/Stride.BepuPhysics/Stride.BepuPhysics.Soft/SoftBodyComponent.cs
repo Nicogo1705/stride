@@ -15,6 +15,7 @@ using Stride.BepuPhysics.Soft.Colliders;
 using Stride.BepuPhysics.Soft.Rendering;
 using Stride.BepuPhysics.Soft.Topology;
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Engine;
@@ -31,6 +32,7 @@ namespace Stride.BepuPhysics.Soft;
 /// The model is replaced at runtime by a copy whose vertices follow the particles, the entity's transform follows the overall motion of the body.
 /// Each particle is a body of the simulation, raycasts, overlaps and contact events report this component for any of them.
 /// </remarks>
+[CategoryOrder(1, CategorySoftBody, Expand = ExpandRule.Always)]
 [DataContract(Inherited = true)]
 [DefaultEntityComponentProcessor(typeof(SoftBodyProcessor), ExecutionMode = ExecutionMode.Runtime)]
 [ComponentCategory("Physics - Bepu Soft")]
@@ -71,7 +73,12 @@ public abstract class SoftBodyComponent : CollidableComponent
     /// <summary>
     /// The mass of the whole body, spread evenly over its particles.
     /// </summary>
+    /// <remarks>
+    /// The solver converges poorly when light particles hold much heavier bodies, as a rope tied to a load: a particle carrying more than
+    /// a few dozen times its own mass lets the body stretch. Give such bodies more mass, or the simulation more <see cref="BepuSimulation.SolverSubStep"/>.
+    /// </remarks>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0.001, 3)]
     [DefaultValue(1f)]
     public float Mass
     {
@@ -117,6 +124,7 @@ public abstract class SoftBodyComponent : CollidableComponent
 
     /// <inheritdoc cref="BodyComponent.SleepThreshold"/>
     [Display(category: CategoryActivity)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(0.01f)]
     public float SleepThreshold
     {
@@ -132,6 +140,7 @@ public abstract class SoftBodyComponent : CollidableComponent
     /// Particles held in place or tied to other entities, changes are applied when the body is created.
     /// </summary>
     [Display(category: CategorySoftBody)]
+    [MemberCollection(NotNullItems = true)]
     public List<SoftBodyPin> Pins { get; } = new();
 
     /// <summary> The amount of particles, zero until the body is part of a simulation </summary>
