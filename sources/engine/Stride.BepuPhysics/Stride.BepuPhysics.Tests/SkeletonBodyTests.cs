@@ -302,9 +302,9 @@ public class SkeletonBodyTests : GameTestBase
     // Hips, arm and leg of the test skeleton as dynamic bodies 0, 1 and 2
     private static BoneShape[] RagdollShapes() =>
     [
-        new() { NodeName = "Hips", Shape = new BoxCollider { Size = new Vector3(0.3f, 0.2f, 0.2f), Mass = 4f } },
+        new() { NodeName = "Hips", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.3f, 0.2f, 0.2f), Mass = 4f } },
         ArmShape(),
-        new() { NodeName = "Leg", Shape = new CapsuleCollider { Radius = 0.08f, Length = 0.6f, PositionLocal = new Vector3(0, -0.4f, 0), Mass = 2f } },
+        new() { NodeName = "Leg", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.08f, Length = 0.6f, PositionLocal = new Vector3(0, -0.4f, 0), Mass = 2f } },
     ];
 
     private static Matrix World(Entity entity, string node) => entity.Get<ModelComponent>().Skeleton.NodeTransformations[NodeIndex(entity, node)].WorldMatrix;
@@ -494,9 +494,9 @@ public class SkeletonBodyTests : GameTestBase
             game.ScreenShotAutomationEnabled = false;
             var scene = game.SceneSystem.SceneInstance.RootScene;
             // The hips overlap the arm and the leg they are joined to; the wide leg also overlaps the arm
-            var hips = new BoneShape { NodeName = "Hips", Shape = new SphereCollider { Radius = 0.3f } };
+            var hips = new BoneShape { NodeName = "Hips", AlongBone = false, Shape = new SphereCollider { Radius = 0.3f } };
             var leg = legOverlapsArm
-                ? new BoneShape { NodeName = "Leg", Shape = new BoxCollider { Size = new Vector3(0.8f, 0.3f, 0.3f), PositionLocal = new Vector3(0.4f, 0, 0) } }
+                ? new BoneShape { NodeName = "Leg", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.8f, 0.3f, 0.3f), PositionLocal = new Vector3(0.4f, 0, 0) } }
                 : RagdollShapes()[2];
             var (_, body) = AddCharacter(scene, Vector3.Zero, hips, ArmShape(), leg);
             body.Simulation!.PoseGravity = Vector3.Zero;
@@ -658,11 +658,11 @@ public class SkeletonBodyTests : GameTestBase
 
     private static BoneShape[] HumanoidShapes() =>
     [
-        new() { NodeName = "Hips", Shape = new BoxCollider { Size = new Vector3(0.3f, 0.2f, 0.2f), Mass = 10f } },
-        new() { NodeName = "Chest", Shape = new BoxCollider { Size = new Vector3(0.35f, 0.35f, 0.2f), PositionLocal = new Vector3(0, 0.2f, 0), Mass = 15f } },
-        new() { NodeName = "Head", Shape = new SphereCollider { Radius = 0.11f, PositionLocal = new Vector3(0, 0.12f, 0), Mass = 5f } },
-        new() { NodeName = "Leg.L", Shape = new CapsuleCollider { Radius = 0.07f, Length = 0.76f, PositionLocal = new Vector3(0, -0.45f, 0), Mass = 8f } },
-        new() { NodeName = "Leg.R", Shape = new CapsuleCollider { Radius = 0.07f, Length = 0.76f, PositionLocal = new Vector3(0, -0.45f, 0), Mass = 8f } },
+        new() { NodeName = "Hips", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.3f, 0.2f, 0.2f), Mass = 10f } },
+        new() { NodeName = "Chest", AlongBone = false, Shape = new BoxCollider { Size = new Vector3(0.35f, 0.35f, 0.2f), PositionLocal = new Vector3(0, 0.2f, 0), Mass = 15f } },
+        new() { NodeName = "Head", AlongBone = false, Shape = new SphereCollider { Radius = 0.11f, PositionLocal = new Vector3(0, 0.12f, 0), Mass = 5f } },
+        new() { NodeName = "Leg.L", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.07f, Length = 0.76f, PositionLocal = new Vector3(0, -0.45f, 0), Mass = 8f } },
+        new() { NodeName = "Leg.R", AlongBone = false, Shape = new CapsuleCollider { Radius = 0.07f, Length = 0.76f, PositionLocal = new Vector3(0, -0.45f, 0), Mass = 8f } },
     ];
 
     [Theory]

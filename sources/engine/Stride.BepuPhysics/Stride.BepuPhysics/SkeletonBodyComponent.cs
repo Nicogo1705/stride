@@ -147,6 +147,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The time, in seconds, to blend the nodes from the ragdoll back to the animation when <see cref="Mode"/> returns to <see cref="SkeletonBodyMode.Animated"/>.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(0.25f)]
     public float BlendDuration
     {
@@ -158,6 +159,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The frequency, in hertz, of the servos pulling the joints toward the animated pose in <see cref="SkeletonBodyMode.Active"/> and <see cref="SkeletonBodyMode.Standing"/>.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(10f)]
     public float ActiveSpringFrequency
     {
@@ -169,6 +171,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The damping ratio of the servos of <see cref="SkeletonBodyMode.Active"/> and <see cref="SkeletonBodyMode.Standing"/>, 1 for a critically damped spring.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float ActiveSpringDampingRatio
     {
@@ -180,6 +183,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The largest torque each joint servo of <see cref="SkeletonBodyMode.Active"/> and <see cref="SkeletonBodyMode.Standing"/> may apply.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(500f)]
     public float ActiveMaximumForce
     {
@@ -196,6 +200,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// With nothing under it within the reach of its legs, it falls freely.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(4f)]
     public float StandingLinearSpringFrequency
     {
@@ -207,6 +212,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// The frequency, in hertz, of the servos turning the root and the topmost body toward their animated orientation in <see cref="SkeletonBodyMode.Standing"/>.
     /// </summary>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(8f)]
     public float StandingAngularSpringFrequency
     {
@@ -223,6 +229,7 @@ public class SkeletonBodyComponent : CollidableComponent
     /// at the distance between the root and the topmost body; a hit or a grab stronger than that wins.
     /// </remarks>
     [Display(category: CategoryRagdoll)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(2f)]
     public float StandingStrength
     {
@@ -498,10 +505,10 @@ public class SkeletonBodyComponent : CollidableComponent
     /// <summary> The world matrix of the node of the body at <paramref name="index"/> placed at <paramref name="pose"/>, the inverse of <see cref="BodyPose"/> </summary>
     private Matrix NodeMatrix(int index, in NRigidPose pose)
     {
-        var shape = GetBoneShape(index).Shape;
-        var rotation = Quaternion.Invert(shape.RotationLocal) * pose.Orientation.ToStride();
+        var local = ((BoneCollider)Collider).GetCreatedLocal(index);
+        var rotation = Quaternion.Invert(local.Rotation) * pose.Orientation.ToStride();
         var scale = _nodeScales[index];
-        var position = pose.Position.ToStride() - Vector3.Transform(shape.PositionLocal * scale, rotation);
+        var position = pose.Position.ToStride() - Vector3.Transform(local.Position * scale, rotation);
         Matrix.Transformation(in scale, in rotation, in position, out var matrix);
         return matrix;
     }
@@ -600,8 +607,8 @@ public class SkeletonBodyComponent : CollidableComponent
             if (parent < 0)
                 continue;
 
-            var a = BodyPose(rest[_nodes[parent]], collider.GetCreated(parent).Bone.Shape);
-            var b = BodyPose(rest[_nodes[i]], collider.GetCreated(i).Bone.Shape);
+            var a = BodyPose(rest[_nodes[parent]], collider.GetCreatedLocal(parent));
+            var b = BodyPose(rest[_nodes[i]], collider.GetCreatedLocal(i));
             var toLocalA = NQuaternion.Conjugate(a.Orientation);
             var toLocalB = NQuaternion.Conjugate(b.Orientation);
             if (_nodes[i] == _nodes[parent])
@@ -675,7 +682,7 @@ public class SkeletonBodyComponent : CollidableComponent
         {
             var inertia = Inertia(collider, i);
             mass += inertia.InverseMass > 0f ? 1f / inertia.InverseMass : 0f;
-            float height = Vector3.TransformCoordinate(GetBoneShape(i).Shape.PositionLocal, rest[_nodes[i]]).Y;
+            float height = Vector3.TransformCoordinate(collider.GetCreatedLocal(i).Position, rest[_nodes[i]]).Y;
             if (_jointParents[i] < 0)
             {
                 Add(i);
@@ -902,8 +909,8 @@ public class SkeletonBodyComponent : CollidableComponent
             if (_jointParents[i] < 0 || _nodes[i] == _nodes[_jointParents[i]])
                 continue;
 
-            var a = BodyPose(_animated[_nodes[_jointParents[i]]], collider.GetCreated(_jointParents[i]).Bone.Shape);
-            var b = BodyPose(_animated[_nodes[i]], collider.GetCreated(i).Bone.Shape);
+            var a = BodyPose(_animated[_nodes[_jointParents[i]]], collider.GetCreatedLocal(_jointParents[i]));
+            var b = BodyPose(_animated[_nodes[i]], collider.GetCreatedLocal(i));
             solver.ApplyDescription(_servos[i], Servo(NQuaternion.Conjugate(a.Orientation) * b.Orientation));
         }
 
@@ -914,13 +921,13 @@ public class SkeletonBodyComponent : CollidableComponent
             // Heights in the animated pose are measured from the feet, the origin of the entity
             float feet = _animated[0].TranslationVector.Y;
             var (root, _, _) = _upright[0];
-            float standing = BodyPose(_animated[_nodes[root]], collider.GetCreated(root).Bone.Shape).Position.Y - feet;
+            float standing = BodyPose(_animated[_nodes[root]], collider.GetCreatedLocal(root)).Position.Y - feet;
             _ground = FindGround(Body(root).Pose.Position.ToStride(), MathF.Max(0f, standing) * 1.3f + 0.1f, out _groundHeight);
         }
 
         foreach (var (body, linear, angular) in _upright)
         {
-            var animated = BodyPose(_animated[_nodes[body]], collider.GetCreated(body).Bone.Shape);
+            var animated = BodyPose(_animated[_nodes[body]], collider.GetCreatedLocal(body));
             var current = Body(body).Pose.Position;
             float target = _groundHeight + animated.Position.Y - _animated[0].TranslationVector.Y;
             // Only lifts, and only from the ground: otherwise no force at all, which would also brake the fall and any sideways motion

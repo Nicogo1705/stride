@@ -437,8 +437,8 @@ public class SoftBodyTests : GameTestBase
             var flesh = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, SkeletonStiffness = 10f, Mass = 20f };
             var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Standing, SelfCollision = false, Ghost = ghost };
             var collider = (BoneCollider)bones.Collider;
-            collider.Bones.Add(new BoneShape { NodeName = "Hips", Shape = new SphereCollider { Radius = 0.1f, Mass = 5f } });
-            collider.Bones.Add(new BoneShape { NodeName = "Head", Shape = new SphereCollider { Radius = 0.1f, Mass = 3f } });
+            collider.Bones.Add(new BoneShape { NodeName = "Hips", AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 5f } });
+            collider.Bones.Add(new BoneShape { NodeName = "Head", AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 3f } });
             var entity = scene.Add(flesh, model, new Vector3(0f, 0.02f, 0f));
             entity.Add(bones);
 
