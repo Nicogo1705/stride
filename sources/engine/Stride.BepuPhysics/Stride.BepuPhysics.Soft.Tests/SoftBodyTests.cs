@@ -368,7 +368,7 @@ public class SoftBodyTests : GameTestBase
             var flesh = new VolumetricSoftBodyComponent { Resolution = 6, FollowSkeleton = true, SkeletonStiffness = 8f, CollisionLayer = CollisionLayer.Layer1 };
             var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Ragdoll, SelfCollision = false, CollisionLayer = CollisionLayer.Layer2 };
             for (int i = 0; i < 4; i++)
-                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, Shape = new SphereCollider { Radius = 0.1f, Mass = 0.1f } });
+                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 0.1f } });
             var entity = new Entity { new ModelComponent(model), flesh, bones };
             entity.Transform.Position = new Vector3(0f, 0.3f, 0f);
             entity.Transform.Rotation = Quaternion.RotationZ(MathF.PI / 2f);
@@ -395,7 +395,7 @@ public class SoftBodyTests : GameTestBase
             var flesh = new VolumetricSoftBodyComponent { Resolution = 10, FollowSkeleton = true, Gravity = false };
             var bones = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Ragdoll, SelfCollision = false };
             for (int i = 0; i < 2; i++)
-                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, Shape = new SphereCollider { Radius = 0.1f, Mass = 1f } });
+                ((BoneCollider)bones.Collider).Bones.Add(new BoneShape { NodeName = "Bone" + i, AlongBone = false, Shape = new SphereCollider { Radius = 0.1f, Mass = 1f } });
             var entity = new Entity { new ModelComponent(model), flesh, bones };
             entity.Transform.Position = new Vector3(0f, 2f, 0f);
             scene.Add(entity);
