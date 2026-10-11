@@ -80,4 +80,48 @@ public class TestVulkanImageLayouts : GraphicTestGameBase
             Assert.True(errors.Count == 0, string.Join('\n', errors));
         });
     }
+
+    /// <summary>
+    /// A texture whose image is recreated starts from the new image's layout, not from what was submitted for the old one.
+    /// </summary>
+    [SkippableFact]
+    public void RecreatedTextureStartsFromItsNewImage()
+    {
+        PerformTest(game =>
+        {
+            var device = game.GraphicsDevice;
+            Skip.IfNot(GraphicsDevice.Platform == GraphicsPlatform.Vulkan, "Vulkan layout tracking.");
+            Skip.IfNot(device.IsProfilingSupported, "Needs the Vulkan validation layer.");
+
+            var errors = new List<string>();
+            void OnMessage(ILogMessage message)
+            {
+                if (message.Type >= LogMessageType.Error && message.Text.Contains("[Vulkan]"))
+                    lock (errors) errors.Add(message.Text);
+            }
+
+            var texture = Texture.New2D(device, 16, 16, PixelFormat.R8G8B8A8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
+            var commandList = CommandList.New(device);
+
+            GlobalLogger.GlobalMessageLogged += OnMessage;
+            try
+            {
+                commandList.ResourceBarrierTransition(texture, BarrierLayout.ShaderResource);
+                device.ExecuteCommandList(commandList.Close());
+
+                texture.OnDestroyed();
+                texture.Recreate();
+
+                commandList.Reset();
+                commandList.ResourceBarrierTransition(texture, BarrierLayout.CopySource);
+                device.ExecuteCommandList(commandList.Close());
+            }
+            finally
+            {
+                GlobalLogger.GlobalMessageLogged -= OnMessage;
+            }
+
+            Assert.True(errors.Count == 0, string.Join('\n', errors));
+        });
+    }
 }
