@@ -125,7 +125,7 @@ internal sealed class SoftBodyProcessor : EntityProcessor<SoftBodyComponent, Sof
         if (_context is null)
             return;
 
-        using var _ = Profiler.Begin(DrawKey);
+        using var profile = Profiler.Begin(DrawKey);
         _drawn.Clear();
         bool anyOnGpu = false;
         foreach (var (component, _) in ComponentDatas)
