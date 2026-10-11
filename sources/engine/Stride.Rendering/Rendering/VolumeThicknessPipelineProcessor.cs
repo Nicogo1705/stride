@@ -15,9 +15,10 @@ namespace Stride.Rendering
     public class VolumeThicknessPipelineProcessor : PipelineProcessor
     {
         // Faces add their signed optical depth and their count; the depth targets keep the nearest and the farthest
-        private static readonly BlendStateDescription Sum = CreateSum();
+        private static readonly BlendStateDescription Sum = new(Blend.One, Blend.One);
+        private static readonly BlendStateDescription SumAndDepthRange = CreateSumAndDepthRange();
 
-        private static BlendStateDescription CreateSum()
+        private static BlendStateDescription CreateSumAndDepthRange()
         {
             var blend = new BlendStateDescription(Blend.One, Blend.One) { IndependentBlendEnable = true };
             blend.RenderTargets[1] = blend.RenderTargets[0];
@@ -54,7 +55,8 @@ namespace Stride.Rendering
             // The shader tests against the opaque depth itself, and front and back faces add with opposite signs
             pipelineState.RasterizerState = RasterizerStates.CullNone;
             pipelineState.DepthStencilState = DepthStencilStates.None;
-            pipelineState.BlendState = Sum;
+            // Independent blending, which Direct3D 10.0 devices lack, is only needed for the depth targets of separate segments
+            pipelineState.BlendState = pipelineState.Output.RenderTargetCount > 2 ? SumAndDepthRange : Sum;
         }
     }
 }
