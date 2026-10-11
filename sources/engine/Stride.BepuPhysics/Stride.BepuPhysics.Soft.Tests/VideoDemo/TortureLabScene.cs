@@ -115,8 +115,8 @@ internal sealed class TortureLabScene : VideoScene
             Resolution = 16, Stiffness = 14f, ShearStiffness = 10f, VolumeStiffness = 12f, Damping = 0.35f, Mass = 1.2f,
             Pins =
             {
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -sausageLength / 2f - 1f, -1f), new Vector3(1f, -sausageLength / 2f + 0.14f, 1f)), Anchor = twisters[0].Entity },
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, sausageLength / 2f - 0.14f, -1f), new Vector3(1f, sausageLength / 2f + 1f, 1f)), Anchor = twisters[1].Entity },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -sausageLength / 2f - 1f, -1f), new Vector3(1f, -sausageLength / 2f + 0.14f, 1f)), Anchor = new BodyAnchor { Body = twisters[0] } },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, sausageLength / 2f - 0.14f, -1f), new Vector3(1f, sausageLength / 2f + 1f, 1f)), Anchor = new BodyAnchor { Body = twisters[1] } },
             },
         };
         var sausageEntity = new Entity("sausage")

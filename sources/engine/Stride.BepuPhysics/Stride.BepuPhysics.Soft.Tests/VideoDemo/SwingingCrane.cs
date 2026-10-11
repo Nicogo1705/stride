@@ -63,8 +63,8 @@ internal sealed class SwingingCrane
             Resolution = 14, Stiffness = 30f, ShearStiffness = 20f, VolumeStiffness = 10f, Damping = 0.4f, Mass = 2.5f,
             Pins =
             {
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = jib },
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = load },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = Ropes.Anchor(jib) },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = Ropes.Anchor(load) },
             },
         };
         var rope = new Entity("crane rope")
