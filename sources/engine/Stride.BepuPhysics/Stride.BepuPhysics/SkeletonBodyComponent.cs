@@ -407,7 +407,7 @@ public class SkeletonBodyComponent : CollidableComponent
             if (bone.AlongBone && Array.FindIndex(skeleton.Nodes, n => n.ParentIndex == node) is var child and >= 0)
             {
                 var segment = skeleton.Nodes[child].Transform.Position;
-                if (segment.LengthSquared() > 1e-12f)
+                if (MathUtil.IsZero(segment.LengthSquared()) == false)
                 {
                     var along = Quaternion.BetweenDirections(Vector3.UnitY, Vector3.Normalize(segment));
                     (position, rotation) = (segment * 0.5f + Vector3.Transform(position, along), rotation * along);
