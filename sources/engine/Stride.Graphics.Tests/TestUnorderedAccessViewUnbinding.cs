@@ -11,12 +11,17 @@ namespace Stride.Graphics.Tests;
 public class TestUnorderedAccessViewUnbinding : GraphicTestGameBase
 {
     /// <summary>
-    /// Binding a texture as a shader resource unbinds a compute UAV of one of its views,
+    /// Binding a texture as a shader resource unbinds a UAV of one of its views,
     /// otherwise Direct3D 11 nulls the shader resource view.
     /// </summary>
-    [Fact]
-    public void ComputeUavOfAViewIsUnboundWhenItsTextureIsReadAsSrv()
+    [Theory]
+    [InlineData(ShaderStage.Compute)]
+    [InlineData(ShaderStage.Pixel)]
+    public void UavOfAViewIsUnboundWhenItsTextureIsReadAsSrv(ShaderStage stage)
     {
+        // Above the back buffer, which takes the first output slot
+        const int Slot = 1;
+
         PerformTest(game =>
         {
             var commandList = game.GraphicsContext.CommandList;
@@ -30,23 +35,28 @@ public class TestUnorderedAccessViewUnbinding : GraphicTestGameBase
                 Flags = TextureFlags.UnorderedAccess,
             });
 
-            commandList.SetUnorderedAccessView(ShaderStage.Compute, 0, mipView, -1);
+            commandList.SetUnorderedAccessView(stage, Slot, mipView, -1);
+            Assert.True(GetBoundUav(commandList, stage, Slot) != 0, "The UAV was not bound.");
 
             // Same order as ResourceBinder before it binds a shader resource view
             commandList.UnsetUnorderedAccessView(texture);
             commandList.SetShaderResourceView(ShaderStage.Pixel, 0, texture);
 
-            Assert.True(GetBoundComputeUav(commandList, 0) == 0, "The compute UAV of the texture's view is still bound.");
+            Assert.True(GetBoundUav(commandList, stage, Slot) == 0, "The UAV of the texture's view is still bound.");
 
+            commandList.SetShaderResourceView(ShaderStage.Pixel, 0, null);
             mipView.Dispose();
             texture.Dispose();
         });
     }
 
-    private static unsafe nint GetBoundComputeUav(CommandList commandList, uint slot)
+    private static unsafe nint GetBoundUav(CommandList commandList, ShaderStage stage, uint slot)
     {
         ID3D11UnorderedAccessView* uav = null;
-        commandList.NativeDeviceContext.CSGetUnorderedAccessViews(slot, 1, &uav);
+        if (stage == ShaderStage.Compute)
+            commandList.NativeDeviceContext.CSGetUnorderedAccessViews(slot, 1, &uav);
+        else
+            commandList.NativeDeviceContext.OMGetRenderTargetsAndUnorderedAccessViews(0, null, null, slot, 1, &uav);
         if (uav != null)
             uav->Release();
         return (nint) uav;
