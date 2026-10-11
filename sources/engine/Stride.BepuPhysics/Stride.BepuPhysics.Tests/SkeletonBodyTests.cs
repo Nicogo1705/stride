@@ -32,11 +32,13 @@ public class SkeletonBodyTests : GameTestBase
         ],
     };
 
-    private static ModelNodeDefinition Node(string name, int parent, Vector3 position) => new()
+    private static ModelNodeDefinition Node(string name, int parent, Vector3 position) => Node(name, parent, position, Quaternion.Identity);
+
+    private static ModelNodeDefinition Node(string name, int parent, Vector3 position, Quaternion rotation) => new()
     {
         Name = name,
         ParentIndex = parent,
-        Transform = { Position = position, Rotation = Quaternion.Identity, Scale = Vector3.One },
+        Transform = { Position = position, Rotation = Quaternion.Normalize(rotation), Scale = Vector3.One },
         Flags = ModelNodeFlags.Default,
     };
 
@@ -96,6 +98,55 @@ public class SkeletonBodyTests : GameTestBase
 
         // Hips to arm, arm to forearm, forearm to hand; nothing from the armature, the footsteps or the twist bone
         Assert.Equal(["Hips", "Arm", "Forearm"], shapes.Select(s => s.NodeName));
+    }
+
+    [Fact]
+    public static void GeneratedCapsulesSkipHelpersNextToDeformingBones()
+    {
+        // A gun slot with a child of its own hangs from the spine next to the neck; the head ends on a bone that does not deform
+        var skeleton = new Skeleton
+        {
+            Nodes =
+            [
+                Node("Root", -1, Vector3.Zero),
+                Node("Hips", 0, new Vector3(0, 1, 0)),
+                Node("Spine", 1, new Vector3(0, 0.3f, 0)),
+                Node("Gun", 2, new Vector3(0.2f, 0, -0.7f)),
+                Node("Neck", 2, new Vector3(0, 0.3f, 0)),
+                Node("Head", 4, new Vector3(0, 0.1f, 0)),
+                Node("HeadEnd", 5, new Vector3(0, 0.2f, 0)),
+                Node("GunBarrel", 3, new Vector3(0.8f, 0, 0)),
+            ],
+        };
+        int[] deforming = [1, 2, 4, 5];
+        var mesh = new Mesh { Skinning = new MeshSkinningDefinition { Bones = deforming.Select(n => new MeshBoneDefinition { NodeIndex = n, LinkToMeshMatrix = Matrix.Identity }).ToArray() } };
+        var model = new Model { Skeleton = skeleton };
+        model.Meshes.Add(mesh);
+
+        var shapes = BoneCollider.Generate(model, 0.05f);
+
+        // Hips to spine, spine to neck, neck to head, head to its end; nothing toward the gun
+        Assert.Equal(["Hips", "Spine", "Neck", "Head"], shapes.Select(s => s.NodeName));
+    }
+
+    [Fact]
+    public static void UnsupportedBoneShapesAreSkipped()
+    {
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            // The property grid offers every collider for a bone shape
+            var (_, body) = AddCharacter(game.SceneSystem.SceneInstance.RootScene, Vector3.Zero,
+                new BoneShape { NodeName = "Arm", Shape = new TriangleCollider() },
+                new BoneShape { NodeName = "Leg", Shape = new SphereCollider { Radius = 0.1f } });
+            await game.Script.NextFrame();
+
+            Assert.Equal(1, body.BodyCount);
+            Assert.Equal("Leg", body.GetBoneShape(0).NodeName);
+            game.Exit();
+        });
+        RunGameTest(game);
     }
 
     [Fact]
@@ -406,6 +457,81 @@ public class SkeletonBodyTests : GameTestBase
             game.Exit();
         });
         RunGameTest(game);
+    }
+
+    // The trunk, legs and arms of the mannequin of the samples, bones along their X axis; its spine is made of short segments
+    private static Skeleton CreateMannequin() => new()
+    {
+        Nodes =
+        [
+            Node("Root", -1, Vector3.Zero),
+            Node("Hub001", 0, new Vector3(0, 1.1162591f, 0), new Quaternion(0.5f, 0.5f, 0.5f, 0.5f)),
+            Node("LLeg1", 1, new Vector3(-0.036190f, -0.005001f, 0.093450f), new Quaternion(-0.013853f, 0.999139f, 0.007066f, -0.038466f)),
+            Node("LLeg2", 2, new Vector3(0.483283f, 0, 0), new Quaternion(-0.002748f, -0.010122f, -0.031651f, 0.999444f)),
+            Node("LAnkle", 3, new Vector3(0.477861f, 0, 0), new Quaternion(-0.072110f, 0.001750f, 0.004482f, 0.997385f)),
+            Node("RLeg1", 1, new Vector3(-0.036190f, -0.005001f, -0.093450f), new Quaternion(-0.013867f, 0.999139f, -0.007069f, 0.038461f)),
+            Node("RLeg2", 5, new Vector3(0.483283f, 0, 0), new Quaternion(0.002718f, 0.010120f, -0.031621f, 0.999445f)),
+            Node("RAnkle", 6, new Vector3(0.477859f, 0, 0), new Quaternion(0.072153f, -0.001841f, 0.004474f, 0.997382f)),
+            Node("Spine1", 1, new Vector3(0.040215f, 0.014550f, 0), new Quaternion(0, 0, 0.077446f, 0.996997f)),
+            Node("Spine2", 8, new Vector3(0.073310f, 0, 0), new Quaternion(0, 0, -0.053974f, 0.998542f)),
+            Node("Spine3", 9, new Vector3(0.058032f, 0, 0), new Quaternion(0, 0, -0.038265f, 0.999268f)),
+            Node("Hub002", 10, new Vector3(0.157642f, 0, 0), new Quaternion(0, 0, -0.076371f, 0.997080f)),
+            Node("Neck1", 11, new Vector3(0.150410f, -0.020398f, 0), new Quaternion(0, 0, 0.164578f, 0.986364f)),
+            Node("Neck2", 12, new Vector3(0.035473f, 0, 0), new Quaternion(0, 0, -0.026976f, 0.999636f)),
+            Node("Neck3", 13, new Vector3(0.036932f, 0, 0), new Quaternion(0, 0, -0.073970f, 0.997261f)),
+            Node("Head", 14, new Vector3(0.036932f, 0, 0), new Quaternion(0, 0, 0.026881f, 0.999639f)),
+            Node("LCollarbone", 11, new Vector3(0.103838f, 0.033295f, 0.016167f), new Quaternion(0.225268f, -0.724520f, -0.169467f, 0.628972f)),
+            Node("LArm1", 16, new Vector3(0.132928f, 0, 0), new Quaternion(0.122518f, -0.350115f, 0.164318f, 0.914007f)),
+            Node("LArm2", 17, new Vector3(0.258981f, 0, 0), new Quaternion(0.015878f, -0.003666f, 0.109706f, 0.993831f)),
+            Node("LPalm", 18, new Vector3(0.241122f, 0, 0), new Quaternion(-0.640737f, -0.082913f, 0.036828f, 0.762381f)),
+            Node("RCollarbone", 11, new Vector3(0.103838f, 0.033295f, -0.016167f), new Quaternion(-0.225269f, 0.724520f, -0.169467f, 0.628972f)),
+            Node("RArm1", 20, new Vector3(0.132928f, 0, 0), new Quaternion(-0.122518f, 0.350115f, 0.164317f, 0.914007f)),
+            Node("RArm2", 21, new Vector3(0.258981f, 0, 0), new Quaternion(-0.015878f, 0.003667f, 0.109706f, 0.993830f)),
+            Node("RPalm", 22, new Vector3(0.241122f, 0, 0), new Quaternion(0.640737f, 0.082914f, 0.036828f, 0.762382f)),
+        ],
+    };
+
+    [Fact]
+    public static void ThinGeneratedRagdollSurvivesBeingDragged()
+    {
+        float worstSpin = 0f;
+        bool finite = true;
+        var game = new GameTest();
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            var scene = game.SceneSystem.SceneInstance.RootScene;
+            AddGround(scene);
+            var body = new SkeletonBodyComponent { Mode = SkeletonBodyMode.Animated };
+            ((BoneCollider)body.Collider).GeneratedRadius = 0.01f;
+            var entity = new Entity { new ModelComponent { Model = new Model { Skeleton = CreateMannequin() } }, body };
+            scene.Entities.Add(entity);
+            for (int frame = 0; frame < 10; frame++)
+                await game.Script.NextFrame();
+
+            // Grabbed by the hips like a gravity gun does, swung from side to side while the legs drag on the ground
+            body.Mode = SkeletonBodyMode.Ragdoll;
+            var start = body.GetBodyPosition(0);
+            for (int frame = 0; frame < 600 && finite; frame++)
+            {
+                var hold = start + new Vector3(1.5f * MathF.Sin(frame * 0.05f), 0, 0);
+                var hips = body.Body(0);
+                hips.Velocity.Linear = ((hold - body.GetBodyPosition(0)) * 12f).ToNumeric();
+                hips.Velocity.Angular *= 0.9f;
+                await game.Script.NextFrame();
+                for (int i = 0; i < body.BodyCount; i++)
+                {
+                    var spin = body.GetBodyAngularVelocity(i).Length();
+                    finite &= float.IsFinite(spin) && float.IsFinite(body.GetBodyPosition(i).Length());
+                    worstSpin = MathF.Max(worstSpin, spin);
+                }
+            }
+            game.Exit();
+        });
+        RunGameTest(game);
+
+        Assert.True(finite, "a bone went to NaN or infinity");
+        Assert.True(worstSpin < 200f, $"a bone spun at {worstSpin} rad/s");
     }
 
     [Fact]

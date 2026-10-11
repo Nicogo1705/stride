@@ -57,7 +57,8 @@ public sealed class BoneCollider : ICollider
     /// </summary>
     /// <remarks>
     /// When the meshes of the model are skinned, only the nodes which deform them get capsules, so the root, an armature node or helpers
-    /// such as footsteps and IK targets get none. A child with no child of its own next to other children, like a twist or end bone,
+    /// such as footsteps and IK targets get none, and their segments only reach a non-deforming child when no other child deforms,
+    /// like an end bone rather than a weapon slot. A child with no child of its own next to other children, like a twist or end bone,
     /// gets no capsule either, nor does a segment shorter than <paramref name="radius"/>.
     /// Capsules weigh as much as water of their volume, once scaled by their node.
     /// </remarks>
@@ -81,16 +82,24 @@ public sealed class BoneCollider : ICollider
         }
 
         var children = new int[nodes.Length];
-        foreach (var node in nodes)
+        var deformingChildren = new int[nodes.Length];
+        for (int i = 0; i < nodes.Length; i++)
         {
-            if (node.ParentIndex >= 0)
-                children[node.ParentIndex]++;
+            if (nodes[i].ParentIndex >= 0)
+            {
+                children[nodes[i].ParentIndex]++;
+                if (deforming.Contains(i))
+                    deformingChildren[nodes[i].ParentIndex]++;
+            }
         }
 
         for (int child = 0; child < nodes.Length; child++)
         {
             int parent = nodes[child].ParentIndex;
             if (parent <= 0 || (deforming.Count > 0 && deforming.Contains(parent) == false) || (children[child] == 0 && children[parent] > 1))
+                continue;
+            // A helper hanging from a deforming bone, like a weapon slot, next to the bones carrying the chain
+            if (deforming.Count > 0 && deforming.Contains(child) == false && deformingChildren[parent] > 0)
                 continue;
 
             var segment = nodes[child].Transform.Position;
@@ -175,8 +184,36 @@ public sealed class BoneCollider : ICollider
             _created.Add((bone, scale, position, rotation, created.Index, created.Inertia));
         }
 
+        BoundInertia();
+
         index = _created[0].Index;
         return true;
+    }
+
+    /// <summary> Bodies rotating thousands of times more easily than the rest of the skeleton, like short and thin bones, make the joints blow up: their inertia is raised to a bounded ratio </summary>
+    private void BoundInertia()
+    {
+        const float maximumRatio = 100f;
+        float hardest = float.MaxValue;
+        foreach (var created in _created)
+        {
+            ref readonly var tensor = ref created.Inertia.InverseInertiaTensor;
+            hardest = MathF.Min(hardest, MathF.Min(tensor.XX, MathF.Min(tensor.YY, tensor.ZZ)));
+        }
+
+        if (hardest <= 0f)
+            return;
+        float limit = hardest * maximumRatio;
+        for (int i = 0; i < _created.Count; i++)
+        {
+            var entry = _created[i];
+            ref var tensor = ref entry.Inertia.InverseInertiaTensor;
+            // The shapes are not rotated in their body, their tensors are diagonal
+            tensor.XX = MathF.Min(tensor.XX, limit);
+            tensor.YY = MathF.Min(tensor.YY, limit);
+            tensor.ZZ = MathF.Min(tensor.ZZ, limit);
+            _created[i] = entry;
+        }
     }
 
     private static (TypedIndex Index, BodyInertia Inertia) Add<TShape>(Shapes shapes, TShape shape, float mass, bool fromVolume) where TShape : unmanaged, IConvexShape

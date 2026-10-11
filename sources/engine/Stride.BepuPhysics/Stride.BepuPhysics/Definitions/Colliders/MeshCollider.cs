@@ -38,6 +38,7 @@ public sealed class MeshCollider : ICollider
         }
     }
 
+    [DataMemberRange(0.001, 3)]
     public float Mass
     {
         get => _mass;
@@ -45,7 +46,8 @@ public sealed class MeshCollider : ICollider
         {
             if (_mass != value)
             {
-                value.ValidateGreaterThanZeroFinite(this);
+                if (value.IsGreaterThanZeroFinite() == false)
+                    return; // Set as typed by the property grid, which an exception would take down
                 _mass = value;
                 _component?.TryUpdateFeatures();
             }

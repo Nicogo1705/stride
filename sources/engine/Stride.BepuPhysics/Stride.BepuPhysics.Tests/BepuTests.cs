@@ -23,6 +23,27 @@ namespace Stride.BepuPhysics.Tests
     public class BepuTests : GameTestBase
     {
         [Fact]
+        public static void InvalidColliderSizesKeepTheirPreviousValue()
+        {
+            // The property grid sets them as they are typed: nothing may throw
+            var sphere = new SphereCollider { Radius = 0.5f, Mass = 2f };
+            var capsule = new CapsuleCollider { Radius = 0.3f, Length = 0.6f };
+            var cylinder = new CylinderCollider { Radius = 0.4f, Length = 0.8f };
+            var mesh = new MeshCollider { Model = new Stride.Rendering.Model(), Mass = 3f };
+            foreach (var invalid in new[] { 0f, -1f, float.NaN, float.PositiveInfinity })
+            {
+                sphere.Radius = sphere.Mass = invalid;
+                capsule.Radius = capsule.Length = invalid;
+                cylinder.Radius = cylinder.Length = invalid;
+                mesh.Mass = invalid;
+            }
+            Assert.Equal((0.5f, 2f), (sphere.Radius, sphere.Mass));
+            Assert.Equal((0.3f, 0.6f), (capsule.Radius, capsule.Length));
+            Assert.Equal((0.4f, 0.8f), (cylinder.Radius, cylinder.Length));
+            Assert.Equal(3f, mesh.Mass);
+        }
+
+        [Fact]
         public static void MatrixTest()
         {
             // Some initial expectation as to how the layers are laid out in memory

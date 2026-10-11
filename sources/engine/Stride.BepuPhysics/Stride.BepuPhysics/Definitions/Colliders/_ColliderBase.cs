@@ -5,6 +5,7 @@ using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
+using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
 using NRigidPose = BepuPhysics.RigidPose;
 
@@ -20,12 +21,14 @@ public abstract class ColliderBase
     /// <remarks>
     /// Changing this value will reset some of the internal physics state of this body
     /// </remarks>
+    [DataMemberRange(0.001, 3)]
     public float Mass
     {
         get => _mass;
         set
         {
-            value.ValidateGreaterThanZeroFinite(this);
+            if (value.IsGreaterThanZeroFinite() == false)
+                return; // Set as typed by the property grid, which an exception would take down
             _mass = value;
             TryUpdateFeatures();
         }

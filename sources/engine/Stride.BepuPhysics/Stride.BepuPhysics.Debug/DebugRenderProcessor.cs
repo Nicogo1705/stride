@@ -185,6 +185,13 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
 
         foreach (var (collidable, (wireframes, cache)) in _wireFrameRenderObject)
         {
+            // Hidden rather than removed: what a collidable is, like asleep or kinematic, changes without notice
+            bool shown = IsShown(collidable);
+            foreach (var wireframe in wireframes)
+                wireframe.Enabled = shown;
+            if (shown == false)
+                continue;
+
             // Shapes on bodies of their own follow those bodies, whatever the mode
             if (collidable.TryGetShapePose(0, out _))
             {
@@ -243,7 +250,7 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
         {
             foreach (var collidable in _wireFrameRenderObject.Keys)
             {
-                if (collidable.DebugSphereCount > 0)
+                if (collidable.DebugSphereCount > 0 && IsShown(collidable))
                     AddSpheres(collidable);
             }
         }
@@ -376,6 +383,26 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
             }
         }
         _wireFrameRenderObject.Clear();
+    }
+
+    /// <summary> Whether the filters of the component let <paramref name="collidable"/> be drawn </summary>
+    private bool IsShown(CollidableComponent collidable)
+    {
+        if (_component is not { } options)
+            return true;
+
+        return collidable switch
+        {
+            // Soft bodies live in another assembly, they are told apart by their particles
+            _ when collidable.DebugSphereCount > 0 => options.ShowSoftBodies,
+            StaticComponent => options.ShowStatics,
+            // Animated bones are kinematic and follow the animation, the other modes are simulated
+            SkeletonBodyComponent skeleton => (skeleton.Mode == SkeletonBodyMode.Animated ? options.ShowKinematicBodies : options.ShowDynamicBodies)
+                                              && (options.ShowSleepingBodies || skeleton.BodyCount == 0 || skeleton.Body(0).Awake),
+            BodyComponent body => (body is CharacterComponentAbstract ? options.ShowCharacters : body.Kinematic ? options.ShowKinematicBodies : options.ShowDynamicBodies)
+                                  && (options.ShowSleepingBodies || body.Awake),
+            _ => true,
+        };
     }
 
     private Color GetCurrentColor(CollidableComponent collidable)

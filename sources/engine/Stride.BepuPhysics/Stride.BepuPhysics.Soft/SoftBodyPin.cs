@@ -20,12 +20,13 @@ public sealed class SoftBodyPin
 {
     private float _springFrequency = 30f;
     private float _springDampingRatio = 1f;
-    private float _servoMaximumForce = float.MaxValue;
+    private float _servoMaximumForce;
 
     /// <summary>
     /// The particles whose rest position is inside this box are pinned, in the space of the soft body's model.
     /// </summary>
     /// <remarks>
+    /// The particles of a volumetric body sit a fraction of a cell inside its surface, so a thin box along a face may hold none.
     /// A box reduced to a point, like the default one, pins the particles closest to it instead;
     /// at the origin with an anchor, the particles closest to the anchor's entity, or to its node.
     /// </remarks>
@@ -65,14 +66,18 @@ public sealed class SoftBodyPin
 
     /// <summary>
     /// The largest force pulling each pinned particle toward its anchor; a stronger pull, a hit or a grab tears the particle away for as long as it lasts.
+    /// Zero removes the limit.
     /// </summary>
     /// <remarks> Not used for particles tied to the particles of another soft body, which are held by springs without a limit. </remarks>
     [DataMember(50)]
     [DataMemberRange(0, 3)]
-    [DefaultValue(float.MaxValue)]
+    [DefaultValue(0f)]
     public float ServoMaximumForce
     {
         get => _servoMaximumForce;
         set => _servoMaximumForce = MathF.Max(0f, value);
     }
+
+    /// <summary> The servo force limit given to the solver </summary>
+    internal float SolverMaximumForce => _servoMaximumForce > 0f ? _servoMaximumForce : float.MaxValue;
 }
