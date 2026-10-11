@@ -28,12 +28,15 @@ namespace Stride.Graphics
 
         // Layout of each subresource as this CB sees it, and what it assumed on first touch; handed to the compiled
         // command list on Close so submission can correct the assumptions (GraphicsDevice.ReconcileImageLayouts).
-        private Dictionary<Texture, CommandBufferImageLayouts> currentCbLayouts = new();
+        private Dictionary<Texture, CommandBufferImageLayouts> currentCbLayouts;
 
         /// <summary>
         ///   The last access this command buffer synchronised each buffer against.
         /// </summary>
         private readonly Dictionary<Buffer, BarrierLayout> currentCbBufferLayouts = new();
+
+        // Barriers of a transition over more subresources than fit on the stack
+        private VkImageMemoryBarrier[] imageBarrierScratch = [];
 
         // Dynamic rendering state: whether a render pass instance (vkCmdBeginRendering) is active,
         // whether the bound attachments changed since it began, and which depth layout it declared.
@@ -85,7 +88,7 @@ namespace Stride.Graphics
             DebugScopeResetForNewRecording();
             CleanupRenderPass();
             boundDescriptorSets.Clear();
-            currentCbLayouts.Clear();
+            currentCbLayouts = GraphicsDevice.ImageLayoutMaps.Acquire();
             currentCbBufferLayouts.Clear();
 
             renderingDirty = true;
@@ -134,7 +137,7 @@ namespace Stride.Graphics
 
             var result = currentCommandList;
             result.ImageLayouts = currentCbLayouts;
-            currentCbLayouts = new();
+            currentCbLayouts = null;
             currentCommandList = default;
             return result;
         }
@@ -496,11 +499,6 @@ namespace Stride.Graphics
         ///   <see cref="Buffer.NativePipelineStageMask"/> are read as the source but never written.
         ///   The copy and upload paths rely on them staying the set of every legal usage.
         /// </remarks>
-        // TODO: subresource parameter is currently ignored — Vulkan always transitions all
-        // subresources. This is incorrect when different subresources need different layouts
-        // (e.g. reading mip 0 as ShaderResource while writing mip 1 as RenderTarget).
-        // Per-subresource tracking would require storing per-subresource VkImageLayout
-        // to emit precise barriers. Not currently hit by the engine's rendering pipeline.
         public unsafe void ResourceBarrierTransition(GraphicsResource resource, BarrierLayout newLayout, uint subresource = uint.MaxValue)
         {
             RecordDebugCounter(DebugCounterKind.Barrier);
@@ -517,7 +515,9 @@ namespace Stride.Graphics
 
                 // One barrier per subresource not yet in the layout; merged into a whole-image barrier when they share a source layout
                 var total = mipCount * layerCount;
-                var barriers = total <= 64 ? stackalloc VkImageMemoryBarrier[total] : new VkImageMemoryBarrier[total];
+                if (total > 64 && imageBarrierScratch.Length < total)
+                    imageBarrierScratch = new VkImageMemoryBarrier[total];
+                var barriers = total <= 64 ? stackalloc VkImageMemoryBarrier[total] : imageBarrierScratch.AsSpan(0, total);
                 var barrierCount = 0;
                 var sourceStages = VkPipelineStageFlags.None;
                 BarrierLayout? commonFrom = null;
@@ -623,7 +623,7 @@ namespace Stride.Graphics
             texture.NativePipelineStageMask = BarrierMapping.ToVkPipelineStageFlags(transferLayout);
             texture.LayoutTracker.Set(uint.MaxValue, transferLayout);
             var layouts = ImageLayouts(texture);
-            for (int i = 0; i < layouts.Current.Length; i++)
+            for (int i = 0; i < layouts.Count; i++)
             {
                 layouts.Assumed[i] ??= BarrierLayout.Undefined;
                 layouts.Current[i] = transferLayout;
@@ -639,7 +639,7 @@ namespace Stride.Graphics
             var parent = texture.ParentTexture ?? texture;
             var layouts = ImageLayouts(parent);
             var layout = CurrentLayout(parent, layouts, 0);
-            for (int index = 1; index < layouts.Current.Length; index++)
+            for (int index = 1; index < layouts.Count; index++)
             {
                 if (CurrentLayout(parent, layouts, index) != layout)
                 {
@@ -657,7 +657,10 @@ namespace Stride.Graphics
         private CommandBufferImageLayouts ImageLayouts(Texture parent)
         {
             if (!currentCbLayouts.TryGetValue(parent, out var layouts))
-                currentCbLayouts[parent] = layouts = new CommandBufferImageLayouts(parent.MipLevelCount * parent.ArraySize);
+            {
+                currentCbLayouts[parent] = layouts = GraphicsDevice.ImageLayoutEntries.Acquire();
+                layouts.Reset(parent.MipLevelCount * parent.ArraySize);
+            }
             return layouts;
         }
 
