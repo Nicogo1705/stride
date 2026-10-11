@@ -291,6 +291,8 @@ public class SkeletonBodyComponent : CollidableComponent
 
     internal override CollidableReference GetCollidableReference(int index) => Body(index).CollidableReference;
 
+    internal override int GetFollowedNode(int index) => _nodes[index];
+
     internal override int GetChildIndex(CollidableReference collidable, int shapeChildIndex)
     {
         return collidable.Mobility != CollidableMobility.Static && _shapeOfBody.TryGetValue(collidable.BodyHandle.Value, out var index) ? index : shapeChildIndex;
