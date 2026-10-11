@@ -43,7 +43,7 @@ namespace Stride.Rendering
             {
                 // Back faces may stand in for the camera being inside even when hidden: the shader tests the depth itself
                 var materialPass = ((RenderMesh)renderObject).MaterialPass;
-                if (materialPass != null && materialPass.PassIndex == MaterialTransparencyBlendFeature.VolumeBackFacePass && materialPass.Parameters.Get(MaterialVolumeKeys.Absorption) > 0)
+                if (materialPass != null && materialPass.PassIndex == MaterialTransparencyBlendFeature.VolumeBackFacePass && MaterialVolumeKeys.IsVolume(materialPass))
                     pipelineState.DepthStencilState = DepthStencilStates.None;
                 return;
             }

@@ -26,5 +26,9 @@ namespace Stride.Rendering.Materials
 
         /// <summary>1 when the medium shows its lit colour, as water or fog; 0 when it only filters what is behind, as tinted glass.</summary>
         public static readonly ValueParameterKey<float> Scattering = ParameterKeys.NewValue<float>();
+
+        // Tested with ContainsKey first: Get would add the key to the parameters of every other material
+        internal static bool IsVolume(MaterialPass materialPass)
+            => materialPass.Parameters.ContainsKey(Absorption) && materialPass.Parameters.Get(Absorption) > 0;
     }
 }
