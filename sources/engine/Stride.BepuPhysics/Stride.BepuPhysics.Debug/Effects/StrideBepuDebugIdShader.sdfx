@@ -1,9 +1,20 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+using Stride.Rendering;
+
 namespace Stride.BepuPhysics.Debug
 {
     partial effect StrideBepuDebugIdShader
     {
+        using params StrideEffectBaseKeys;
+
         mixin BepuDebugIdShader;
+
+        // A mesh whose vertex shader moves its vertices (a GPU deformation) brings it, as it does to the scene's effects
+        var extension = StrideEffectBaseKeys.ExtensionPostVertexStageShader;
+        if (extension != null)
+        {
+            mixin (extension);
+        }
     }
 }

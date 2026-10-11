@@ -25,6 +25,8 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     private DynamicEffectInstance _shader = null!;
     private DynamicEffectInstance _idShader = null!;
     private DynamicEffectInstance _idSkinnedShader = null!;
+    // The id effect with the vertex stage of meshes that bring one, by that stage
+    private readonly Dictionary<ShaderSource, DynamicEffectInstance> _idExtendedShaders = new();
     // Size of BoneMatrices in BepuDebugIdSkinnedShader; a mesh with more bones is left out
     private const int MaxBones = 128;
     // Indexed by (back faces ? 2 : 0) + (through own model ? 1 : 0), updated once per draw of the feature
@@ -33,7 +35,7 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
     private MutablePipelineState _idBackPipelineState = null!;
     private MutablePipelineState[] _idPasses = null!;
     private MutablePipelineState _idPass = null!;
-    private readonly Dictionary<(MutablePipelineState Pass, bool Skinned, VertexDeclaration Layout, PrimitiveType Primitive), PipelineState> _idPipelines = new();
+    private readonly Dictionary<(MutablePipelineState Pass, EffectBytecode Bytecode, VertexDeclaration Layout, PrimitiveType Primitive), PipelineState> _idPipelines = new();
     private (EffectBytecode?, EffectBytecode?) _idPipelinesBytecode;
     private PixelFormat _idPipelinesDepthFormat;
     private Texture _noIds = null!;
@@ -264,6 +266,11 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
         _idShader.Parameters.Set(TransformationKeys.ViewProjection, renderView.ViewProjection);
         _idSkinnedShader.Parameters.Set(TransformationKeys.View, renderView.View);
         _idSkinnedShader.Parameters.Set(TransformationKeys.ViewProjection, renderView.ViewProjection);
+        foreach (var shader in _idExtendedShaders.Values)
+        {
+            shader.Parameters.Set(TransformationKeys.View, renderView.View);
+            shader.Parameters.Set(TransformationKeys.ViewProjection, renderView.ViewProjection);
+        }
         _idsWithModel.Clear();
         foreach (var pass in _idPasses)
         {
@@ -276,6 +283,8 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
 
                 _idShader.Parameters.Set(BepuDebugIdShaderKeys.ObjectId, (float)wireframe.ObjectId);
                 _idSkinnedShader.Parameters.Set(BepuDebugIdShaderKeys.ObjectId, (float)wireframe.ObjectId);
+                foreach (var shader in _idExtendedShaders.Values)
+                    shader.Parameters.Set(BepuDebugIdShaderKeys.ObjectId, (float)wireframe.ObjectId);
                 if (DrawOwnModels(context, owner, owner))
                     _idsWithModel.Add(wireframe.ObjectId);
             }
@@ -328,13 +337,19 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
         if (bones is not null && (!HasSemantic(vertexBuffers, "BLENDINDICES") || !HasSemantic(vertexBuffers, "BLENDWEIGHT")))
             return false;
 
-        var shader = bones is null ? _idShader : _idSkinnedShader;
+        var extension = mesh.Parameters.Get(StrideEffectBaseKeys.ExtensionPostVertexStageShader);
+        var shader = bones is not null ? _idSkinnedShader : extension is not null ? ExtendedIdShader(context, extension, mesh) : _idShader;
         if (bones is null)
+        {
             shader.Parameters.Set(TransformationKeys.World, world);
+            shader.Parameters.Set(TransformationKeys.WorldInverse, Matrix.Invert(world));
+        }
         else
+        {
             shader.Parameters.Set(BepuDebugIdSkinnedShaderKeys.BoneMatrices, bones.Length, ref bones[0]);
+        }
         // Meshes of one vertex buffer share their pipeline state by layout; others build theirs each time
-        var key = (_idPass, bones is not null, vertexBuffers[0].Declaration, draw.PrimitiveType);
+        var key = (_idPass, shader.Effect.Bytecode, vertexBuffers[0].Declaration, draw.PrimitiveType);
         if (vertexBuffers.Length > 1 || !_idPipelines.TryGetValue(key, out var pipelineState))
         {
             _idPass.State.RootSignature = shader.RootSignature;
@@ -363,6 +378,28 @@ public class SinglePassWireframeRenderFeature : RootRenderFeature
             commandList.Draw(draw.DrawCount, draw.StartLocation);
         }
         return true;
+    }
+
+    /// <summary> The id effect with the vertex stage of <paramref name="mesh"/>, reading the resources the mesh's parameters hold </summary>
+    private DynamicEffectInstance ExtendedIdShader(RenderDrawContext context, ShaderSource extension, Mesh mesh)
+    {
+        if (!_idExtendedShaders.TryGetValue(extension, out var shader))
+        {
+            shader = new DynamicEffectInstance("StrideBepuDebugIdShader");
+            shader.Initialize(Context.Services);
+            shader.Parameters.Set(StrideEffectBaseKeys.ExtensionPostVertexStageShader, extension);
+            shader.Parameters.Set(TransformationKeys.View, _idShader.Parameters.Get(TransformationKeys.View));
+            shader.Parameters.Set(TransformationKeys.ViewProjection, _idShader.Parameters.Get(TransformationKeys.ViewProjection));
+            shader.Parameters.Set(BepuDebugIdShaderKeys.ObjectId, _idShader.Parameters.Get(BepuDebugIdShaderKeys.ObjectId));
+            _idExtendedShaders.Add(extension, shader);
+        }
+        shader.UpdateEffect(context.GraphicsDevice);
+        foreach (var parameter in mesh.Parameters.ParameterKeyInfos)
+        {
+            if (parameter.Key.Type == ParameterKeyType.Object)
+                shader.Parameters.SetObject(parameter.Key, mesh.Parameters.GetObject(parameter.Key));
+        }
+        return shader;
     }
 
     private static bool HasSemantic(VertexBufferBinding[] vertexBuffers, string semantic)
