@@ -199,6 +199,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// How fast particles return to where the skeleton carries them, in hertz; lower values make the body wobble and lag behind more.
     /// </summary>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(4f)]
     public float SkeletonStiffness
     {
@@ -214,6 +215,7 @@ public sealed class VolumetricSoftBodyComponent : SoftBodyComponent
     /// The damping ratio of the pull toward the skeleton, below one the body overshoots and wobbles.
     /// </summary>
     [Display(category: CategorySoftBody)]
+    [DataMemberRange(0, 3)]
     [DefaultValue(1f)]
     public float SkeletonDamping
     {
