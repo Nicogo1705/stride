@@ -75,9 +75,10 @@ namespace Stride.Rendering.Materials
         /// </summary>
         /// <remarks>
         /// The mesh must be closed; the volume ends where it goes into the opaque scene. Needs a <c>VolumeThicknessRenderStage</c>
-        /// on the forward renderer; without one the material blends with its alpha as usual.
+        /// on the forward renderer; without one the material blends with its alpha as usual. <see cref="Alpha"/> and <see cref="Tint"/>
+        /// must be constant values; use <see cref="Density"/> to vary the opacity across the volume.
         /// </remarks>
-        /// <userdoc>How thick the material is when it is as opaque as its alpha. Thicker parts get more opaque, thinner parts clearer. 0 turns it off. The mesh must be closed.</userdoc>
+        /// <userdoc>How thick the material is when it is as opaque as its alpha. Thicker parts get more opaque, thinner parts clearer. 0 turns it off. The mesh must be closed, and Alpha and Tint must be plain values (use Density to vary the opacity).</userdoc>
         [DataMember(40)]
         [DataMemberRange(0.0, 3)]
         public float OpacityThickness { get; set; }
@@ -129,6 +130,8 @@ namespace Stride.Rendering.Materials
                 // The alpha is the opacity of OpacityThickness units: absorption = -ln(1 - alpha) / thickness
                 var alphaValue = alpha is ComputeFloat constantAlpha ? MathUtil.Clamp(constantAlpha.Value, 0f, MaxVolumeAlpha) : 0.5f;
                 var tintValue = tint is ComputeColor constantTint ? (Color3)constantTint.Value.ToColorSpace(context.ColorSpace) : new Color3(1f);
+                if (context.PassIndex == 0 && (alpha is not ComputeFloat || tint is not ComputeColor))
+                    context.Log.Warning("OpacityThickness needs constant Alpha and Tint values: a texture or shader is read as an alpha of 0.5 and a white tint. Use Density to vary the opacity.");
                 context.MaterialPass.Parameters.Set(MaterialVolumeKeys.Absorption, -MathF.Log(1f - alphaValue) / OpacityThickness);
                 // Each channel lets 1 - alpha (1 - tint) through per OpacityThickness, so thicknesses multiply exactly
                 var greyAbsorption = MathF.Log(1f - alphaValue);
