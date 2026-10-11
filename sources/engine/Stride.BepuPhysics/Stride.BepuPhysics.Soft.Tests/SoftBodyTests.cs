@@ -10,6 +10,7 @@ using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Definitions.Colliders;
 using Stride.BepuPhysics.Definitions.Contacts;
 using Stride.BepuPhysics.Soft.Topology;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics.GeometricPrimitives;
@@ -64,12 +65,12 @@ public class SoftBodyTests : GameTestBase
         RunScene(async scene =>
         {
             var errors = new System.Collections.Generic.List<string>();
-            void Collect(Stride.Core.Diagnostics.ILogMessage message)
+            void Collect(ILogMessage message)
             {
-                if (message.Type >= Stride.Core.Diagnostics.LogMessageType.Error)
+                if (message.Type >= LogMessageType.Error)
                     errors.Add(message.Text);
             }
-            Stride.Core.Diagnostics.GlobalLogger.GlobalMessageLogged += Collect;
+            GlobalLogger.GlobalMessageLogged += Collect;
             try
             {
                 // A rigid body with a particle collider, and a soft body whose particles would be compounds
@@ -88,7 +89,7 @@ public class SoftBodyTests : GameTestBase
             }
             finally
             {
-                Stride.Core.Diagnostics.GlobalLogger.GlobalMessageLogged -= Collect;
+                GlobalLogger.GlobalMessageLogged -= Collect;
             }
         });
     }
