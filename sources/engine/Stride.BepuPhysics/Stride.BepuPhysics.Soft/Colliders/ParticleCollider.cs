@@ -58,13 +58,11 @@ public sealed class ParticleCollider : ICollider
         set => Component = value;
     }
 
-    // One sphere per particle, which the debug view places on its particle through SoftBodyComponent.TryGetShapePose
-    int ICollider.Transforms => Component is SoftBodyComponent { Topology: { } topology } ? topology.ParticleCount : 0;
+    // The particles move independently of the entity: debug views draw them as spheres of their own, see SoftBodyComponent.DebugSphereCount
+    int ICollider.Transforms => 0;
 
     void ICollider.GetLocalTransforms(CollidableComponent collidable, Span<ShapeTransform> transforms)
     {
-        foreach (ref var transform in transforms)
-            transform = new ShapeTransform { Scale = new Vector3(ActualRadius) };
     }
 
     bool ICollider.TryAttach(Shapes shapes, BufferPool pool, ShapeCacheSystem shapeCache, bool shouldCalculateInertia, out TypedIndex index, out Vector3 centerOfMass, out BodyInertia inertia)
@@ -93,8 +91,6 @@ public sealed class ParticleCollider : ICollider
     void ICollider.AppendModel(List<BasicMeshBuffers> buffer, ShapeCacheSystem shapeCache, out object? cache)
     {
         cache = null;
-        for (int i = ((ICollider)this).Transforms; i > 0; i--)
-            buffer.Add(shapeCache._sphereShapeData);
     }
 
     void ICollider.RayTest<TRayHitHandler>(Shapes shapes, TypedIndex shapeIndex, in NRigidPose pose, in RayData ray, ref float maximumT, ref TRayHitHandler hitHandler, BufferPool pool)

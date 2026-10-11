@@ -417,17 +417,9 @@ public abstract class SoftBodyComponent : CollidableComponent
         return false;
     }
 
-    internal override bool TryGetShapePose(int index, out NRigidPose pose)
-    {
-        if (Simulation is null || index >= _particles.Length)
-        {
-            pose = default;
-            return false;
-        }
+    internal override int DebugSphereCount => Simulation is null ? 0 : _particles.Length;
 
-        pose = new NRigidPose(Particle(index).Pose.Position);
-        return true;
-    }
+    internal override (Vector3 Center, float Radius) GetDebugSphere(int index) => (Particle(index).Pose.Position.ToStride(), ((ParticleCollider)Collider).ActualRadius);
 
     internal override bool IsAttachedTo(CollidableComponent other)
     {

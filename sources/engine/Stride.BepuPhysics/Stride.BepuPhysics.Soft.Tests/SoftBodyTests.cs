@@ -102,11 +102,12 @@ public class SoftBodyTests : GameTestBase
             scene.Add(body, new CubeProceduralModel(), new Vector3(0f, 2f, 0f));
             await Seconds(body, 0.1f);
 
-            var collider = (ICollider)body.Collider;
-            Assert.Equal(body.ParticleCount, collider.Transforms);
-            var transforms = new ShapeTransform[collider.Transforms];
-            collider.GetLocalTransforms(body, transforms);
-            Assert.All(transforms, t => Assert.Equal(new Vector3(((Colliders.ParticleCollider)collider).ActualRadius), t.Scale));
+            // A sphere of the particle radius on each particle, drawn as lines rather than as a wireframe of the collider
+            var radius = ((Colliders.ParticleCollider)body.Collider).ActualRadius;
+            Assert.Equal(0, body.Collider.Transforms);
+            Assert.Equal(body.ParticleCount, body.DebugSphereCount);
+            for (int i = 0; i < body.ParticleCount; i++)
+                Assert.Equal((body.GetParticlePosition(i), radius), body.GetDebugSphere(i));
         });
     }
 
