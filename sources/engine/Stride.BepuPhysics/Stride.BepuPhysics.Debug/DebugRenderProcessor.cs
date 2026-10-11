@@ -244,7 +244,7 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
         {
             foreach (var collidable in _wireFrameRenderObject.Keys)
             {
-                if (collidable.DebugSphereCount > 0)
+                if (collidable.DebugSphereCount > 0 && IsShown(collidable))
                     AddSpheres(collidable);
             }
         }
@@ -398,6 +398,8 @@ public class DebugRenderProcessor : EntityProcessor<DebugRenderComponent>
 
         return collidable switch
         {
+            // Soft bodies live in another assembly, they are told apart by their particles
+            _ when collidable.DebugSphereCount > 0 => options.ShowSoftBodies,
             StaticComponent => options.ShowStatics,
             // Animated bones are kinematic and follow the animation, the other modes are simulated
             SkeletonBodyComponent skeleton => (skeleton.Mode == SkeletonBodyMode.Animated ? options.ShowKinematicBodies : options.ShowDynamicBodies)

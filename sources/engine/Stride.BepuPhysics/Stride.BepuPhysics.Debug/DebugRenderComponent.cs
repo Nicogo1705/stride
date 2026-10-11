@@ -72,6 +72,13 @@ public class DebugRenderComponent : SyncScript
     public bool ShowCharacters { get; set; } = true;
 
     /// <summary>
+    /// Whether to draw the particles of soft bodies.
+    /// </summary>
+    [DataMember]
+    [Display(category: CategoryFilters)]
+    public bool ShowSoftBodies { get; set; } = true;
+
+    /// <summary>
     /// Whether to draw the colliders of the bodies the simulation put to sleep, on top of the filters above.
     /// </summary>
     [DataMember]

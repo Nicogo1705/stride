@@ -133,6 +133,43 @@ public class SoftBodyTests : GameTestBase
     }
 
     [Fact]
+    public static void DebugRenderFiltersOutSoftBodies()
+    {
+        var game = new TestGame();
+        game.GraphicsDeviceManager.PreferredGraphicsProfile = [Graphics.GraphicsProfile.Level_11_0];
+        game.GraphicsDeviceManager.ShaderProfile = Graphics.GraphicsProfile.Level_11_0;
+        int shown = 0, filtered = 0, dynamicFiltered = 0;
+        game.Script.AddTask(async () =>
+        {
+            game.ScreenShotAutomationEnabled = false;
+            var compositor = Stride.Rendering.Compositing.GraphicsCompositorHelper.CreateDefault(false, graphicsProfile: Graphics.GraphicsProfile.Level_11_0);
+            game.SceneSystem.GraphicsCompositor = compositor;
+            var scene = game.SceneSystem.SceneInstance.RootScene;
+            var debug = new Debug.DebugRenderComponent { Visible = true };
+            scene.Entities.Add(new Entity { debug, new CameraComponent { Slot = compositor.Cameras[0].ToSlotId() } });
+            var model = new ProceduralModelDescriptor(new CubeProceduralModel()).GenerateModel(game.Services);
+            scene.Entities.Add(new Entity { new ModelComponent(model), new VolumetricSoftBodyComponent { Resolution = 2 } });
+            for (int i = 0; i < 5; i++) await game.Script.NextFrame();
+
+            int Lines() => game.SceneSystem.SceneInstance.VisibilityGroups.First().RenderObjects.OfType<Debug.Effects.LineRenderObject>().Sum(l => l.VertexCount);
+            shown = Lines();
+            // Soft bodies have a filter of their own, the one of the bodies does not apply
+            debug.ShowDynamicBodies = false;
+            await game.Script.NextFrame();
+            dynamicFiltered = Lines();
+            debug.ShowSoftBodies = false;
+            await game.Script.NextFrame();
+            filtered = Lines();
+            game.Exit();
+        });
+        RunGameTest(game);
+
+        Assert.True(shown > 0, "no particle drawn");
+        Assert.Equal(shown, dynamicFiltered);
+        Assert.Equal(0, filtered);
+    }
+
+    [Fact]
     public static void ClothHangsFromItsPins()
     {
         RunScene(async scene =>
