@@ -59,7 +59,7 @@ internal static class Bean
     }
 
     /// <summary> A bean of <paramref name="flesh"/> color in <paramref name="mode"/>, its feet at <paramref name="position"/> </summary>
-    public static (Entity Entity, SkeletonBodyComponent Body, Animator Animator) Add(DemoGame game, Color flesh, Vector3 position, float yaw, SkeletonBodyMode mode = SkeletonBodyMode.Standing, float time = 0f, int resolution = 6)
+    public static (Entity Entity, SkeletonBodyComponent Body, Animator Animator) Add(DemoGame game, Color flesh, Vector3 position, float yaw, SkeletonBodyMode mode = SkeletonBodyMode.Standing, float time = 0f, int resolution = 6, Quaternion? rotation = null)
     {
         var device = game.GraphicsDevice;
         var shape = new CapsuleProceduralModel { Radius = FleshRadius, Length = FleshLength, Tessellation = 48, LengthRings = 20, LocalOffset = new Vector3(0f, FleshBottom + FleshRadius + FleshLength / 2f, 0f) };
@@ -68,12 +68,12 @@ internal static class Bean
 
         var body = new SkeletonBodyComponent { Mode = mode, SelfCollision = false };
         ((BoneCollider)body.Collider).Bones.AddRange(Hitboxes());
-        var soft = new VolumetricSoftBodyComponent { Resolution = resolution, FollowSkeleton = true, SkeletonStiffness = 5f, SkeletonDamping = 0.3f, Mass = 3f };
+        var soft = new VolumetricSoftBodyComponent { Resolution = resolution, FollowSkeleton = true, SkeletonStiffness = 3.5f, SkeletonDamping = 0.3f, Mass = 3f };
         var animator = new Animator { Time = time };
         var modelComponent = new ModelComponent(model);
         var entity = new Entity("bean") { modelComponent, soft, body, animator };
         entity.Transform.Position = position;
-        entity.Transform.Rotation = Quaternion.RotationY(yaw);
+        entity.Transform.Rotation = rotation ?? Quaternion.RotationY(yaw);
 
         // Rigid parts in the mode color, eyes on the head
         var parts = new List<ModelComponent>();

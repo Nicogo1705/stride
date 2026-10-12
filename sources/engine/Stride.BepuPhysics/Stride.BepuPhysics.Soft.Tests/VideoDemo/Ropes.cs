@@ -23,13 +23,15 @@ internal static class Ropes
         float half = length / 2f;
         // About two cells across the rope, at most 40 along it: few particles, each heavy enough for what hangs on the rope
         int resolution = Math.Clamp((int)MathF.Ceiling(length / radius), 6, 40);
+        // At least one cell of the lattice at each end: a long rope has its particles farther apart than PinLength
+        float pinned = MathF.Max(PinLength, length / resolution * 1.05f);
         var body = new VolumetricSoftBodyComponent
         {
             Resolution = resolution, Stiffness = stiffness, ShearStiffness = stiffness * 0.6f, VolumeStiffness = 8f, Damping = 0.4f, Mass = mass,
             Pins =
             {
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + PinLength, 1f)), Anchor = Anchor(fromAnchor, fromNode) },
-                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - PinLength, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = Anchor(toAnchor, toNode) },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, -half - 1f, -1f), new Vector3(1f, -half + pinned, 1f)), Anchor = Anchor(fromAnchor, fromNode) },
+                new SoftBodyPin { Region = new BoundingBox(new Vector3(-1f, half - pinned, -1f), new Vector3(1f, half + 1f, 1f)), Anchor = Anchor(toAnchor, toNode) },
             },
         };
         var entity = new Entity(name)

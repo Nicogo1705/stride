@@ -19,9 +19,10 @@ namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 internal sealed class TortureZone : Zone
 {
     public const float TurnSpeed = 0.2f;
-    private const float PullMax = 0.8f, PullSpeed = 0.12f, PullHold = 3f, PullRest = 2f;
-    private const float RackPeriod = 16f, RackClosed = 1.0f, RackOpen = 2.0f;
+    private const float PullMax = 1.8f, PullSpeed = 0.25f, PullHold = 3f, PullRest = 2f;
+    private const float RackPeriod = 20f, RackClosed = 1.0f, RackOpen = 4.5f;
     private const int MaxRolled = 3;
+    private const float FanReach = 3f, FanRadius = 1.1f;
 
     private readonly Queue<Entity> _rolled = new();
     private Vector3 _press, _rollers, _quarter, _fan, _sausage, _driver, _rack;
@@ -70,7 +71,8 @@ internal sealed class TortureZone : Zone
             float x = i == 0 ? -0.4f : 0.4f;
             Look.StaticBox(game, new Vector3(0.1f, 1.25f, 0.1f), rollersAt + new Vector3(x, 0.62f, -0.55f), navy, "roller stand");
             Look.StaticBox(game, new Vector3(0.1f, 1.25f, 0.1f), rollersAt + new Vector3(x, 0.62f, 0.55f), navy, "roller stand");
-            rollers[i] = Kit.Kinematic(game, "roller", new CylinderProceduralModel { Radius = 0.36f, Height = 0.9f, Tessellation = 48 }, new CylinderCollider { Radius = 0.36f, Length = 0.9f }, steel,
+            // Striped along their length, so the turning shows
+            rollers[i] = Kit.Kinematic(game, "roller", new CylinderProceduralModel { Radius = 0.36f, Height = 0.9f, Tessellation = 48 }, new CylinderCollider { Radius = 0.36f, Length = 0.9f }, Look.Striped(device, new Color(150, 156, 170), Look.Coral, 8, 0.8f),
                 rollersAt + new Vector3(x, 1.25f, 0f), Quaternion.RotationX(MathUtil.PiOverTwo)).Get<BodyComponent>()!;
         }
         DropJelly(game);
@@ -95,10 +97,14 @@ internal sealed class TortureZone : Zone
         var curtainEntity = new Entity("curtain") { new ModelComponent(Look.Model(game, new PlaneProceduralModel { Size = new Vector2(1.7f, 1.4f), Tessellation = new Int2(16, 14), Normal = NormalDirection.UpZ, GenerateBackFace = true }, Look.Coral, 0.3f)), curtain };
         curtainEntity.Transform.Position = _fan + new Vector3(0f, 1.9f, 0f);
         game.AddToScene(curtainEntity);
-        var fanBody = new Entity("fan") { new ModelComponent(Look.Model(game, new CylinderProceduralModel { Radius = 0.45f, Height = 0.2f, Tessellation = 40 }, steel)) };
-        fanBody.Transform.Position = _fan + new Vector3(0f, 1.5f, -1.6f);
-        fanBody.Transform.Rotation = Quaternion.RotationX(MathUtil.PiOverTwo);
-        game.AddToScene(fanBody);
+        // The fan is a kinematic body the gravity gun can carry; it blows along its axis (local Y) inside a cone drawn see-through
+        var fanBody = Kit.Kinematic(game, "fan", new CylinderProceduralModel { Radius = 0.45f, Height = 0.2f, Tessellation = 40 }, new CylinderCollider { Radius = 0.45f, Length = 0.2f }, steel,
+            _fan + new Vector3(0f, 1.5f, -1.6f), Quaternion.RotationX(MathUtil.PiOverTwo));
+        var blowZone = new Entity("fan blow zone") { new ModelComponent(Look.Model(game, new ConeProceduralModel { Radius = FanRadius, Height = FanReach, Tessellation = 32 }, Look.Ghost(device, Look.Teal, 0.12f))) };
+        blowZone.Transform.Position = new Vector3(0f, 0.1f + FanReach / 2f, 0f);
+        blowZone.Transform.Rotation = Quaternion.RotationX(MathF.PI);
+        fanBody.AddChild(blowZone);
+        var curtainCenter = _fan + new Vector3(0f, 1.5f, 0f);
 
         // The sausage twisted by two motors turning opposite ways; stiffer than a jelly so it fights back
         var (left, right) = (sausageAt - new Vector3(1.2f, 0f, 0f), sausageAt + new Vector3(1.2f, 0f, 0f));
@@ -133,9 +139,10 @@ internal sealed class TortureZone : Zone
 
         // The stretch rack: a soft block held at both ends by kinematic handles that slowly move apart, its volume kept by VolumeStiffness
         var rackY = 1.2f;
-        foreach (var x in new[] { -1.25f, 1.25f })
+        float rackHalf = RackOpen / 2f + 0.3f;
+        foreach (var x in new[] { -rackHalf, rackHalf })
             Look.StaticBox(game, new Vector3(0.16f, rackY - 0.3f, 0.16f), rackAt + new Vector3(x, (rackY - 0.3f) / 2f, 0f), navy, "rack post");
-        Look.StaticBox(game, new Vector3(2.66f, 0.12f, 0.2f), rackAt + new Vector3(0f, rackY - 0.36f, -0.45f), navy, "rack rail");
+        Look.StaticBox(game, new Vector3(2f * rackHalf + 0.16f, 0.12f, 0.2f), rackAt + new Vector3(0f, rackY - 0.36f, -0.45f), navy, "rack rail");
         var handleSize = new Vector3(0.2f, 0.6f, 0.6f);
         var handles = new BodyComponent[2];
         for (int i = 0; i < 2; i++)
@@ -173,29 +180,29 @@ internal sealed class TortureZone : Zone
                 float down = phase < 3f ? phase / 3f : phase < 4.5f ? 1f : phase < 7.5f ? 1f - (phase - 4.5f) / 3f : 0f;
                 plate.SetTargetPose(press + new Vector3(0f, MathUtil.Lerp(2.2f, 0.55f, MathUtil.SmoothStep(down)), 0f));
 
-                // Rollers turning inward, slowly
-                rollerAngle += step * 1.2f;
-                rollers[0].SetTargetPose(rollersAt + new Vector3(-0.4f, 1.25f, 0f), Quaternion.RotationZ(-rollerAngle) * Quaternion.RotationX(MathUtil.PiOverTwo));
-                rollers[1].SetTargetPose(rollersAt + new Vector3(0.4f, 1.25f, 0f), Quaternion.RotationZ(rollerAngle) * Quaternion.RotationX(MathUtil.PiOverTwo));
+                // Rollers spinning on their own axis (world Z), tops moving toward the gap: a calender
+                rollerAngle += step * 2.5f;
+                rollers[0].SetTargetPose(rollersAt + new Vector3(-0.4f, 1.25f, 0f), Quaternion.RotationX(MathUtil.PiOverTwo) * Quaternion.RotationZ(-rollerAngle));
+                rollers[1].SetTargetPose(rollersAt + new Vector3(0.4f, 1.25f, 0f), Quaternion.RotationX(MathUtil.PiOverTwo) * Quaternion.RotationZ(rollerAngle));
 
-                // Quartering: out to 0.8 m, held, released, rest
+                // Quartering: out to 1.8 m, held, released, rest
                 _pull = Ramp(time, PullMax / PullSpeed, PullHold, PullRest) * PullMax;
                 foreach (var (body, home, corner) in winches)
                     body.SetTargetPose(home + corner * _pull);
 
-                // Sausage: the motors never stop nor reverse, the twist only builds up
+                // Sausage: the motors spin on the sausage's axis (world X), never stop nor reverse, the twist only builds up
                 _turns = time * TurnSpeed;
                 float angle = _turns * MathUtil.TwoPi;
-                twisters[0].SetTargetPose(left, Quaternion.RotationX(angle) * Quaternion.RotationZ(MathUtil.PiOverTwo));
-                twisters[1].SetTargetPose(right, Quaternion.RotationX(-angle) * Quaternion.RotationZ(MathUtil.PiOverTwo));
+                twisters[0].SetTargetPose(left, Quaternion.RotationZ(MathUtil.PiOverTwo) * Quaternion.RotationX(angle));
+                twisters[1].SetTargetPose(right, Quaternion.RotationZ(MathUtil.PiOverTwo) * Quaternion.RotationX(-angle));
 
-                // Stretch rack: the handles go from 1 m to 2 m apart and back
+                // Stretch rack: the handles go from 1 m to 4.5 m apart and back
                 _rackSeparation = MathUtil.Lerp(RackClosed, RackOpen, 0.5f - 0.5f * MathF.Cos(time * MathUtil.TwoPi / RackPeriod));
                 handles[0].SetTargetPose(rackAt + new Vector3(-_rackSeparation / 2f, rackY, 0f));
                 handles[1].SetTargetPose(rackAt + new Vector3(_rackSeparation / 2f, rackY, 0f));
 
-                // Fan: a steady gale with gusts
-                curtain.Wind = new Vector3(0f, 2f, 18f + 8f * MathF.Sin(time * 2.3f));
+                // Fan: a gale with gusts along its axis, only while the curtain is inside the cone, weaker far from the fan
+                curtain.Wind = FanWind(fanBody.Transform, curtainCenter, 18f + 8f * MathF.Sin(time * 2.3f));
 
                 // Pile driver, every 6 s: falls in 0.35 s, rests 0.8 s, rises in 3 s
                 float drive = time % 6f;
@@ -204,6 +211,21 @@ internal sealed class TortureZone : Zone
                 hammer.SetTargetPose(driverAt + new Vector3(0f, height, 0f));
             }),
         });
+    }
+
+    /// <summary> The wind a fan blowing along its local Y gives at <paramref name="point"/>: full on the axis near the fan, fading to the cone's edge and its far end </summary>
+    private static Vector3 FanWind(TransformComponent fan, Vector3 point, float speed)
+    {
+        var axis = Vector3.Transform(Vector3.UnitY, fan.Rotation);
+        var toPoint = point - fan.Position;
+        float along = Vector3.Dot(toPoint, axis);
+        if (along <= 0f || along >= FanReach)
+            return Vector3.Zero;
+        float radius = 0.2f + FanRadius * along / FanReach;
+        float off = (toPoint - along * axis).Length() / radius;
+        if (off >= 1f)
+            return Vector3.Zero;
+        return axis * speed * (1f - 0.6f * along / FanReach) * (1f - off * off);
     }
 
     /// <summary> 0 to 1 in <paramref name="rise"/> s, held, back to 0 in <paramref name="rise"/> s, rested, over and over </summary>
@@ -232,7 +254,7 @@ internal sealed class TortureZone : Zone
         yield return new(_press + new Vector3(0f, 3.2f, 0f), "hydraulic press");
         yield return new(_rollers + new Vector3(0f, 2.9f, 0f), "rollers, a jelly every 6 s");
         yield return new(_quarter + new Vector3(0f, 2.4f, 0f), "4 ropes, body anchors");
-        yield return new(_fan + new Vector3(0f, 3.4f, 0f), "fan");
+        yield return new(_fan + new Vector3(0f, 3.4f, 0f), "fan: grab it, it blows inside the cone");
         yield return new(_sausage + new Vector3(0f, 0.7f, 0f), "two motors, opposite ways");
         yield return new(_rack + new Vector3(0f, 2.1f, 0f), "stretch rack: volume kept (VolumeStiffness)");
         yield return new(_driver + new Vector3(0f, 3.0f, 0f), "pile driver");

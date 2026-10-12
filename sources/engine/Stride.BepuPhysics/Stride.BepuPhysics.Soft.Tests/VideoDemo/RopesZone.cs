@@ -1,6 +1,7 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Stride.BepuPhysics.Definitions.Colliders;
@@ -21,23 +22,38 @@ internal sealed class RopesZone : Zone
     private readonly List<VolumetricSoftBodyComponent> _balls = new();
     private Vector3 _craneFoot, _cable, _swing, _trampoline;
     private SwingingCrane? _crane;
+    private RopeBridge? _bridge;
     private BodyComponent? _cabin, _seat;
     private int _pushes;
 
     public override string Name => "Ropes and cables";
-    public override string Description => "pins on a BodyAnchor or a WorldAnchor: a crane, a cable car, a swing, a trampoline";
-    public override Vector3 Eye => Origin + new Vector3(0f, 4.4f, 10.4f);
-    public override Vector3 Target => Origin + new Vector3(0f, 1.2f, 0f);
+    public override string Description => "pins on a BodyAnchor or a WorldAnchor: a rope bridge loaded from above, a crane, a cable car, a swing, a trampoline";
+    public override Vector3 Eye => Origin + new Vector3(0f, 6.5f, 12.5f);
+    public override Vector3 Target => Origin + new Vector3(0f, 2.2f, -3f);
+
+    private const int BridgeSubsteps = 24, BridgeIterations = 3;
 
     public override void Build(VideoDemoGame game, WorldTerrain terrain)
     {
         _balls.Clear();
         _pushes = 0;
         var o = Origin;
+        // Long chains of light particles under heavy loads (the bridge deck and its planks, ropes holding bodies): a stiffer solver than the other zones
+        if (Simulation is { } bepu)
+        {
+            var solver = bepu.Simulation.Solver;
+            // A soft start running multiplies the substeps: kept on top of the new count
+            int softStart = solver.SubstepCount / bepu.SolverSubStep;
+            solver.SubstepCount = BridgeSubsteps * softStart;
+            solver.VelocityIterationCount = BridgeIterations;
+            // The long soft start: the bridge settles under its planks before anything is sent onto it
+            bepu.SoftStartDuration = TimeSpan.FromSeconds(10);
+        }
         (_craneFoot, _cable, _swing, _trampoline) = (o + new Vector3(-5f, 0f, -1.5f), o + new Vector3(-1f, 0f, -1.8f), o + new Vector3(3.5f, 0f, -1.4f), o + new Vector3(3f, 0f, 3f));
         var navy = Look.Paint(game.GraphicsDevice, Look.Navy, 0.5f);
 
         _crane = new SwingingCrane(game, _craneFoot, Look.Sun, Look.Navy);
+        _bridge = new RopeBridge(game, o + new Vector3(0f, 0f, -7.5f));
 
         // A cable car: two ropes from the pylon heads meet at the hanger of the cabin
         float span = 3.0f;
@@ -93,6 +109,7 @@ internal sealed class RopesZone : Zone
 
     protected override void Tick(VideoDemoGame game, float time, float seconds)
     {
+        _bridge?.Tick(game, time, seconds);
         if (Every(time, seconds, 7f, 2f) && _cabin is not null)
         {
             // Along the cable, one way then the other
@@ -120,6 +137,12 @@ internal sealed class RopesZone : Zone
 
     public override IEnumerable<SceneLabel> Labels()
     {
+        if (_bridge is not null)
+        {
+            yield return new(_bridge.Deck + new Vector3(-RopeBridge.Span / 2f - 1f, 1.9f, 0f), "rope bridge: a cloth deck, every plank a body anchor");
+            if (_bridge.HasWreckingBall)
+            yield return new(_bridge.Deck + new Vector3(0f, 6.2f, 0f), "wrecking ball, swung every 9 s");
+        }
         yield return new(_craneFoot + new Vector3(0.8f, 3.1f, 0f), "crane: load and jib pull on each other");
         yield return new(_cable + new Vector3(0f, 3.9f, 0f), "cable car, pushed every 7 s");
         yield return new(_swing + new Vector3(0f, 2.8f, 0f), "swing, short stiff ropes");
@@ -128,7 +151,7 @@ internal sealed class RopesZone : Zone
 
     public override IEnumerable<string> Status()
     {
-        yield return string.Format(CultureInfo.InvariantCulture, "crane jib at {0:0} deg  |  cable car pushed {1} times  |  swing seat at {2:0.00} m",
-            _crane?.JibAngle ?? 0f, _pushes, _seat?.Position.Y - Origin.Y ?? 0f);
+        yield return string.Format(CultureInfo.InvariantCulture, "bridge: {0} sent across, wrecking ball swung {1} times, deck sagging {5:0.00} m  |  crane jib at {2:0} deg  |  cable car pushed {3} times  |  swing seat at {4:0.00} m",
+            _bridge?.Sent ?? 0, _bridge?.Swings ?? 0, _crane?.JibAngle ?? 0f, _pushes, _seat?.Position.Y - Origin.Y ?? 0f, _bridge?.Sag ?? 0f);
     }
 }

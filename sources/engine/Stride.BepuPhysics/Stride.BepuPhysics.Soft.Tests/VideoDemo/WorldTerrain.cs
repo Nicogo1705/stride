@@ -3,8 +3,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Stride.BepuPhysics.Definitions.Colliders;
+using Stride.BepuPhysics.Definitions.Colliders.Voxels;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
@@ -17,8 +20,8 @@ using Buffer = Stride.Graphics.Buffer;
 namespace Stride.BepuPhysics.Soft.Tests.VideoDemo;
 
 /// <summary>
-/// The ground of the whole world: one voxel density field of 200 x 200 m drawn with the surface nets of <see cref="VoxelCollider"/>, cut into one collider per zone,
-/// and a height field ring of hills and mountains around it up to the horizon. Carving a crater edits the field, the colliders and the meshes in place.
+/// The ground of the whole world: one voxel density field of 200 x 200 m drawn with voxel surface nets; every zone's simulation has a collider over the whole field, all reading the same samples in place,
+/// and a height field ring of hills and mountains around it up to the horizon. Carving a crater edits the field once, then the meshes.
 /// </summary>
 internal sealed class WorldTerrain
 {
@@ -28,17 +31,18 @@ internal sealed class WorldTerrain
     public const float ZoneHalf = 32f;
     /// <summary> Radius of the flat pad under each zone </summary>
     public const float PadRadius = 14f;
-    private const int ZoneSamples = 129, ChunkCells = 50, Chunks = 8;
+    private const int ChunkCells = 50, Chunks = 8;
     private const float Far = 1200f;
 
     private readonly DemoGame _game;
-    private readonly float[] _field = new float[Samples * Layers * Samples];
+    // Pinned: the colliders read it in place on the physics threads
+    private readonly float[] _field = GC.AllocateArray<float>(Samples * Layers * Samples, pinned: true);
     private readonly float[] _padWeight = new float[Samples * Samples], _pathWeight = new float[Samples * Samples];
     private readonly bool[] _carved = new bool[Samples * Samples];
     private readonly Vector2[] _pads;
     private readonly (Vector2 A, Vector2 B)[] _paths;
     private readonly Chunk[] _chunks = new Chunk[Chunks * Chunks];
-    private readonly List<(VoxelCollider Collider, int X, int Z, int Layers)> _colliders = new();
+    private readonly List<SharedVoxelCollider> _colliders = new();
     private readonly Material _material;
 
     public int Craters { get; private set; }
@@ -241,41 +245,25 @@ internal sealed class WorldTerrain
 
     private static int SampleOf(float world) => Math.Clamp((int)MathF.Round((world + Half) / Cell), 0, Samples - 1);
 
-    /// <summary> The collider of a zone: the field around its center, in a <see cref="StaticComponent"/> to add while the zone builds </summary>
-    public Entity Collider(Vector2 center)
+    /// <summary> A collider over the whole field for one simulation, in a <see cref="StaticComponent"/> to add while its zone builds </summary>
+    public Entity Collider()
     {
-        int x0 = SampleOf(center.X - ZoneHalf), z0 = SampleOf(center.Y - ZoneHalf);
-        x0 = Math.Min(x0, Samples - ZoneSamples);
-        z0 = Math.Min(z0, Samples - ZoneSamples);
-        int top = 0;
-        for (int x = x0; x < x0 + ZoneSamples; x++)
-        {
-            for (int z = z0; z < z0 + ZoneSamples; z++)
-            {
-                for (int y = Layers - 1; y > top; y--)
-                {
-                    if (_field[Index(x, y, z)] >= Iso)
-                    {
-                        top = y;
-                        break;
-                    }
-                }
-            }
-        }
-        // Room above the highest ground, and for whatever is stacked on it
-        int layers = Math.Min(Layers, top + 5);
-        var data = new float[ZoneSamples * layers * ZoneSamples];
-        for (int x = 0; x < ZoneSamples; x++)
-        {
-            for (int y = 0; y < layers; y++)
-                Array.Copy(_field, Index(x0 + x, y, z0), data, (x * layers + y) * ZoneSamples, ZoneSamples);
-        }
-        var collider = new VoxelCollider { CellShape = VoxelCellShape.SurfaceNets, CellSize = Cell, IsoLevel = Iso, SealBorder = true };
-        collider.SetData(ZoneSamples, layers, ZoneSamples, data);
-        _colliders.Add((collider, x0, z0, layers));
-        var entity = new Entity("zone ground") { new StaticComponent { Collider = collider } };
-        entity.Transform.Position = new Vector3(World(x0), Bottom, World(z0));
+        var collider = new SharedVoxelCollider(_field) { CellShape = VoxelCellShape.SurfaceNets, CellSize = Cell, IsoLevel = Iso, SealBorder = true };
+        _colliders.Add(collider);
+        var entity = new Entity("world ground") { new StaticComponent { Collider = collider } };
+        entity.Transform.Position = new Vector3(World(0), Bottom, World(0));
         return entity;
+    }
+
+    /// <summary> Reads the terrain's field where it lies: one copy of the samples for every simulation </summary>
+    private sealed unsafe class SharedVoxelCollider(float[] pinnedField) : VoxelColliderBase<FloatVoxelSource>
+    {
+        protected override bool TryGetSource(out FloatVoxelSource source)
+        {
+            var samples = (float*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(pinnedField));
+            source = new FloatVoxelSource { Samples = new BepuUtilities.Memory.Buffer<float>(samples, pinnedField.Length), SamplesX = Samples, SamplesY = Layers, SamplesZ = Samples };
+            return true;
+        }
     }
 
     /// <summary> The highest ground at a point, carving included </summary>
@@ -296,12 +284,19 @@ internal sealed class WorldTerrain
     }
 
     /// <summary> Digs a round hole: the colliders read the new samples on their next step, the meshes around it are rebuilt </summary>
-    public void Carve(Vector3 center, float radius)
+    public void Carve(Vector3 center, float radius) => Edit(center, radius, false);
+
+    /// <summary> Adds a round lump of ground, the opposite of <see cref="Carve"/> </summary>
+    public void Fill(Vector3 center, float radius) => Edit(center, radius, true);
+
+    /// <summary> Whether a ray hit the ground rather than something standing on it </summary>
+    public bool IsGround(CollidableComponent collidable) => collidable is StaticComponent { Collider: SharedVoxelCollider };
+
+    private void Edit(Vector3 center, float radius, bool add)
     {
         int x0 = SampleOf(center.X - radius - Cell), x1 = SampleOf(center.X + radius + Cell);
         int z0 = SampleOf(center.Z - radius - Cell), z1 = SampleOf(center.Z + radius + Cell);
         int y0 = Math.Max(1, (int)((center.Y - radius - Bottom) / Cell)), y1 = Math.Min(Layers - 1, (int)((center.Y + radius - Bottom) / Cell) + 2);
-        var touched = new bool[_colliders.Count];
         for (int x = x0; x <= x1; x++)
         {
             for (int z = z0; z <= z1; z++)
@@ -309,30 +304,18 @@ internal sealed class WorldTerrain
                 for (int y = y0; y <= y1; y++)
                 {
                     float distance = (new Vector3(World(x), Height(y), World(z)) - center).Length();
-                    float density = Math.Clamp(Iso + (distance - radius) / Cell, -3f, 4f);
+                    float density = Math.Clamp(add ? Iso + (radius - distance) / Cell : Iso + (distance - radius) / Cell, -3f, 4f);
                     ref float d = ref _field[Index(x, y, z)];
-                    if (density >= d)
+                    if (add ? density <= d : density >= d)
                         continue;
                     d = density;
                     _carved[x * Samples + z] = true;
-                    for (int i = 0; i < _colliders.Count; i++)
-                    {
-                        var (collider, cx, cz, layers) = _colliders[i];
-                        int lx = x - cx, lz = z - cz;
-                        if ((uint)lx < ZoneSamples && (uint)lz < ZoneSamples && y < layers)
-                        {
-                            collider.SetVoxel(lx, y, lz, density);
-                            touched[i] = true;
-                        }
-                    }
                 }
             }
         }
-        for (int i = 0; i < _colliders.Count; i++)
-        {
-            if (touched[i])
-                _colliders[i].Collider.NotifyFieldChanged();
-        }
+        // The simulations read the samples as they go: only what is derived from them (debug views) is rebuilt
+        foreach (var collider in _colliders)
+            collider.NotifyFieldChanged();
         for (int cx = Math.Max(0, (x0 - 1) / ChunkCells); cx <= Math.Min(Chunks - 1, (x1 + 1) / ChunkCells); cx++)
         {
             for (int cz = Math.Max(0, (z0 - 1) / ChunkCells); cz <= Math.Min(Chunks - 1, (z1 + 1) / ChunkCells); cz++)
@@ -341,7 +324,8 @@ internal sealed class WorldTerrain
                 _chunks[cx * Chunks + cz].Replace(_game, vertices, indices);
             }
         }
-        Craters++;
+        if (!add)
+            Craters++;
     }
 
     // Surface nets of one chunk, with the collider's rule: a vertex per cell at the mean of its edge crossings, a quad per edge that changes sign

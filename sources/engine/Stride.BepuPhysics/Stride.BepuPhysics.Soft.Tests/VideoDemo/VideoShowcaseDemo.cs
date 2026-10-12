@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics.Regression;
@@ -57,150 +58,174 @@ public class VideoShowcaseDemo : GameTestBase
         File.WriteAllText(progress, string.Empty);
         // Also written as it goes, to follow a long tour
         report = new Progress(progress);
-        DemoSettings.RunTour(game, async () =>
+        // Warnings and errors logged during the tour (a pin holding no particle, a missing asset...) are reported and fail it
+        var problems = new List<string>();
+        void Logged(ILogMessage message)
         {
-            game.LoadScene(game.Scenes[0]);
-            await game.Frames(2);
-            var world = game.World!;
-            if (Enum.TryParse<SoftBodyDeformationMode>(Environment.GetEnvironmentVariable("VIDEO_TOUR_DEFORMATION"), true, out var deformation))
-                game.SetOption("Soft body deformation", deformation == SoftBodyDeformationMode.Gpu ? "GPU" : "CPU");
-            report.Add($"Soft body deformation: {game.Deformation}  |  terrain: {world.Terrain?.Vertices} vertices");
-
-            var picked = game.Places.Select((place, i) => (Place: place, Index: i + 1)).Where(p => only is null || only.Contains(p.Index)).ToList();
-            if (Environment.GetEnvironmentVariable("VIDEO_TOUR_PROFILE") == "1")
+            if (message.Type < LogMessageType.Warning)
+                return;
+            var line = $"{message.Type}: [{message.Module}] {message.Text}";
+            lock (problems)
             {
-                // Step time and solver batches of each zone's simulation alone, the camera on the zone
+                if (!problems.Contains(line))
+                    problems.Add(line);
+            }
+        }
+        GlobalLogger.GlobalMessageLogged += Logged;
+        try
+        {
+            DemoSettings.RunTour(game, async () =>
+            {
+                game.LoadScene(game.Scenes[0]);
+                await game.Frames(2);
+                var world = game.World!;
+                if (Enum.TryParse<SoftBodyDeformationMode>(Environment.GetEnvironmentVariable("VIDEO_TOUR_DEFORMATION"), true, out var deformation))
+                    game.SetOption("Soft body deformation", deformation == SoftBodyDeformationMode.Gpu ? "GPU" : "CPU");
+                report.Add($"Soft body deformation: {game.Deformation}  |  terrain: {world.Terrain?.Vertices} vertices");
+
+                var picked = game.Places.Select((place, i) => (Place: place, Index: i + 1)).Where(p => only is null || only.Contains(p.Index)).ToList();
+                if (Environment.GetEnvironmentVariable("VIDEO_TOUR_PROFILE") == "1")
+                {
+                    // Step time and solver batches of each zone's simulation alone, the camera on the zone
+                    foreach (var (place, index) in picked)
+                    {
+                        var zone = world.Zones.FirstOrDefault(z => z.Name == place.Name);
+                        world.Solo = zone;
+                        await Arrive(game, place);
+                        await game.Steps(120);
+                        game.ClearStepTiming();
+                        await game.Steps(240);
+                        report.Add($"{index:00} {place.Name}: {game.StepTiming()}");
+                        if (zone?.Simulation is { } simulation)
+                            report.Add($"{index:00}   solver: {SolverStats(simulation)}");
+                    }
+                    world.Solo = null;
+                    return;
+                }
+
+                // Shaders compile in the background on first use: visit every place before the shots
                 foreach (var (place, index) in picked)
                 {
+                    await Arrive(game, place);
+                    game.ClearFrameTimes();
+                    await game.Steps(90);
+                    report.Add($"{index:00} warm up {place.Name}: {game.FpsText()}");
+                }
+                foreach (var (place, index) in picked)
+                {
+                    string Shot(string name) => Path.Combine(folder, $"{index:00}-{name}");
                     var zone = world.Zones.FirstOrDefault(z => z.Name == place.Name);
-                    world.Solo = zone;
+                    await Arrive(game, place);
+                    await game.Steps(150);
+                    await game.CaptureTo(Shot("a-start"));
+                    if (views)
+                    {
+                        // Every debug view from the place's camera, with its frame rate
+                        for (int view = 0; view < VideoDemoGame.Views.Length; view++)
+                        {
+                            game.SetDebugView(view);
+                            await game.Frames(10);
+                            game.ClearFrameTimes();
+                            await game.Steps(120);
+                            report.Add($"{index:00} view {VideoDemoGame.Views[view]}: {game.FpsText()}");
+                            await game.CaptureTo(Shot($"a-view{view}"));
+                        }
+                        game.SetDebugView(VideoDemoGame.NoDebugView);
+                    }
+
+                    // Close-ups, the overlay hidden
+                    var closeUps = zone switch
+                    {
+                        PlaygroundZone playground => new[] { ("overhang", playground.OverhangEye, playground.OverhangTarget) },
+                        CharactersZone => new[]
+                        {
+                            ("animated-ragdoll", zone.Origin + new Vector3(-4.5f, 2.4f, 6.5f), zone.Origin + new Vector3(-4.5f, 1.2f, 0f)),
+                            ("active-standing", zone.Origin + new Vector3(4.5f, 2.4f, 6.5f), zone.Origin + new Vector3(4.5f, 1.0f, 0f)),
+                        },
+                        TortureZone => new[]
+                        {
+                            ("press-rollers", zone.Origin + new Vector3(-3.4f, 2.4f, 2.6f), zone.Origin + new Vector3(-3.4f, 1.0f, -2.5f)),
+                            ("quarter-fan", zone.Origin + new Vector3(3.4f, 2.6f, 2.4f), zone.Origin + new Vector3(3.4f, 1.3f, -2.5f)),
+                            ("sausage-rack-driver", zone.Origin + new Vector3(0f, 2.8f, 7.6f), zone.Origin + new Vector3(0f, 1.0f, 2.5f)),
+                        },
+                        RopesZone => new[] { ("swing-trampoline", zone.Origin + new Vector3(5.4f, 2.4f, 6.4f), zone.Origin + new Vector3(3.2f, 1.2f, 0.8f)) },
+                        _ => Array.Empty<(string, Vector3, Vector3)>(),
+                    };
+                    game.SetOverlay(false);
+                    foreach (var (name, eye, target) in closeUps)
+                    {
+                        game.SetCamera(eye, target);
+                        await game.Frames(3);
+                        await game.Steps(60);
+                        await game.CaptureTo(Shot("b-" + name));
+                    }
+                    game.SetOverlay(true);
+                    await Arrive(game, place);
+
+                    // Long run: frame times without a limit, and the highest and fastest body of each kind
+                    var probe = new Probe();
+                    game.ClearFrameTimes();
+                    game.ClearStepTiming();
+                    for (int done = 0; done < stabilitySteps; done += 30)
+                    {
+                        await game.Steps(30);
+                        probe.Sample(game.SceneSystem.SceneInstance.RootScene);
+                    }
+                    report.Add($"{index:00} {place.Name}: no limit, {game.FpsText()}  |  {world.ActiveZones} zones simulating");
+                    report.Add($"{index:00}   {game.StepTiming()}");
+                    report.Add($"{index:00}   after {stabilitySteps} steps: {probe.Summary()}");
+                    foreach (var line in zone?.Status() ?? Enumerable.Empty<string>())
+                        report.Add($"{index:00}   status: {line}");
+                    await game.CaptureTo(Shot($"c-after-{stabilitySteps}"));
+                }
+
+                // At the default limit of the window, before every zone simulates: the overview measure leaves the simulations behind, catching up for a while
+                game.FpsLimit = DemoSettings.DefaultFpsLimit;
+                foreach (var (place, index) in picked)
+                {
                     await Arrive(game, place);
                     await game.Steps(120);
-                    game.ClearStepTiming();
-                    await game.Steps(240);
-                    report.Add($"{index:00} {place.Name}: {game.StepTiming()}");
-                    if (zone?.Simulation is { } simulation)
-                        report.Add($"{index:00}   solver: {SolverStats(simulation)}");
-                }
-                world.Solo = null;
-                return;
-            }
-
-            // Shaders compile in the background on first use: visit every place before the shots
-            foreach (var (place, index) in picked)
-            {
-                await Arrive(game, place);
-                game.ClearFrameTimes();
-                await game.Steps(90);
-                report.Add($"{index:00} warm up {place.Name}: {game.FpsText()}");
-            }
-            foreach (var (place, index) in picked)
-            {
-                string Shot(string name) => Path.Combine(folder, $"{index:00}-{name}");
-                var zone = world.Zones.FirstOrDefault(z => z.Name == place.Name);
-                await Arrive(game, place);
-                await game.Steps(150);
-                await game.CaptureTo(Shot("a-start"));
-                if (views)
-                {
-                    // Every debug view from the place's camera, with its frame rate
-                    for (int view = 0; view < VideoDemoGame.Views.Length; view++)
-                    {
-                        game.SetDebugView(view);
-                        await game.Frames(10);
-                        game.ClearFrameTimes();
-                        await game.Steps(120);
-                        report.Add($"{index:00} view {VideoDemoGame.Views[view]}: {game.FpsText()}");
-                        await game.CaptureTo(Shot($"a-view{view}"));
-                    }
-                    game.SetDebugView(VideoDemoGame.NoDebugView);
-                }
-
-                // Close-ups, the overlay hidden
-                var closeUps = zone switch
-                {
-                    PlaygroundZone playground => new[] { ("overhang", playground.OverhangEye, playground.OverhangTarget) },
-                    CharactersZone => new[]
-                    {
-                        ("animated-ragdoll", zone.Origin + new Vector3(-4.5f, 2.4f, 6.5f), zone.Origin + new Vector3(-4.5f, 1.2f, 0f)),
-                        ("active-standing", zone.Origin + new Vector3(4.5f, 2.4f, 6.5f), zone.Origin + new Vector3(4.5f, 1.0f, 0f)),
-                    },
-                    TortureZone => new[]
-                    {
-                        ("press-rollers", zone.Origin + new Vector3(-3.4f, 2.4f, 2.6f), zone.Origin + new Vector3(-3.4f, 1.0f, -2.5f)),
-                        ("quarter-fan", zone.Origin + new Vector3(3.4f, 2.6f, 2.4f), zone.Origin + new Vector3(3.4f, 1.3f, -2.5f)),
-                        ("sausage-rack-driver", zone.Origin + new Vector3(0f, 2.8f, 7.6f), zone.Origin + new Vector3(0f, 1.0f, 2.5f)),
-                    },
-                    RopesZone => new[] { ("swing-trampoline", zone.Origin + new Vector3(5.4f, 2.4f, 6.4f), zone.Origin + new Vector3(3.2f, 1.2f, 0.8f)) },
-                    _ => Array.Empty<(string, Vector3, Vector3)>(),
-                };
-                game.SetOverlay(false);
-                foreach (var (name, eye, target) in closeUps)
-                {
-                    game.SetCamera(eye, target);
-                    await game.Frames(3);
-                    await game.Steps(60);
-                    await game.CaptureTo(Shot("b-" + name));
-                }
-                game.SetOverlay(true);
-                await Arrive(game, place);
-
-                // Long run: frame times without a limit, and the highest and fastest body of each kind
-                var probe = new Probe();
-                game.ClearFrameTimes();
-                game.ClearStepTiming();
-                for (int done = 0; done < stabilitySteps; done += 30)
-                {
-                    await game.Steps(30);
-                    probe.Sample(game.SceneSystem.SceneInstance.RootScene);
-                }
-                report.Add($"{index:00} {place.Name}: no limit, {game.FpsText()}  |  {world.ActiveZones} zones simulating");
-                report.Add($"{index:00}   {game.StepTiming()}");
-                report.Add($"{index:00}   after {stabilitySteps} steps: {probe.Summary()}");
-                foreach (var line in zone?.Status() ?? Enumerable.Empty<string>())
-                    report.Add($"{index:00}   status: {line}");
-                await game.CaptureTo(Shot($"c-after-{stabilitySteps}"));
-            }
-
-            // At the default limit of the window, before every zone simulates: the overview measure leaves the simulations behind, catching up for a while
-            game.FpsLimit = DemoSettings.DefaultFpsLimit;
-            foreach (var (place, index) in picked)
-            {
-                await Arrive(game, place);
-                await game.Steps(120);
-                game.ClearFrameTimes();
-                game.ClearStepTiming();
-                await game.Steps(480);
-                report.Add($"{index:00} {place.Name}: limit {game.FpsLimit}, {game.FpsText()}  |  {game.StepTiming()}");
-                foreach (var line in world.Zones.FirstOrDefault(z => z.Name == place.Name)?.Status() ?? Enumerable.Empty<string>())
-                    report.Add($"{index:00}   status: {line}");
-            }
-            game.FpsLimit = 0;
-
-            // The overview with only the zones near the camera simulating, then all of them
-            if (game.Places.FirstOrDefault(p => p.Name == "Overview") is { } overview)
-            {
-                await Arrive(game, overview);
-                foreach (var all in new[] { false, true })
-                {
-                    world.ActivateAll = all;
-                    await game.Steps(120);
-                    game.ClearStepTiming();
                     game.ClearFrameTimes();
-                    await game.Steps(360);
-                    report.Add($"overview, {(all ? "every zone" : "nearest zone only")} simulating ({world.ActiveZones}): {game.FpsText()}  |  {game.StepTiming()}");
+                    game.ClearStepTiming();
+                    await game.Steps(480);
+                    report.Add($"{index:00} {place.Name}: limit {game.FpsLimit}, {game.FpsText()}  |  {game.StepTiming()}");
+                    foreach (var line in world.Zones.FirstOrDefault(z => z.Name == place.Name)?.Status() ?? Enumerable.Empty<string>())
+                        report.Add($"{index:00}   status: {line}");
                 }
-                world.ActivateAll = false;
-                await game.Frames(3);
-                game.SetOverlay(false);
-                await game.Steps(10);
-                await game.CaptureTo(Path.Combine(folder, "overview-clean"));
-                game.SetOverlay(true);
-            }
-        }, g => RunGameTest(g));
+                game.FpsLimit = 0;
+
+                // The overview with only the zones near the camera simulating, then all of them
+                if (game.Places.FirstOrDefault(p => p.Name == "Overview") is { } overview)
+                {
+                    await Arrive(game, overview);
+                    foreach (var all in new[] { false, true })
+                    {
+                        world.ActivateAll = all;
+                        await game.Steps(120);
+                        game.ClearStepTiming();
+                        game.ClearFrameTimes();
+                        await game.Steps(360);
+                        report.Add($"overview, {(all ? "every zone" : "nearest zone only")} simulating ({world.ActiveZones}): {game.FpsText()}  |  {game.StepTiming()}");
+                    }
+                    world.ActivateAll = false;
+                    await game.Frames(3);
+                    game.SetOverlay(false);
+                    await game.Steps(10);
+                    await game.CaptureTo(Path.Combine(folder, "overview-clean"));
+                    game.SetOverlay(true);
+                }
+            }, g => RunGameTest(g));
+        }
+        finally
+        {
+            GlobalLogger.GlobalMessageLogged -= Logged;
+        }
+        foreach (var problem in problems)
+            report.Add("LOGGED " + problem);
         Directory.CreateDirectory(folder);
         File.WriteAllLines(Path.Combine(folder, "report.txt"), report);
         Console.WriteLine(string.Join(Environment.NewLine, report));
+        Assert.True(problems.Count == 0, $"{problems.Count} warnings or errors logged during the tour:{Environment.NewLine}{string.Join(Environment.NewLine, problems)}");
     }
 
     /// <summary>
@@ -223,7 +248,7 @@ public class VideoShowcaseDemo : GameTestBase
             game.LoadScene(game.Scenes[0]);
             await game.Frames(2);
             var world = game.World!;
-            var benched = world.Zones.Select((zone, i) => (Zone: zone, Index: i + 1)).Where(z => z.Zone is CharactersZone or GardenZone or FleshZone or StressZone).ToList();
+            var benched = world.Zones.Select((zone, i) => (Zone: zone, Index: i + 1)).Where(z => z.Zone is CharactersZone or GardenZone or StressZone).ToList();
             foreach (var (zone, index) in benched)
             {
                 var place = game.Places.First(p => p.Name == zone.Name);

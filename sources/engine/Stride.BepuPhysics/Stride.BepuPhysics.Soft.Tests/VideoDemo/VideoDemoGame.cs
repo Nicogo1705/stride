@@ -304,6 +304,16 @@ internal sealed class VideoDemoGame : BepuDemoGame
 
     public Vector3 CameraPosition => CameraEntity.Transform.Position;
 
+    /// <summary> The ray from the camera through the crosshair, in the middle of the screen </summary>
+    public (Vector3 Origin, Vector3 Forward) CrosshairRay
+    {
+        get
+        {
+            var world = CameraEntity.Transform.WorldMatrix;
+            return (world.TranslationVector, Vector3.Normalize(Vector3.TransformNormal(-Vector3.UnitZ, world)));
+        }
+    }
+
     // Helpers the scenes draw their own panels with
     public Int2 Screen => ScreenSize;
 

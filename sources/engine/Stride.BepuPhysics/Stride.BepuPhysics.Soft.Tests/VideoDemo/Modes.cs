@@ -22,6 +22,12 @@ internal static class Modes
         _ => new Color(255, 178, 36),
     };
 
+    /// <summary> Lighter, for the flesh of a bean: soft flesh on rigid bones </summary>
+    public static Color Light(SkeletonBodyMode mode) => Color.Lerp(Of(mode), new Color(255, 255, 255), 0.4f);
+
+    /// <summary> Darker, for an all-soft Fall Guy </summary>
+    public static Color Dark(SkeletonBodyMode mode) => Color.Lerp(Of(mode), new Color(0, 0, 0), 0.35f);
+
     public static string Describe(SkeletonBodyMode mode) => mode switch
     {
         SkeletonBodyMode.Animated => "Animated: kinematic hitboxes follow the animation",
@@ -54,7 +60,8 @@ internal static class Modes
 }
 
 /// <summary> Paints models in the color of the current mode of a skeleton, so a switch (a hit, a grab) shows at once </summary>
-internal sealed class ModeTint(SkeletonBodyComponent body, IReadOnlyList<ModelComponent> models, float gloss = 0.5f) : SyncScript
+/// <summary> Paints models in the color of the current mode, through <paramref name="shade"/> when given </summary>
+internal sealed class ModeTint(SkeletonBodyComponent body, IReadOnlyList<ModelComponent> models, float gloss = 0.5f, Func<SkeletonBodyMode, Color>? shade = null) : SyncScript
 {
     private SkeletonBodyMode? _shown;
 
@@ -63,7 +70,7 @@ internal sealed class ModeTint(SkeletonBodyComponent body, IReadOnlyList<ModelCo
         if (_shown == body.Mode)
             return;
         _shown = body.Mode;
-        var material = Look.Paint(Game.GraphicsDevice, Modes.Of(body.Mode), gloss);
+        var material = Look.Paint(Game.GraphicsDevice, (shade ?? Modes.Of)(body.Mode), gloss);
         foreach (var model in models)
             model.Materials[0] = material;
     }

@@ -25,9 +25,9 @@ internal sealed class WorldScene : VideoScene
     private readonly Zone[] _zones =
     {
         new PlaygroundZone(),
-        new CharactersZone(),
+        new CharactersZone(soft: false),
         new GardenZone(),
-        new FleshZone(),
+        new CharactersZone(soft: true),
         new TortureZone(),
         new RopesZone(),
         new StressZone(),
@@ -37,6 +37,8 @@ internal sealed class WorldScene : VideoScene
 
     public static readonly Vector3 OverviewEye = new(0f, 70f, 120f), OverviewTarget = new(0f, 0f, -10f);
 
+    // The simulations made for the zones, kept from one load of the scene to the next
+    private static readonly HashSet<BepuSimulation> s_created = new();
     private Zone? _building;
     private Vector3 _camera;
 
@@ -76,12 +78,15 @@ internal sealed class WorldScene : VideoScene
         (ActivateAll, Frozen, Solo) = (false, false, null);
         _camera = _zones[0].Eye;
 
-        // One simulation per zone, the first one being the configuration's
+        // One simulation per zone: the configuration's first one, then copies of it made here. The test project's game settings carry two more
+        // simulations for the Bepu tests (one with gravity -30 and a single substep, one without per-body attributes): no zone uses them
         var simulations = game.Services.GetOrCreate<BepuConfiguration>().BepuSimulations;
         var first = simulations[0];
-        while (simulations.Count < _zones.Length)
+        var zoneSimulations = new List<BepuSimulation> { first };
+        zoneSimulations.AddRange(simulations.Where(s_created.Contains));
+        while (zoneSimulations.Count < _zones.Length)
         {
-            simulations.Add(new BepuSimulation
+            var copy = new BepuSimulation
             {
                 SolverSubStep = first.SolverSubStep,
                 SolverIteration = first.SolverIteration,
@@ -90,7 +95,18 @@ internal sealed class WorldScene : VideoScene
                 PoseGravity = first.PoseGravity,
                 PoseLinearDamping = first.PoseLinearDamping,
                 PoseAngularDamping = first.PoseAngularDamping,
-            });
+            };
+            s_created.Add(copy);
+            simulations.Add(copy);
+            zoneSimulations.Add(copy);
+        }
+        foreach (var unused in simulations.Except(zoneSimulations))
+            unused.Enabled = false;
+        // More substeps for the first two seconds of every zone, from the load of the world: everything built at once settles before the normal solver takes over
+        foreach (var simulation in zoneSimulations)
+        {
+            simulation.SoftStartDuration = TimeSpan.FromSeconds(2);
+            simulation.ResetSoftStart();
         }
 
         var pads = Pads;
@@ -99,12 +115,12 @@ internal sealed class WorldScene : VideoScene
         for (int i = 0; i < _zones.Length; i++)
         {
             var zone = _zones[i];
-            zone.Place(new Vector3(pads[i].X, 0f, pads[i].Y), i);
-            zone.Simulation = simulations[i];
+            zone.Simulation = zoneSimulations[i];
+            zone.Place(new Vector3(pads[i].X, 0f, pads[i].Y), simulations.IndexOf(zone.Simulation));
             _building = zone;
             try
             {
-                game.AddToScene(Terrain.Collider(pads[i]));
+                game.AddToScene(Terrain.Collider());
                 zone.Build(game, Terrain);
             }
             finally
@@ -114,6 +130,25 @@ internal sealed class WorldScene : VideoScene
             game.AddPlace(zone.Name, zone.Description, zone.Eye, zone.Target);
         }
         game.AddPlace("Overview", "the whole world from above", OverviewEye, OverviewTarget);
+
+        // Edit the ground where the crosshair meets it: every simulation reads the same field, so it holds everywhere at once
+        int dug = 0, added = 0;
+        game.AddOption("Dig at the crosshair", () => $"{dug} dug", () => { if (EditAtCrosshair(game, false)) dug++; });
+        game.AddOption("Add ground at the crosshair", () => $"{added} added", () => { if (EditAtCrosshair(game, true)) added++; });
+    }
+
+    private bool EditAtCrosshair(VideoDemoGame game, bool add)
+    {
+        if (Terrain is null || Current.Simulation is not { } simulation)
+            return false;
+        var (origin, forward) = game.CrosshairRay;
+        if (!simulation.RayCast(origin, forward, 200f, out var hit) || !Terrain.IsGround(hit.Collidable))
+            return false;
+        if (add)
+            Terrain.Fill(hit.Point + hit.Normal * 0.4f, 1.3f);
+        else
+            Terrain.Carve(hit.Point, 1.4f);
+        return true;
     }
 
     /// <summary> Puts an entity in the simulation of the zone being built, or of the zone it appears in </summary>

@@ -77,10 +77,10 @@ internal abstract class Zone
     public virtual IEnumerable<string> Status() => Enumerable.Empty<string>();
 
     /// <summary> Removes an entity added earlier, such as the oldest of a stream of dropped objects </summary>
-    protected static void Remove(VideoDemoGame game, Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
+    internal static void Remove(VideoDemoGame game, Entity entity) => game.SceneSystem.SceneInstance.RootScene.Entities.Remove(entity);
 
     /// <summary> Whether the phase of a cycle of <paramref name="period"/> seconds crossed <paramref name="at"/> during the last frame </summary>
-    protected static bool Every(float time, float seconds, float period, float at = 0f)
+    internal static bool Every(float time, float seconds, float period, float at = 0f)
     {
         float now = MathUtil.Mod(time - at, period), before = now - seconds;
         return before < 0f && seconds > 0f;
@@ -160,17 +160,29 @@ internal static class Kit
         game.AddToScene(entity);
     }
 
-    /// <summary> A ragdoll hanging head down from a gallows at <paramref name="foot"/> by a rope tied to its left foot bone (BodyAnchor with a NodeName) </summary>
-    public static SkeletonBodyComponent AddHangingRagdoll(VideoDemoGame game, Vector3 foot)
+    public const float GallowsHeight = 3.6f;
+
+    /// <summary> Two posts and a beam <paramref name="width"/> wide over <paramref name="foot"/>; returns the beam, to tie ropes to </summary>
+    public static Entity AddGallows(VideoDemoGame game, Vector3 foot, float width)
     {
         var navy = Look.Paint(game.GraphicsDevice, Look.Navy, 0.5f);
-        foreach (var x in new[] { -0.9f, 0.9f })
-            Look.StaticBox(game, new Vector3(0.14f, 3.6f, 0.14f), foot + new Vector3(x, 1.8f, 0f), navy, "gallows post");
-        var beam = Look.StaticBox(game, new Vector3(1.94f, 0.16f, 0.16f), foot + new Vector3(0f, 3.66f, 0f), navy, "gallows beam");
-        // Head down: the feet, 0.06 m above the origin of the entity and 0.11 m to its side, are now below it and on the other side
-        var (human, body, _) = Humans.Add(game, SkeletonBodyMode.Ragdoll, foot + new Vector3(0.11f, 2.6f, 0f), 0f, new ProceduralCharacter.Animator { Paused = true }, "hanging ragdoll", Quaternion.RotationZ(MathUtil.Pi));
-        Ropes.Add(game, foot + new Vector3(0f, 3.58f, 0f), foot + new Vector3(0f, 2.54f, 0f), 0.045f, Look.Ivory, beam, human, toNode: "Foot.L", mass: 30f, stiffness: 90f, name: "ankle rope");
-        return body;
+        foreach (var x in new[] { -width / 2f, width / 2f })
+            Look.StaticBox(game, new Vector3(0.14f, GallowsHeight, 0.14f), foot + new Vector3(x, GallowsHeight / 2f, 0f), navy, "gallows post");
+        return Look.StaticBox(game, new Vector3(width + 0.14f, 0.16f, 0.16f), foot + new Vector3(0f, GallowsHeight + 0.06f, 0f), navy, "gallows beam");
+    }
+
+    /// <summary>
+    /// Hangs a character head down under the beam at <paramref name="at"/> (on the ground below the beam) by a rope tied to its left foot bone (BodyAnchor with a NodeName).
+    /// <paramref name="create"/> makes the character at a position and a rotation; <paramref name="footLocal"/> is where its left foot is in the entity, standing
+    /// </summary>
+    public static Entity Hang(VideoDemoGame game, Entity beam, Vector3 at, Vector3 footLocal, Func<Vector3, Quaternion, Entity> create, float ropeMass = 30f)
+    {
+        var (top, knot) = (at + new Vector3(0f, GallowsHeight - 0.02f, 0f), at + new Vector3(0f, 2.54f, 0f));
+        // Head down: turned half a turn about Z, the foot comes to -footLocal; the entity goes where that puts the foot on the knot
+        var rotation = Quaternion.RotationZ(MathUtil.Pi);
+        var character = create(knot - Vector3.Transform(footLocal, rotation), rotation);
+        Ropes.Add(game, top, knot, 0.045f, Look.Ivory, beam, character, toNode: "Foot.L", mass: ropeMass, stiffness: 90f, name: "ankle rope");
+        return character;
     }
 
     /// <summary> Whether a skeleton stands: on the ground, its trunk upright </summary>

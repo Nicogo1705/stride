@@ -13,7 +13,7 @@
     <Nullable>enable</Nullable>
     <StrideHarnessBepu>true</StrideHarnessBepu>
   </PropertyGroup>
-  <Import Project="$(USERPROFILE)\.claude\skills\stride-pr\harness\Harness.props" Condition="Exists('$(USERPROFILE)\.claude\skills\stride-pr\harness\Harness.props')" />
+  <Import Project="$(USERPROFILE)\source\repos\StrideHarness\Harness.props" Condition="Exists('$(USERPROFILE)\source\repos\StrideHarness\Harness.props')" />
   <ItemGroup>
     <ProjectReference Include="..\..\..\tests\xunit.runner.stride\xunit.runner.stride.csproj" />
     <ProjectReference Include="..\..\Stride.Engine\Stride.Engine.csproj" />
