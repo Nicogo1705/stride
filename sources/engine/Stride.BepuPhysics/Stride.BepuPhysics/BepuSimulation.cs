@@ -226,7 +226,7 @@ public sealed class BepuSimulation : IDisposable
     /// Smaller values improve performance at the cost of stability and precision.
     /// </remarks>
     [Display(11, "Solver SubStep", CategoryConstraints)]
-    public int SolverSubStep { get => Simulation.Solver.SubstepCount; init => Simulation.Solver.SubstepCount = value; }
+    public int SolverSubStep { get => _softStartRemainingDuration > TimeSpan.Zero ? Simulation.Solver.SubstepCount / SoftStartSubstepFactor : Simulation.Solver.SubstepCount; init => Simulation.Solver.SubstepCount = value; }
 
     /// <summary>
     /// The duration for the SoftStart; when the simulation starts up, more <see cref="SolverSubStep"/>
@@ -766,8 +766,10 @@ public sealed class BepuSimulation : IDisposable
                 _softStartScheduled = false;
                 if (SoftStartDuration > TimeSpan.Zero)
                 {
+                    // Restarted while running: the substeps are already multiplied
+                    if (_softStartRemainingDuration <= TimeSpan.Zero)
+                        Simulation.Solver.SubstepCount *= SoftStartSubstepFactor;
                     _softStartRemainingDuration = SoftStartDuration;
-                    Simulation.Solver.SubstepCount = SolverSubStep * SoftStartSubstepFactor;
                 }
             }
 
@@ -791,8 +793,8 @@ public sealed class BepuSimulation : IDisposable
 
             if (turnOffSoftStart)
             {
-                Simulation.Solver.SubstepCount = SolverSubStep / SoftStartSubstepFactor;
                 _softStartRemainingDuration = TimeSpan.Zero;
+                Simulation.Solver.SubstepCount /= SoftStartSubstepFactor;
             }
 
             SyncActiveTransformsWithPhysics();
