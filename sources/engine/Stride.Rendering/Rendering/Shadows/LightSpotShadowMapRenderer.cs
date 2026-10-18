@@ -97,6 +97,8 @@ namespace Stride.Rendering.Shadows
             Matrix.Multiply(ref scaleMatrix, ref translationMatrix, out var adjustmentMatrix);
             // Calculate View Proj matrix from World space to Cascade space
             Matrix.Multiply(ref viewProjectionMatrix, ref adjustmentMatrix, out shaderData.WorldToShadowCascadeUV);
+            // Inverted once here instead of for every draw the light touches
+            Matrix.Invert(ref shaderData.WorldToShadowCascadeUV, out shaderData.InverseWorldToShadowCascadeUV);
 
             //Matrix rotationMatrix = Matrix.RotationZ(rotationZ);
             //Matrix.Multiply(ref viewProjectionMatrix, ref rotationMatrix, out shaderData.worldToShadowProjectiveTextureUV);
@@ -134,6 +136,8 @@ namespace Stride.Rendering.Shadows
             public Vector2 DepthRange;
 
             public Matrix WorldToShadowCascadeUV;
+
+            public Matrix InverseWorldToShadowCascadeUV;
 
             public Matrix ViewMatrix;
             public Matrix ProjectionMatrix;
@@ -226,7 +230,7 @@ namespace Stride.Rendering.Shadows
                     {
                         var singleLightData = (LightSpotShadowMapShaderData)lightEntry.ShadowMapTexture.ShaderData;
                         worldToShadowCascadeUV[lightIndex] = singleLightData.WorldToShadowCascadeUV;
-                        Matrix.Invert(ref singleLightData.WorldToShadowCascadeUV, out inverseWorldToShadowCascadeUV[lightIndex]);
+                        inverseWorldToShadowCascadeUV[lightIndex] = singleLightData.InverseWorldToShadowCascadeUV;
 
                         depthBiases[lightIndex] = singleLightData.DepthBias;
                         offsetScales[lightIndex] = singleLightData.OffsetScale;
