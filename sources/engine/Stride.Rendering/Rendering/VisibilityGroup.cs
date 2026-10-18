@@ -128,6 +128,7 @@ namespace Stride.Rendering
             // Note sure this is really a good mechanism long term (it forces to recreate multiple time the same view, instead of using RenderStage + selectors or a similar mechanism)
             // This is still supported so that existing gizmo code kept working with new graphics refactor. Might be reconsidered at some point.
             var cullingMask = view.CullingMask;
+            var renderStageMask = RenderData.GetData(RenderStageMaskKey);
 
             // Process objects
             //foreach (var renderObject in RenderObjects)
@@ -140,7 +141,6 @@ namespace Stride.Rendering
                 if (!renderObject.Enabled || ((RenderGroupMask)(1U << (int)renderObject.RenderGroup) & cullingMask) == 0)
                     return;
 
-                var renderStageMask = RenderData.GetData(RenderStageMaskKey);
                 var renderStageMaskNode = renderObject.VisibilityObjectNode * stageMaskMultiplier;
 
                 // Determine if this render object belongs to this view
