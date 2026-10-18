@@ -25,6 +25,9 @@ namespace Stride.Graphics
         private MappedResource mappedConstantBuffer;
         private CommandList commandList;
 
+        // Cached so that the per-frame Reset does not allocate a delegate to subscribe and unsubscribe
+        private readonly EventHandler<EventArgs> bufferDestroyedHandler;
+
         private int bufferAllocationOffset;
 
         internal BufferPool(GraphicsResourceAllocator allocator, GraphicsDevice graphicsDevice, int size)
@@ -34,6 +37,7 @@ namespace Stride.Graphics
                 throw new ArgumentException($"size needs to be a multiple of constant buffer alignment ({constantBufferAlignment})", nameof(size));
 
             this.allocator = allocator;
+            bufferDestroyedHandler = OnBufferDestroyed;
 
             Size = size;
 
@@ -65,7 +69,7 @@ namespace Stride.Graphics
 
         private void ReleaseBuffer()
         {
-            constantBuffer.Destroyed -= OnBufferDestroyed;
+            constantBuffer.Destroyed -= bufferDestroyedHandler;
             allocator.ReleaseReference(constantBuffer);
         }
 
@@ -117,7 +121,7 @@ namespace Stride.Graphics
                     ReleaseBuffer();
 
                 constantBuffer = allocator.GetTemporaryBuffer(new BufferDescription(Size, BufferFlags.ConstantBuffer, GraphicsResourceUsage.Dynamic));
-                constantBuffer.Destroyed += OnBufferDestroyed;
+                constantBuffer.Destroyed += bufferDestroyedHandler;
             }
 #pragma warning restore 162
 
