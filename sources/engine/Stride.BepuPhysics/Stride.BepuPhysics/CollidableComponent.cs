@@ -3,6 +3,7 @@
 
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
@@ -18,6 +19,7 @@ using Stride.Engine.Design;
 using Stride.BepuPhysics.Definitions.Raycast;
 using Stride.BepuPhysics.Definitions.SimTests;
 using NRigidPose = BepuPhysics.RigidPose;
+using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace Stride.BepuPhysics;
 
@@ -505,7 +507,11 @@ public abstract class CollidableComponent : EntityComponent
     {
         var entityTransform = Entity.Transform;
         var parentMatrix = entityTransform.Parent?.WorldMatrix ?? Entity.Scene?.WorldMatrix ?? Matrix.Identity;
-        parentMatrix.Decompose(out Vector3 _, out Quaternion parentEntityRotation, out Vector3 parentEntityPosition);
+        var parentEntityRotation = Quaternion.Identity;
+        var parentEntityPosition = Vector3.Zero;
+        // Root bodies usually sit under an identity scene matrix, which decomposes to these same values
+        if (Unsafe.As<Matrix, Matrix4x4>(ref parentMatrix) != Matrix4x4.Identity)
+            parentMatrix.Decompose(out Vector3 _, out parentEntityRotation, out parentEntityPosition);
 
         var invParentRot = Quaternion.Invert(parentEntityRotation);
         var localRot = worldRot * invParentRot;
