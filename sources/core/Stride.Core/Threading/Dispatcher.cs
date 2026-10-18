@@ -443,7 +443,7 @@ public static class Dispatcher
                         if (w >= 0)
                         {
                             state.AddReference();
-                            ThreadPool.Instance.QueueWorkItem(() => SortOnThread(collection, comparer, state));
+                            QueueSortOnThread(collection, comparer, state);
                         }
                         hasChild = true;
                     }
@@ -456,6 +456,12 @@ public static class Dispatcher
                 state.Finished.Set();
             state.Release();
         }
+    }
+
+    // Kept out of SortOnThread so the closure is only created when a worker is queued, not on every call
+    private static void QueueSortOnThread<T>(T[] collection, IComparer<T> comparer, SortState state)
+    {
+        ThreadPool.Instance.QueueWorkItem(() => SortOnThread(collection, comparer, state));
     }
 
     private static int Partition<T>(T[] collection, int left, int right, IComparer<T> comparer)
