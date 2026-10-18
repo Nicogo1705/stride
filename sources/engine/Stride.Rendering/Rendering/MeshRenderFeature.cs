@@ -285,10 +285,25 @@ namespace Stride.Rendering
         {
             // Get the input elements already contained in the mesh's vertex buffers
             var availableInputElements = drawData.VertexBuffers.CreateInputElements();
-            var inputElements = new List<InputElementDescription>(availableInputElements);
+            var inputAttributes = pipelineState.EffectBytecode.Reflection.InputAttributes;
+
+            // Count the missing attributes first so the result is allocated once, at its final size
+            var missingCount = 0;
+            foreach (var inputAttribute in inputAttributes)
+            {
+                if (FindElementBySemantic(availableInputElements, inputAttribute.SemanticName, inputAttribute.SemanticIndex) < 0)
+                    missingCount++;
+            }
+
+            if (missingCount == 0)
+                return availableInputElements;
+
+            var inputElements = new InputElementDescription[availableInputElements.Length + missingCount];
+            availableInputElements.CopyTo(inputElements, 0);
+            var missingIndex = availableInputElements.Length;
 
             // In addition, add input elements for all attributes that are not contained in a bound buffer, but required by the shader
-            foreach (var inputAttribute in pipelineState.EffectBytecode.Reflection.InputAttributes)
+            foreach (var inputAttribute in inputAttributes)
             {
                 var inputElementIndex = FindElementBySemantic(availableInputElements, inputAttribute.SemanticName, inputAttribute.SemanticIndex);
                 
@@ -296,7 +311,7 @@ namespace Stride.Rendering
                 if (inputElementIndex >= 0)
                     continue;
                 
-                inputElements.Add(new InputElementDescription
+                inputElements[missingIndex++] = new InputElementDescription
                 {
                     AlignedByteOffset = 0,
                     Format = PixelFormat.R32G32B32A32_Float,
@@ -305,10 +320,10 @@ namespace Stride.Rendering
                     InstanceDataStepRate = 0,
                     SemanticIndex = inputAttribute.SemanticIndex,
                     SemanticName = inputAttribute.SemanticName,
-                });
+                };
             }
 
-            return inputElements.ToArray();
+            return inputElements;
         }
 
         private static int FindElementBySemantic(InputElementDescription[] inputElements, string semanticName, int semanticIndex)
