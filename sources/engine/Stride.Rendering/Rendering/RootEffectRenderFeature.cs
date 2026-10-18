@@ -9,6 +9,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using Stride.Core;
 using Stride.Core.Annotations;
+using Stride.Core.Collections;
 using Stride.Core.Diagnostics;
 using Stride.Core.Storage;
 using Stride.Core.Threading;
@@ -24,8 +25,9 @@ namespace Stride.Rendering
     /// </summary>
     public abstract class RootEffectRenderFeature : RootRenderFeature
     {
+        // One per effect slot, so that the effects compiled in a row for a slot usually share their keys
         [ThreadStatic]
-        private static CompilerParameters staticCompilerParameters;
+        private static CompilerParameters[] staticCompilerParameters;
 
         // Helper class to build pipeline state
         private ThreadLocal<PrepareThreadContext> prepareThreadContext;
@@ -535,24 +537,21 @@ namespace Stride.Rendering
                             renderEffect.State = RenderEffectState.Normal;
 
                             // CompilerParameters are ThreadStatic
-                            if (staticCompilerParameters == null)
-                                staticCompilerParameters = new CompilerParameters();
-
-                            foreach (var effectValue in renderEffect.EffectValidator.EffectValues)
-                            {
-                                staticCompilerParameters.SetObject(effectValue.Key, effectValue.Value);
-                            }
+                            var compilerParameters = GetThreadCompilerParameters(i);
+                            SetCompilerParameters(compilerParameters, renderEffect.EffectValidator.EffectValues);
 
                             TaskOrResult<Effect> asyncEffect;
                             try
                             {
                                 // The effect can fail compilation synchronously
-                                asyncEffect = RenderSystem.EffectSystem.LoadEffect(renderEffect.EffectSelector.EffectName, staticCompilerParameters);
-                                staticCompilerParameters.Clear();
+                                asyncEffect = RenderSystem.EffectSystem.LoadEffect(renderEffect.EffectSelector.EffectName, compilerParameters);
+                                // Keeps the keys for the next effect of this slot, but not the values alive
+                                if (compilerParameters.ObjectValues != null)
+                                    Array.Clear(compilerParameters.ObjectValues);
                             }
                             catch
                             {
-                                staticCompilerParameters.Clear();
+                                compilerParameters.Clear();
                                 renderEffect.ClearFallbackParameters();
                                 renderEffect.State = RenderEffectState.Error;
                                 renderEffect.Effect = ComputeFallbackEffect?.Invoke(renderObject, renderEffect, RenderEffectState.Error);
@@ -718,6 +717,36 @@ namespace Stride.Rendering
         /// </summary>
         protected virtual void InvalidateEffectPermutation(RenderObject renderObject, RenderEffect renderEffect)
         {
+        }
+
+        private static CompilerParameters GetThreadCompilerParameters(int effectSlot)
+        {
+            if (staticCompilerParameters == null || staticCompilerParameters.Length <= effectSlot)
+                Array.Resize(ref staticCompilerParameters, effectSlot + 1);
+
+            return staticCompilerParameters[effectSlot] ??= new CompilerParameters();
+        }
+
+        private static void SetCompilerParameters(CompilerParameters compilerParameters, FastListStruct<EffectValidator.EffectParameterEntry> effectValues)
+        {
+            // Same keys as the previous effect: overwrite the values in place instead of growing ObjectValues one key at a time
+            var keyInfos = compilerParameters.ParameterKeyInfos;
+            var sameKeys = !compilerParameters.HasLayout && keyInfos.Count == effectValues.Count && compilerParameters.ObjectValues?.Length == effectValues.Count;
+            for (int i = 0; sameKeys && i < effectValues.Count; ++i)
+                sameKeys = keyInfos[i].Key == effectValues.Items[i].Key && keyInfos[i].BindingSlot == i;
+
+            if (sameKeys)
+            {
+                for (int i = 0; i < effectValues.Count; ++i)
+                    compilerParameters.ObjectValues[i] = effectValues.Items[i].Value;
+                return;
+            }
+
+            compilerParameters.Clear();
+            foreach (var effectValue in effectValues)
+            {
+                compilerParameters.SetObject(effectValue.Key, effectValue.Value);
+            }
         }
 
         /// <inheritdoc/>
