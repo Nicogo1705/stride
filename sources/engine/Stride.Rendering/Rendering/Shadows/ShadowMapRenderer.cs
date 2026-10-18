@@ -30,6 +30,10 @@ namespace Stride.Rendering.Shadows
         private ShadowMapAtlasTexture fallbackAtlas;
 
         private readonly List<LightShadowMapTexture> shadowMaps = new List<LightShadowMapTexture>();
+
+        // Cached atlas insertion callback writing into insertTarget, to avoid a closure per shadow map per frame
+        private readonly GuillotinePacker.InsertRectangleCallback insertRectangle;
+        private LightShadowMapTexture insertTarget;
         
         private static readonly ProfilingKey CollectKey = new ProfilingKey("ShadowMapRenderer.Collect");
         private static readonly ProfilingKey DrawKey = new ProfilingKey("ShadowMapRenderer.Draw");
@@ -37,6 +41,7 @@ namespace Stride.Rendering.Shadows
         public ShadowMapRenderer()
         {
             atlases = new FastListStruct<ShadowMapAtlasTexture>(16);
+            insertRectangle = (int index, ref Rectangle rectangle) => insertTarget.SetRectangle(index, rectangle);
         }
 
         [DataMember]
@@ -206,9 +211,10 @@ namespace Stride.Rendering.Shadows
 
             // Try to fit the shadow map into an existing atlas
             ShadowMapAtlasTexture currentAtlas = null;
+            insertTarget = lightShadowMapTexture;
             foreach (var atlas in atlases)
             {
-                if (atlas.TryInsert(size, size, lightShadowMapTexture.CascadeCount, (int index, ref Rectangle rectangle) => lightShadowMapTexture.SetRectangle(index, rectangle)))
+                if (atlas.TryInsert(size, size, lightShadowMapTexture.CascadeCount, insertRectangle))
                 {
                     currentAtlas = atlas;
                     break;
