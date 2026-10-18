@@ -68,6 +68,9 @@ namespace Stride.Rendering
 
         private EffectPermutationSlot[] effectSlots = null;
 
+        // Set by the compile step when at least one RenderEffect needs its reflection updated this frame
+        private bool isAnyReflectionUpdateRequired;
+
         public ConcurrentCollector<EffectObjectNode> EffectObjectNodes { get; } = new ConcurrentCollector<EffectObjectNode>();
 
         public delegate Effect ComputeFallbackEffectDelegate(RenderObject renderObject, RenderEffect renderEffect, RenderEffectState renderEffectState);
@@ -467,6 +470,7 @@ namespace Stride.Rendering
             PrepareRenderTargetExtensionsMixins(context);
 
             var currentTime = DateTime.UtcNow;
+            isAnyReflectionUpdateRequired = false;
 
             // Step2: Compile effects
             using (Profiler.Begin(CompileEffectsKey))
@@ -564,6 +568,7 @@ namespace Stride.Rendering
                         }
 
                         renderEffect.IsReflectionUpdateRequired = true;
+                        isAnyReflectionUpdateRequired = true;
                     }
                 });
             }
@@ -571,6 +576,10 @@ namespace Stride.Rendering
             // Step3: Update reflection infos (offset, etc...)
             using (Profiler.Begin(UpdateReflectionInfosKey))
             {
+                // Most frames compile nothing: skip the single-threaded scan of every object and effect slot
+                if (!isAnyReflectionUpdateRequired)
+                    return;
+
                 foreach (var renderObject in RenderObjects)
                 {
                     var staticObjectNode = renderObject.StaticObjectNode;
