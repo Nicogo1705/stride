@@ -145,6 +145,7 @@ namespace Stride.Rendering.Shadows
 
                 var projectionToShadow = Matrix.Scaling(leftX, -leftY, 1.0f) * Matrix.Translation(centerX, centerY, 0.0f);
                 Matrix.Multiply(ref shadowRenderView.ViewProjection, ref projectionToShadow, out shaderData.WorldToShadow[i]);
+                shaderData.InverseWorldToShadow[i] = Matrix.Invert(shaderData.WorldToShadow[i]);
 
                 shadowRenderView.VisiblityIgnoreDepthPlanes = false;
 
@@ -181,6 +182,11 @@ namespace Stride.Rendering.Shadows
             /// Converts from world space to uv space
             /// </summary>
             public Matrix[] WorldToShadow = new Matrix[6];
+
+            /// <summary>
+            /// Inverses of <see cref="WorldToShadow"/>, computed once per frame instead of per draw
+            /// </summary>
+            public Matrix[] InverseWorldToShadow = new Matrix[6];
 
             public float DepthBias;
             public float OffsetScale;
@@ -260,7 +266,7 @@ namespace Stride.Rendering.Shadows
                         for (int j = 0; j < 6; j++)
                         {
                             worldToShadow[lightIndex * 6 + j] = shaderData.WorldToShadow[j];
-                            inverseWorldToShadow[lightIndex * 6 + j] = Matrix.Invert(shaderData.WorldToShadow[j]);
+                            inverseWorldToShadow[lightIndex * 6 + j] = shaderData.InverseWorldToShadow[j];
                         }
 
                         depthBiases[lightIndex] = shaderData.DepthBias;
