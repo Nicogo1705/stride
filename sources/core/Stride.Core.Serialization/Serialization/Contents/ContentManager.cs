@@ -302,9 +302,6 @@ public sealed partial class ContentManager : IContentManager
 
     private object DeserializeObject(string initialUrl, string newUrl, Type type, object? obj, ContentManagerLoaderSettings settings)
     {
-        var serializeOperations = new Queue<DeserializeOperation>();
-        serializeOperations.Enqueue(new DeserializeOperation(null, newUrl, type, obj));
-
         Reference? reference = null;
         if (obj != null)
         {
@@ -327,18 +324,14 @@ public sealed partial class ContentManager : IContentManager
             reference.Deserialized = false;
         }
 
-        bool isFirstOperation = true;
-        object result = null;
+        // The queue is only created once a content reference needs loading, so loading an already loaded asset allocates nothing
+        Queue<DeserializeOperation>? serializeOperations = null;
+        object result = DeserializeObject(ref serializeOperations, null, newUrl, type, obj, settings);
 
-        while (serializeOperations.Count > 0)
+        while (serializeOperations?.Count > 0)
         {
             var serializeOperation = serializeOperations.Dequeue();
-            var deserializedObject = DeserializeObject(serializeOperations, serializeOperation.ParentReference, serializeOperation.Url, serializeOperation.ObjectType, serializeOperation.Object, settings);
-            if (isFirstOperation)
-            {
-                result = deserializedObject;
-                isFirstOperation = false;
-            }
+            DeserializeObject(ref serializeOperations, serializeOperation.ParentReference, serializeOperation.Url, serializeOperation.ObjectType, serializeOperation.Object, settings);
         }
 
         if (reference != null)
@@ -407,7 +400,7 @@ public sealed partial class ContentManager : IContentManager
         return ChunkHeader.Read(streamReader);
     }
 
-    private object? DeserializeObject(Queue<DeserializeOperation> serializeOperations, Reference? parentReference, string url, Type objType, object? obj, ContentManagerLoaderSettings settings)
+    private object? DeserializeObject(ref Queue<DeserializeOperation>? serializeOperations, Reference? parentReference, string url, Type objType, object? obj, ContentManagerLoaderSettings settings)
     {
         // Try to find already loaded object
         Reference? reference = FindDeserializedObject(url, objType);
@@ -514,7 +507,7 @@ public sealed partial class ContentManager : IContentManager
 
                 if (shouldBeLoaded)
                 {
-                    serializeOperations.Enqueue(new DeserializeOperation(reference, contentReference.Location, contentReference.Type, contentReference.ObjectValue));
+                    (serializeOperations ??= new Queue<DeserializeOperation>()).Enqueue(new DeserializeOperation(reference, contentReference.Location, contentReference.Type, contentReference.ObjectValue));
                 }
             }
         }
