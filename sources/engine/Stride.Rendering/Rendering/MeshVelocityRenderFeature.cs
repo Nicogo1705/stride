@@ -35,6 +35,7 @@ namespace Stride.Rendering
         private HashSet<RenderView> updatedViews = new HashSet<RenderView>();
         
         private static readonly ProfilingKey PrepareEffectPermutationsKey = new ProfilingKey("MeshVelocityRenderFeature.PrepareEffectPermutations");
+        private static readonly ShaderClassSource MeshVelocityShader = new ShaderClassSource("MeshVelocity");
 
         protected override void InitializeCore()
         {
@@ -79,7 +80,7 @@ namespace Stride.Rendering
 
                     if (renderEffect != null)
                     {
-                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.ComputeVelocityShader, new ShaderClassSource("MeshVelocity"));
+                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.ComputeVelocityShader, MeshVelocityShader);
                     }
                 }
             });
