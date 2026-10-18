@@ -23,6 +23,8 @@ namespace Stride.Rendering
         private const string SharedImageEffectContextKey = "__SharedRenderContext__";
         private readonly ThreadLocal<RenderDrawContext> threadContext;
         private readonly object threadContextLock = new object();
+        // Same contexts as threadContext.Values, which allocates a new list on each call
+        private readonly List<RenderDrawContext> threadContexts = new List<RenderDrawContext>();
 
         // Used for API that don't support multiple command lists
         internal CommandList SharedCommandList;
@@ -44,7 +46,9 @@ namespace Stride.Rendering
             {
                 lock (threadContextLock)
                 {
-                    return new RenderDrawContext(Services, this, new GraphicsContext(GraphicsDevice, Allocator));
+                    var context = new RenderDrawContext(Services, this, new GraphicsContext(GraphicsDevice, Allocator));
+                    threadContexts.Add(context);
+                    return context;
                 }
             }, true);
         }
@@ -170,22 +174,28 @@ namespace Stride.Rendering
 
         public void Reset()
         {
-            var contextList = threadContext.Values;     // returns IList so don't use foreach otherwise an object will be allocated
-            for (int i = 0; i < contextList.Count; i++)
+            lock (threadContextLock)
             {
-                var context = contextList[i];
-                context.ResourceGroupAllocator.Reset(context.CommandList);
+                // Newest first, in the order of threadContext.Values
+                for (int i = threadContexts.Count - 1; i >= 0; i--)
+                {
+                    var context = threadContexts[i];
+                    context.ResourceGroupAllocator.Reset(context.CommandList);
+                }
             }
         }
 
         public void Flush()
         {
-            var contextList = threadContext.Values;     // returns IList so don't use foreach otherwise an object will be allocated
-            for (int i = 0; i < contextList.Count; i++)
+            lock (threadContextLock)
             {
-                var context = contextList[i];
-                context.ResourceGroupAllocator.Flush();
-                context.QueryManager.Flush();
+                // Newest first, in the order of threadContext.Values
+                for (int i = threadContexts.Count - 1; i >= 0; i--)
+                {
+                    var context = threadContexts[i];
+                    context.ResourceGroupAllocator.Flush();
+                    context.QueryManager.Flush();
+                }
             }
         }
 
