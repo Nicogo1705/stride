@@ -102,7 +102,7 @@ namespace Stride.Rendering.Lights
         /// <summary>
         /// List of renderers that can handle a specific light type by light type
         /// </summary>
-        private readonly Dictionary<Type, List<LightGroupRendererBase>> lightRenderersByType = new Dictionary<Type, List<LightGroupRendererBase>>();
+        private readonly Dictionary<Type, LightGroupRendererBase[]> lightRenderersByType = new Dictionary<Type, LightGroupRendererBase[]>();
 
         private readonly Dictionary<RenderView, RenderViewLightData> renderViewDatas = new Dictionary<RenderView, RenderViewLightData>();
 
@@ -704,16 +704,21 @@ namespace Stride.Rendering.Lights
         private void EvaluateLightTypes()
         {
             lightRenderersByType.Clear();
+            var renderersByType = new Dictionary<Type, List<LightGroupRendererBase>>();
             foreach (var renderer in lightRenderers)
             {
                 foreach (var lightType in renderer.LightTypes)
                 {
                     List<LightGroupRendererBase> renderers;
-                    if (!lightRenderersByType.TryGetValue(lightType, out renderers))
-                        lightRenderersByType.Add(lightType, renderers = new List<LightGroupRendererBase>());
+                    if (!renderersByType.TryGetValue(lightType, out renderers))
+                        renderersByType.Add(lightType, renderers = new List<LightGroupRendererBase>());
                     renderers.Add(renderer);
                 }
             }
+
+            // Arrays are built once here and shared by every view and frame in CollectActiveLightRenderers
+            foreach (var (lightType, renderers) in renderersByType)
+                lightRenderersByType.Add(lightType, renderers.ToArray());
         }
 
         public class LightShaderPermutationEntry
@@ -745,10 +750,10 @@ namespace Stride.Rendering.Lights
 
         internal struct ActiveLightGroupRenderer
         {
-            public ActiveLightGroupRenderer(RenderLightCollectionGroup lightGroup, IEnumerable<LightGroupRendererBase> lightGroupRenderers)
+            public ActiveLightGroupRenderer(RenderLightCollectionGroup lightGroup, LightGroupRendererBase[] lightGroupRenderers)
             {
                 LightGroup = lightGroup;
-                Renderers = lightGroupRenderers.ToArray();
+                Renderers = lightGroupRenderers;
             }
 
             /// <summary>
