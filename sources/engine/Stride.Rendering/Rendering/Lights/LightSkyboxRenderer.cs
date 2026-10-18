@@ -90,6 +90,7 @@ namespace Stride.Rendering.Lights
             private ValueParameterKey<Color3> sphericalColorsKey;
             private ObjectParameterKey<Texture> specularCubeMapkey;
             private ValueParameterKey<float> specularMipCountKey;
+            private string layoutCompositionName;
 
             public RenderLight Light { get; set; }
 
@@ -101,6 +102,11 @@ namespace Stride.Rendering.Lights
             public override void UpdateLayout(string compositionName)
             {
                 base.UpdateLayout(compositionName);
+
+                // Called every frame: the composed keys only depend on the composition name
+                if (layoutCompositionName != null && compositionName == layoutCompositionName)
+                    return;
+                layoutCompositionName = compositionName;
 
                 intensityKey = LightSkyboxShaderKeys.Intensity.ComposeWith(compositionName);
                 skyMatrixKey = LightSkyboxShaderKeys.SkyMatrix.ComposeWith(compositionName);
