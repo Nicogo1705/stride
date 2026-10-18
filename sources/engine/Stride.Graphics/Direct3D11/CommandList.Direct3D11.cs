@@ -39,6 +39,8 @@ namespace Stride.Graphics
 
         private readonly ComPtr<ID3D11UnorderedAccessView>[] currentUARenderTargetViews = new ComPtr<ID3D11UnorderedAccessView>[SimultaneousRenderTargetCount];
         private readonly ComPtr<ID3D11UnorderedAccessView>[] unorderedAccessViews = new ComPtr<ID3D11UnorderedAccessView>[UnorderedAcccesViewCount]; // Only CS
+        // One past the highest CS slot set since the last clear, so unbinding a resource doesn't scan all 64 slots
+        private int unorderedAccessViewsEnd;
 
         private const int StageCount = 6;
 
@@ -161,6 +163,7 @@ namespace Stride.Graphics
             Array.Clear(boundShaderResources);
 
             Array.Clear(unorderedAccessViews);
+            unorderedAccessViewsEnd = 0;
             Array.Clear(currentRenderTargetViews);
             Array.Clear(currentUARenderTargetViews);
 
@@ -519,6 +522,7 @@ namespace Stride.Graphics
                 if (unorderedAccessViews[slot].Handle != nativeUnorderedAccessView.Handle)
                 {
                     unorderedAccessViews[slot] = nativeUnorderedAccessView;
+                    unorderedAccessViewsEnd = Math.Max(unorderedAccessViewsEnd, slot + 1);
 
                     nativeDeviceContext->CSSetUnorderedAccessViews((uint) slot, NumUAVs: 1, ref nativeUnorderedAccessView, (uint*) &uavInitialOffset);
                 }
@@ -542,7 +546,7 @@ namespace Stride.Graphics
             if (nativeUav.IsNull())
                 return;
 
-            for (int slot = 0; slot < UnorderedAcccesViewCount; slot++)
+            for (int slot = 0; slot < unorderedAccessViewsEnd; slot++)
             {
                 if (unorderedAccessViews[slot].Handle == nativeUav.Handle)
                 {
