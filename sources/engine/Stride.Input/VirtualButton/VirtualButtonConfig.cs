@@ -35,6 +35,9 @@ namespace Stride.Input
             }
         }
 
+        // Typed view of BindingNames for the per-frame update, whose enumerator is a struct and is not boxed
+        internal Dictionary<object, List<VirtualButtonBinding>>.KeyCollection BindingNameKeys => mapBindings.Keys;
+
         /// <summary>
         /// Gets the value for a particular binding.
         /// </summary>

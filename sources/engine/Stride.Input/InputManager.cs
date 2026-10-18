@@ -1032,7 +1032,7 @@ namespace Stride.Input
 
                 if (config != null)
                 {
-                    foreach (object name in config.BindingNames)
+                    foreach (object name in config.BindingNameKeys)
                     {
                         configState.Values[name] = config.GetValue(this, name);
                         configState.Pressed[name] = config.IsPressed(this, name);
