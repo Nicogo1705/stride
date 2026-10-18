@@ -37,7 +37,8 @@ namespace Stride.Rendering.Lights
                 lightShaderGroup.Value.Reset();
 
             lightShaderGroupsPerSkybox.Clear();
-            pool.Reset();
+            // Keep the pooled groups so they are reused next frame instead of reallocated
+            pool.Clear();
         }
 
         /// <inheritdoc/>
