@@ -45,7 +45,8 @@ namespace Stride.Rendering.Lights
 
         public bool Equals(LightShaderGroupEntry<T> other)
         {
-            return Key.Equals(other.Key) && Value.Equals(other.Value);
+            // EqualityComparer avoids boxing the struct key through object.Equals
+            return EqualityComparer<T>.Default.Equals(Key, other.Key) && Value.Equals(other.Value);
         }
 
         public override bool Equals(object obj)
