@@ -411,7 +411,7 @@ public static class Dispatcher
                 if (range.Right - range.Left < sequentialThreshold)
                 {
                     // Sort small collections sequentially
-                    Array.Sort(collection, range.Left, range.Right - range.Left + 1, comparer);
+                    SortSequential(collection, range.Left, range.Right - range.Left + 1, comparer);
                     Interlocked.Decrement(ref state.OpLeft);
                 }
                 else
@@ -456,6 +456,15 @@ public static class Dispatcher
                 state.Finished.Set();
             state.Release();
         }
+    }
+
+    private static void SortSequential<T>(T[] collection, int index, int length, IComparer<T> comparer)
+    {
+        // Array.Sort wraps a custom comparer in a new Comparison<T> on each call, the span overload sorts the same way with a reused one
+        if (comparer is null || comparer == Comparer<T>.Default)
+            Array.Sort(collection, index, length, comparer);
+        else
+            collection.AsSpan(index, length).Sort(SortComparison<T>.Get(comparer));
     }
 
     // Kept out of SortOnThread so the closure is only created when a worker is queued, not on every call
@@ -579,6 +588,23 @@ public static class Dispatcher
         public readonly unsafe void Process(int start, int endExclusive)
         {
             Delegate(Param, start, endExclusive);
+        }
+    }
+
+    private static class SortComparison<T>
+    {
+        // Per thread, as sorts run on the thread pool; callers pass the same comparer instance frame after frame
+        [ThreadStatic] private static IComparer<T>? lastComparer;
+        [ThreadStatic] private static Comparison<T>? lastComparison;
+
+        public static Comparison<T> Get(IComparer<T> comparer)
+        {
+            if (lastComparison is null || !ReferenceEquals(lastComparer, comparer))
+            {
+                lastComparer = comparer;
+                lastComparison = comparer.Compare;
+            }
+            return lastComparison;
         }
     }
 
