@@ -157,6 +157,8 @@ namespace Stride.Rendering.Lights
 
             private FastListStruct<LightClusterLinkedNode> lightNodes = new FastListStruct<LightClusterLinkedNode>(8);
             private FastListStruct<Int2> clusterInfos = new FastListStruct<Int2>(8);
+            // Linked lists already moved for the light being clustered; reused across views and frames
+            private readonly Dictionary<LightClusterLinkedNode, int> movedClusters = new Dictionary<LightClusterLinkedNode, int>();
             private RenderViewInfo[] renderViewInfos;
             private Int2 maxClusterCount;
             //private Plane[] zPlanes;
@@ -289,7 +291,7 @@ namespace Stride.Rendering.Lights
                 }
 
                 // List of clusters moved by this light
-                var movedClusters = new Dictionary<LightClusterLinkedNode, int>();
+                movedClusters.Clear();
 
                 // Try to use SpecialNearPlane to not waste too much slices in very small depth
                 // Make sure we don't go to more than 10% of max depth
