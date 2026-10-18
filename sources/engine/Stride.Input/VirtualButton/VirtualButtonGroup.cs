@@ -63,8 +63,10 @@ namespace Stride.Input
         public virtual float GetValue(InputManager manager)
         {
             float value = 0.0f;
-            foreach (var virtualButton in Items)
+            var items = Items;
+            for (int i = 0; i < items.Count; i++)
             {
+                var virtualButton = items[i];
                 float newValue = virtualButton != null ? virtualButton.GetValue(manager) : 0.0f;
 
                 // In case of a || (disjunction) set, we return the latest non-zero value.
@@ -119,25 +121,28 @@ namespace Stride.Input
             return CheckAnyOrAll(manager, IsReleased);
         }
 
-        private bool IsDown(IVirtualButton button, InputManager manager)
+        // Static so the method group delegates are cached instead of allocated on every check
+        private static bool IsDown(IVirtualButton button, InputManager manager)
         {
             return button.IsDown(manager);
         }
 
-        private bool IsReleased(IVirtualButton button, InputManager manager)
+        private static bool IsReleased(IVirtualButton button, InputManager manager)
         {
             return button.IsReleased(manager);
         }
 
-        private bool IsPressed(IVirtualButton button, InputManager manager)
+        private static bool IsPressed(IVirtualButton button, InputManager manager)
         {
             return button.IsPressed(manager);
         }
 
         private bool CheckAnyOrAll(InputManager manager, Func<IVirtualButton, InputManager, bool> check)
         {
-            foreach (var virtualButton in Items)
+            var items = Items;
+            for (int i = 0; i < items.Count; i++)
             {
+                var virtualButton = items[i];
                 var isDown = check(virtualButton, manager);
 
                 if (IsDisjunction && isDown)
