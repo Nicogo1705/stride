@@ -2,7 +2,6 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System.Collections.Generic;
-using System.Linq;
 using Stride.Core.Collections;
 using Stride.Core.Threading;
 using Stride.Rendering;
@@ -32,7 +31,7 @@ namespace Stride.Engine.Processors
             get
             {
                 if (modelNodeLinkProcessor == null)
-                    modelNodeLinkProcessor = EntityManager.Processors.OfType<ModelNodeLinkProcessor>().FirstOrDefault();
+                    modelNodeLinkProcessor = EntityManager.GetProcessor<ModelNodeLinkProcessor>();
 
                 return modelNodeLinkProcessor;
             }
