@@ -158,7 +158,24 @@ namespace Stride.Shaders
             return
                 Mixins.SequenceEqualAllowNull(other.Mixins) &&
                 Macros.SequenceEqualAllowNull(other.Macros) &&
-                Compositions.SequenceEqualAllowNull(other.Compositions);
+                CompositionsEqual(Compositions, other.Compositions);
+        }
+
+        // Compares by index: the SortedList enumerator is a class and KeyValuePair equality boxes and reflects over its fields.
+        private static bool CompositionsEqual(Core.Collections.SortedList<string, ShaderSource> first, Core.Collections.SortedList<string, ShaderSource> second)
+        {
+            if (ReferenceEquals(first, second)) return true;
+            if (first is null || second is null || first.Count != second.Count) return false;
+            for (int i = 0; i < first.Count; i++)
+            {
+                if (!string.Equals(first.KeyAt(i), second.KeyAt(i)))
+                    return false;
+                var value = first.ValueAt(i);
+                var otherValue = second.ValueAt(i);
+                if (value is null ? otherValue is not null : !value.Equals(otherValue))
+                    return false;
+            }
+            return true;
         }
         public override int GetHashCode()
         {
