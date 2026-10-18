@@ -311,8 +311,11 @@ namespace Stride.Rendering
             if (renderFeature == null)
                 return;
 
-            // Determine which render stages are activated for this object
-            renderObject.ActiveRenderStages = new ActiveRenderStage[RenderSystem.RenderStages.Count];
+            // Determine which render stages are activated for this object (reusing the array, cleared, when the stage count is unchanged)
+            if (renderObject.ActiveRenderStages?.Length == RenderSystem.RenderStages.Count)
+                Array.Clear(renderObject.ActiveRenderStages);
+            else
+                renderObject.ActiveRenderStages = new ActiveRenderStage[RenderSystem.RenderStages.Count];
 
             foreach (var renderStageSelector in renderFeature.RenderStageSelectors)
                 renderStageSelector.Process(renderObject);
