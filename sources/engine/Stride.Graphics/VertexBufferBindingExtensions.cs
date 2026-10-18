@@ -1,6 +1,8 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System;
+
 namespace Stride.Graphics;
 
 /// <summary>
@@ -28,20 +30,7 @@ public static class VertexBufferBindingExtensions
     public static InputElementDescription[] CreateInputElements(this VertexDeclaration vertexDeclaration)
     {
         var inputElements = new InputElementDescription[vertexDeclaration.VertexElements.Length];
-        var inputElementIndex = 0;
-
-        foreach (var element in vertexDeclaration.EnumerateWithOffsets())
-        {
-            inputElements[inputElementIndex++] = new InputElementDescription
-            {
-                SemanticName = element.VertexElement.SemanticName,
-                SemanticIndex = element.VertexElement.SemanticIndex,
-                Format = element.VertexElement.Format,
-                InputSlot = 0,
-                AlignedByteOffset = element.Offset
-            };
-        }
-
+        FillInputElements(vertexDeclaration, inputSlot: 0, inputElements);
         return inputElements;
     }
 
@@ -73,20 +62,35 @@ public static class VertexBufferBindingExtensions
         var inputElementIndex = 0;
         for (int inputSlot = 0; inputSlot < vertexBuffers.Length; inputSlot++)
         {
-            var vertexBuffer = vertexBuffers[inputSlot];
-            foreach (var element in vertexBuffer.Declaration.EnumerateWithOffsets())
-            {
-                inputElements[inputElementIndex++] = new InputElementDescription
-                {
-                    SemanticName = element.VertexElement.SemanticName,
-                    SemanticIndex = element.VertexElement.SemanticIndex,
-                    Format = element.VertexElement.Format,
-                    InputSlot = inputSlot,
-                    AlignedByteOffset = element.Offset
-                };
-            }
+            var declaration = vertexBuffers[inputSlot].Declaration;
+            FillInputElements(declaration, inputSlot, inputElements.AsSpan(inputElementIndex));
+            inputElementIndex += declaration.VertexElements.Length;
         }
 
         return inputElements;
+    }
+
+    // Same offsets as VertexDeclaration.EnumerateWithOffsets, without allocating its iterator.
+    private static void FillInputElements(VertexDeclaration vertexDeclaration, int inputSlot, Span<InputElementDescription> inputElements)
+    {
+        var offset = 0;
+        var vertexElements = vertexDeclaration.VertexElements;
+        for (int i = 0; i < vertexElements.Length; i++)
+        {
+            var element = vertexElements[i];
+            if (element.AlignedByteOffset != VertexElement.AppendAligned)
+                offset = element.AlignedByteOffset;
+
+            inputElements[i] = new InputElementDescription
+            {
+                SemanticName = element.SemanticName,
+                SemanticIndex = element.SemanticIndex,
+                Format = element.Format,
+                InputSlot = inputSlot,
+                AlignedByteOffset = offset
+            };
+
+            offset += element.Format.SizeInBytes;
+        }
     }
 }
