@@ -462,7 +462,14 @@ namespace Stride.Rendering
                 }
                 commandLists[0] = commandList.Close();
 
-                Dispatcher.For(0, batchCount, () => renderDrawContext.RenderContext.GetThreadContext(), (batchIndex, threadContext) =>
+                // Copies used by the jobs, so that their closure is only allocated on this path, not on every call
+                var renderContext = renderDrawContext.RenderContext;
+                var jobRenderView = renderView;
+                var jobRenderViewStage = renderViewStage;
+                var jobRenderNodes = renderNodes;
+                var jobRenderNodeCount = renderNodeCount;
+
+                Dispatcher.For(0, batchCount, () => renderContext.GetThreadContext(), (batchIndex, threadContext) =>
                 {
                     using var _ = Profiler.Begin(DrawRenderFeatureChunksKey);
                     threadContext.CommandList.Reset();
@@ -478,22 +485,22 @@ namespace Stride.Rendering
                     var currentStart = batchSize * batchIndex;
                     int currentEnd;
 
-                    var endExclusive = Math.Min(renderNodeCount, currentStart + batchSize);
+                    var endExclusive = Math.Min(jobRenderNodeCount, currentStart + batchSize);
 
                     if (endExclusive <= currentStart)
                         return;
 
                     for (; currentStart < endExclusive; currentStart = currentEnd)
                     {
-                        var currentRenderFeature = renderNodes[currentStart].RootRenderFeature;
+                        var currentRenderFeature = jobRenderNodes[currentStart].RootRenderFeature;
                         currentEnd = currentStart + 1;
-                        while (currentEnd < endExclusive && renderNodes[currentEnd].RootRenderFeature == currentRenderFeature)
+                        while (currentEnd < endExclusive && jobRenderNodes[currentEnd].RootRenderFeature == currentRenderFeature)
                         {
                             currentEnd++;
                         }
 
                         // Divide into task chunks for parallelism
-                        currentRenderFeature.Draw(threadContext, renderView, renderViewStage, currentStart, currentEnd);
+                        currentRenderFeature.Draw(threadContext, jobRenderView, jobRenderViewStage, currentStart, currentEnd);
                     }
 
                     commandLists[batchIndex + 1] = threadContext.CommandList.Close();
