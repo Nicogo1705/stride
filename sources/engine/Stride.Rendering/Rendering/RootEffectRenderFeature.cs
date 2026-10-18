@@ -401,6 +401,12 @@ namespace Stride.Rendering
                 var renderNode = node;
                 var renderObject = renderNode.RenderObject;
 
+                // Check the stage first: nodes of stages without extensions (e.g. shadow casters) skip the effect lookup
+                var renderStage = renderNode.RenderStage;
+                var renderStageShaderSource = renderStage.OutputValidator.ShaderSource;
+                if (renderStageShaderSource == null)
+                    continue;
+
                 // Get RenderEffect
                 var staticObjectNode = renderObject.StaticObjectNode;
                 var staticEffectObjectNode = staticObjectNode * EffectPermutationSlotCount + effectSlots[renderNode.RenderStage.Index].Index;
@@ -408,10 +414,7 @@ namespace Stride.Rendering
 
                 if (renderEffect != null)
                 {
-                    var renderStage = renderNode.RenderStage;
-                    var renderStageShaderSource = renderStage.OutputValidator.ShaderSource;
-                    if (renderStageShaderSource != null)
-                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.RenderTargetExtensions, renderStageShaderSource);
+                    renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.RenderTargetExtensions, renderStageShaderSource);
                 }
             }
         }
