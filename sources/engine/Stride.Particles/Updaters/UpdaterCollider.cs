@@ -106,6 +106,9 @@ namespace Stride.Particles.Modules
             var lifeField = pool.GetField(ParticleFields.Life);
             var controlField = pool.GetField(ParticleFields.CollisionControl);
 
+            // The field's transform is the same for every particle
+            FieldShape?.PreUpdateField(WorldPosition, WorldRotation, WorldScale);
+
             foreach (var particle in pool)
             {
                 var surfacePoint = Vector3.Zero;
@@ -121,8 +124,6 @@ namespace Stride.Particles.Modules
                 var isInside = false;
                 if (FieldShape != null)
                 {
-                    FieldShape.PreUpdateField(WorldPosition, WorldRotation, WorldScale);
-
                     isInside = FieldShape.IsPointInside(particlePos, out surfacePoint, out surfaceNormal);
                 }
 

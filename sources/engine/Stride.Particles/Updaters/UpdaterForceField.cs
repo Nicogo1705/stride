@@ -124,6 +124,9 @@ namespace Stride.Particles.Modules
             //  and some of the energy will be preserved (it translates to changes in velocity)
             var directToPosition = 1f - EnergyConservation;
 
+            // The field's transform is the same for every particle
+            FieldShape?.PreUpdateField(WorldPosition, WorldRotation, WorldScale);
+
             foreach (var particle in pool)
             {
                 var alongAxis  = new Vector3(0, 1, 0);
@@ -136,8 +139,6 @@ namespace Stride.Particles.Modules
                 var forceMagnitude = 1f;
                 if (FieldShape != null)
                 {
-                    FieldShape.PreUpdateField(WorldPosition, WorldRotation, WorldScale);
-
                     forceMagnitude = FieldShape.GetDistanceToCenter(particlePos, particleVel, out alongAxis, out aroundAxis, out awayAxis);
 
                     forceMagnitude = FieldFalloff.GetStrength(forceMagnitude);
