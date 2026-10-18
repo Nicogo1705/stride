@@ -114,6 +114,15 @@ namespace Stride.Rendering
             return result;
         }
 
+        // Same result as ==, but keys with different names are rejected by their cached name hash
+        // instead of a virtual Equals and a string comparison.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool KeyEquals(ParameterKey key, ParameterKey other)
+        {
+            return ReferenceEquals(key, other)
+                || (key is not null && other is not null && key.HashCode == other.HashCode && key.Equals(other));
+        }
+
         public override string ToString()
         {
             var parameterKeysByType = ParameterKeyInfos.GroupBy(x => x.Key.Type);
@@ -164,7 +173,7 @@ namespace Stride.Rendering
             // Find existing first
             for (int i = 0; i < parameterKeyInfosSpan.Length; ++i)
             {
-                if (parameterKeyInfosSpan[i].Key == parameterKey)
+                if (KeyEquals(parameterKeyInfosSpan[i].Key, parameterKey))
                 {
                     return parameterKeyInfosSpan[i].GetValueAccessor();
                 }
@@ -177,7 +186,7 @@ namespace Stride.Rendering
             {
                 foreach (var layoutParameterKeyInfo in layout.LayoutParameterKeyInfos)
                 {
-                    if (layoutParameterKeyInfo.Key == parameterKey)
+                    if (KeyEquals(layoutParameterKeyInfo.Key, parameterKey))
                     {
                         parameterKeyInfos.Add(layoutParameterKeyInfo);
                         return layoutParameterKeyInfo.GetValueAccessor();
@@ -554,7 +563,7 @@ namespace Stride.Rendering
         {
             for (int i = 0; i < parameterKeyInfos.Count; ++i)
             {
-                if (parameterKeyInfos[i].Key == key)
+                if (KeyEquals(parameterKeyInfos[i].Key, key))
                 {
                     return true;
                 }
@@ -760,7 +769,7 @@ namespace Stride.Rendering
             // Find existing first
             for (int i = 0; i < parameterKeyInfosSpan.Length; ++i)
             {
-                if (parameterKeyInfosSpan[i].Key == parameterKey)
+                if (KeyEquals(parameterKeyInfosSpan[i].Key, parameterKey))
                 {
                     return parameterKeyInfosSpan[i].GetObjectAccessor();
                 }
@@ -779,7 +788,7 @@ namespace Stride.Rendering
             {
                 foreach (var layoutParameterKeyInfo in layout.LayoutParameterKeyInfos)
                 {
-                    if (layoutParameterKeyInfo.Key == parameterKey)
+                    if (KeyEquals(layoutParameterKeyInfo.Key, parameterKey))
                     {
                         parameterKeyInfos.Add(layoutParameterKeyInfo);
                         return layoutParameterKeyInfo.GetObjectAccessor();
