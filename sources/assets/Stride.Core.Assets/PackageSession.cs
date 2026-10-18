@@ -556,6 +556,12 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
     public IReadOnlyCollection<string> LoadedBuildManifests { get; internal set; } = [];
 
     /// <summary>
+    /// The NuGet lock files (project.assets.json) the build manifests named, from which the session took
+    /// its sdpkg dependency packages; empty for other load paths.
+    /// </summary>
+    public IReadOnlyCollection<string> LoadedNuGetLockFiles { get; internal set; } = [];
+
+    /// <summary>
     /// Gets the user packages (excluding system packages).
     /// </summary>
     /// <value>The user packages.</value>

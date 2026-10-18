@@ -313,6 +313,13 @@ namespace Stride.AssetCompiler
             foreach (var manifest in rootPackage.Session.LoadedBuildManifests)
                 inputs.Add(new UFile(manifest).ToOSPath());
 
+            // The lock files decide which NuGet packages contribute an sdpkg and from which version folder:
+            // switching the engine version, or a package starting to ship its sdpkg, changes only them (the
+            // manifests stay identical and the previous inputs all still exist). NuGet rewrites them only
+            // when the restore result changes, so their timestamps are stable too
+            foreach (var lockFile in rootPackage.Session.LoadedNuGetLockFiles)
+                inputs.Add(new UFile(lockFile).ToOSPath());
+
             // List asset folders from projects
             foreach (var package in rootPackage.Session.Packages)
             {

@@ -104,6 +104,7 @@ partial class PackageSession
                     packagesByLockFile[lockFile] = packages = session.LoadPackageDependenciesFromLockFile(lockFile, NuGetFramework.Parse(manifest.TargetFramework), sdpkgPackagesByName, sessionResult);
                 packagesByManifest[file] = packages;
             }
+            session.LoadedNuGetLockFiles = [.. packagesByLockFile.Keys];
 
             // Package-scoped asset lookups (Package.FindAsset) only search FlattenedDependencies, so
             // each project package gets its flattened closure: the projects it references (transitively,
